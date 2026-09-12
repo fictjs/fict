@@ -4943,7 +4943,14 @@ impl<'a> AstRewriter<'a, '_> {
                     }
                     let path = Expression::new_array_expression(span, path_elements, &builder);
                     let mut arguments = ArenaVec::new_in(&self.allocator);
-                    arguments.extend([Argument::from(source), Argument::from(path)]);
+                    // All Resolve steps are hoisted before bindings. A fresh
+                    // clone therefore still has the physical template layout;
+                    // the runtime falls back to logical matching for hydration.
+                    arguments.extend([
+                        Argument::from(source),
+                        Argument::from(path),
+                        Argument::from(Expression::new_boolean_literal(span, true, &builder)),
+                    ]);
                     let resolved = Expression::new_call_expression(
                         span, callee, NONE, arguments, false, &builder,
                     );

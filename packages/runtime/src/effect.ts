@@ -16,7 +16,13 @@ import type { Cleanup } from './types'
  */
 export type Effect = () => void | Cleanup
 
-function createManagedEffect(fn: Effect, options?: EffectOptions): () => void {
+const noopCleanup = () => {}
+
+function createManagedEffect(
+  fn: Effect,
+  options?: EffectOptions,
+  releaseUnobserved = false,
+): () => void {
   const cleanupScope: EffectCleanupScope = { cleanups: undefined }
   let phase: 'active' | 'disposing' | 'disposed' = 'active'
   const rootForError = getCurrentRoot()
@@ -69,7 +75,15 @@ function createManagedEffect(fn: Effect, options?: EffectOptions): () => void {
     }
   }
 
-  const disposeEffect = effectWithCleanup(run, doCleanup, rootForError, options, finishTeardown)
+  const disposeEffect = effectWithCleanup(
+    run,
+    doCleanup,
+    rootForError,
+    options,
+    finishTeardown,
+    releaseUnobserved ? cleanupScope : undefined,
+  )
+  if (cleanupScope.released) return noopCleanup
   const teardown = () => {
     // An enclosing reactive scope may already have detached this effect and
     // drained its cleanup through onDispose before the root reaches this entry.
@@ -92,5 +106,5 @@ export function createEffect(fn: Effect, options?: EffectOptions): () => void {
 }
 
 export function createRenderEffect(fn: Effect, options?: EffectOptions): () => void {
-  return createManagedEffect(fn, options)
+  return createManagedEffect(fn, options, true)
 }

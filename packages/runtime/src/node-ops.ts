@@ -221,9 +221,26 @@ export function getSlotEnd(start: Comment): Comment {
   return end
 }
 
-export function resolvePath(root: Node, path: number[]): Node | null {
+/**
+ * Resolve a compiler template path. The compiler can use physical child indices
+ * while all resolutions still precede the clone's dynamic bindings. Hydration
+ * must retain logical slot matching even when that compiler hint is present.
+ */
+export function resolvePath(root: Node, path: number[], freshTemplate = false): Node | null {
   let current: Node | null = root
   let expected: Node | null = (root as HydratedTemplateNode)[HYDRATED_TEMPLATE_NODE] ?? null
+  if (freshTemplate && !expected && !getHydratedFragmentNodes(root)) {
+    for (const index of path) {
+      const childRoot: Node = getTemplateContentRoot(current) ?? current
+      if (index < 0 || !Number.isInteger(index)) return null
+      current = childRoot.firstChild
+      for (let offset = 0; current && offset < index; offset++) {
+        current = current.nextSibling
+      }
+      if (!current) return null
+    }
+    return current
+  }
   for (const index of path) {
     if (!current) return null
     current = expected

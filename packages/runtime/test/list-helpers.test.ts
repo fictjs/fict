@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 
 import { createEffect } from '../src/effect'
-import { onMount } from '../src/lifecycle'
+import { onDestroy, onMount } from '../src/lifecycle'
 import {
   moveNodesBefore,
   removeNodes,
@@ -9,8 +9,9 @@ import {
   createKeyedList,
   toNodeArray,
   isNodeBetweenMarkers,
+  createVersionedSignalAccessor,
 } from '../src/list-helpers'
-import { createSignal } from '../src/signal'
+import { batch, createSignal, untrack } from '../src/signal'
 
 const tick = () =>
   new Promise<void>(resolve =>
@@ -25,6 +26,137 @@ describe('List Helpers', () => {
   beforeEach(() => {
     container = document.createElement('div')
     document.body.appendChild(container)
+  })
+
+  it('observes writes made before the first tracked item read, including same-object writes', () => {
+    const row = { label: 'first' }
+    const item = createVersionedSignalAccessor(row)
+    expect(item()).toBe(row)
+    row.label = 'before subscription'
+    item(row)
+    const seen: string[] = []
+    const dispose = createEffect(() => {
+      seen.push(item().label)
+    })
+    try {
+      expect(seen).toEqual(['before subscription'])
+      batch(() => {
+        row.label = 'after subscription'
+        item(row)
+      })
+      expect(seen).toEqual(['before subscription', 'after subscription'])
+    } finally {
+      dispose()
+      container.remove()
+    }
+  })
+
+  it('can begin tracking an item after an earlier untracked capture', () => {
+    const item = createVersionedSignalAccessor('first')
+    const tracking = createSignal(false)
+    const seen: string[] = []
+    const dispose = createEffect(() => {
+      seen.push(tracking() ? item() : untrack(() => item()))
+    })
+    try {
+      batch(() => item('untracked write'))
+      expect(seen).toEqual(['first'])
+      batch(() => tracking(true))
+      batch(() => item('tracked write'))
+      expect(seen).toEqual(['first', 'untracked write', 'tracked write'])
+      batch(() => tracking(false))
+      batch(() => item('unsubscribed write'))
+      expect(seen).toEqual(['first', 'untracked write', 'tracked write', 'tracked write'])
+      batch(() => tracking(true))
+      expect(seen[seen.length - 1]).toBe('unsubscribed write')
+    } finally {
+      dispose()
+      container.remove()
+    }
+  })
+
+  it('allows a new observer after the previous item observer is disposed', () => {
+    const item = createVersionedSignalAccessor(1)
+    const first: number[] = []
+    const disposeFirst = createEffect(() => {
+      first.push(item())
+    })
+    disposeFirst()
+    batch(() => item(2))
+    const second: number[] = []
+    const disposeSecond = createEffect(() => {
+      second.push(item())
+    })
+    try {
+      batch(() => item(3))
+      expect(first).toEqual([1])
+      expect(second).toEqual([2, 3])
+    } finally {
+      disposeSecond()
+      container.remove()
+    }
+  })
+
+  it.each([false, true])('clears and repopulates a range with outside siblings: %s', outside => {
+    const items = createSignal([1, 2])
+    const list = createKeyedList<number>(
+      items,
+      value => value,
+      item => {
+        const node = document.createElement('span')
+        node.textContent = String(item())
+        return [node]
+      },
+    )
+    container.append(list.marker)
+    list.flush?.()
+    const start = container.firstChild!
+    const end = container.lastChild!
+    const before = document.createTextNode('before')
+    const after = document.createTextNode('after')
+    if (outside) {
+      container.prepend(before)
+      container.append(after)
+    }
+    try {
+      batch(() => items([]))
+      expect(start.parentNode).toBe(container)
+      expect(start.nextSibling).toBe(end)
+      expect(end.parentNode).toBe(container)
+      expect(container.textContent).toBe(outside ? 'beforeafter' : '')
+      batch(() => items([3, 4]))
+      expect(container.textContent).toBe(outside ? 'before34after' : '34')
+      if (outside) {
+        expect(container.firstChild).toBe(before)
+        expect(container.lastChild).toBe(after)
+      }
+    } finally {
+      list.dispose()
+      container.remove()
+    }
+  })
+
+  it('keeps a sibling added by row cleanup while clearing the list', () => {
+    const items = createSignal([1])
+    const sibling = document.createTextNode('cleanup sibling')
+    const list = createKeyedList<number>(
+      items,
+      value => value,
+      () => {
+        onDestroy(() => container.prepend(sibling))
+        return [document.createElement('span')]
+      },
+    )
+    container.append(list.marker)
+    list.flush?.()
+    try {
+      batch(() => items([]))
+      expect(container.firstChild).toBe(sibling)
+      expect(container.textContent).toBe('cleanup sibling')
+    } finally {
+      list.dispose()
+      container.remove()
+    }
   })
 
   it('renders keyed list inside ShadowRoot when available', async () => {

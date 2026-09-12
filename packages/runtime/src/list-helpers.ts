@@ -24,7 +24,7 @@ import { insertNodesBefore, removeNodes, toNodeArray } from './node-ops'
 import reconcileArrays from './reconcile'
 import { __fictIsHydrating, __fictIsSSR } from './resume'
 import { batch } from './scheduler'
-import { createSignal, effectScope, flush, setActiveSub, type Signal } from './signal'
+import { createSignal, effectScope, flush, getActiveSub, setActiveSub, type Signal } from './signal'
 import type { FictNode } from './types'
 
 type ListNamespaceContext =
@@ -284,17 +284,20 @@ const MAX_SAFE_VERSION = 0x1fffffffffffff // 2^53 - 1
 export function createVersionedSignalAccessor<T>(initialValue: T): Signal<T> {
   let current = initialValue
   let version = 0
-  const track = createSignal(version)
+  // Stable captures read the item outside tracking. Allocate a graph node only
+  // when a consumer actually subscribes; later tracked reads still see all writes.
+  let track: Signal<number> | undefined
 
   function accessor(value?: T): T | void {
     if (arguments.length === 0) {
-      track()
+      if (!track && getActiveSub()) track = createSignal(version)
+      track?.()
       return current
     }
     current = value as T
     // This is safe because we only care about version changes, not absolute values
     version = version >= MAX_SAFE_VERSION ? 1 : version + 1
-    track(version)
+    track?.(version)
   }
 
   return accessor as Signal<T>
@@ -477,11 +480,12 @@ function createKeyedBlock<T>(
       const rendered = render(itemSig, indexSig, key)
       // If render returns real DOM nodes/arrays, preserve them to avoid
       // reparenting side-effects (tests may pre-insert them).
-      if (
-        isNodeLike(rendered, nodeOwnerDocument) ||
-        (Array.isArray(rendered) && rendered.every(n => isNodeLike(n, nodeOwnerDocument)))
-      ) {
-        nodes = toNodeArray(rendered, nodeOwnerDocument)
+      if (isNodeLike(rendered, nodeOwnerDocument)) {
+        // The DOM brand has already been checked, including foreign realms.
+        // Only fragments need flattening (and hydration's claimed-node lookup).
+        nodes = rendered.nodeType === 11 ? toNodeArray(rendered, nodeOwnerDocument) : [rendered]
+      } else if (Array.isArray(rendered) && rendered.every(n => isNodeLike(n, nodeOwnerDocument))) {
+        nodes = rendered
       } else {
         const element =
           namespace === 'parent' && namespaceParent
@@ -864,11 +868,19 @@ function createFineGrainedKeyedList<T>(
             if (failure) throw failure.error
             return
           }
-          // Use Range.deleteContents for efficient bulk DOM removal
-          const range = (parent.ownerDocument ?? markerOwnerDocument).createRange()
-          range.setStartAfter(container.startMarker)
-          range.setEndBefore(container.endMarker)
-          range.deleteContents()
+          if (
+            parent.firstChild === container.startMarker &&
+            parent.lastChild === container.endMarker
+          ) {
+            // An exclusively owned child range can use the platform's whole-
+            // container removal path while preserving both marker identities.
+            parent.replaceChildren(container.startMarker, container.endMarker)
+          } else {
+            const range = (parent.ownerDocument ?? markerOwnerDocument).createRange()
+            range.setStartAfter(container.startMarker)
+            range.setEndBefore(container.endMarker)
+            range.deleteContents()
+          }
         }
         oldBlocks.clear()
         newBlocks.clear()

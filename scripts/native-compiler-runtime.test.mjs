@@ -806,8 +806,8 @@ test('native template extraction preserves static HTML and live binding paths', 
     JSON.parse(template[1]),
     '<section><div data-case="static" id="test" class="foo">Hello</div><button data-case="boolean">Click</button><div data-case="dynamic-attr"></div><div data-case="child">Text <!----> <span>Static</span></div><ul data-case="nested"><li><!----></li></ul></section>',
   )
-  const paths = [...result.code.matchAll(/resolvePath\([^,]+,\s*(\[[\s\d,]*\])\)/g)].map(match =>
-    JSON.parse(match[1]),
+  const paths = [...result.code.matchAll(/resolvePath\([^,]+,\s*(\[[\s\d,]*\]),\s*true\)/g)].map(
+    match => JSON.parse(match[1]),
   )
   assert.deepEqual(paths, [[1], [2], [3], [3, 1], [4, 0], [4, 0, 0]])
 

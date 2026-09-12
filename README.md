@@ -518,10 +518,55 @@ return branches) and lowers them to reactive conditionals.
 
 ## Performance
 
+### js-framework-benchmark — 2026-09-13
+
+Latest complete comparison after the default fixture, compiler, and runtime
+optimizations. Mean total durations are milliseconds, including browser
+rendering; lower is better. Chrome 152.0.7977.83 on macOS arm64, headless, with
+identical per-case throttling. Each case has 15 samples; selection has 25.
+
+| Benchmark                       | Vue Vapor |  Solid | Svelte 5 |   Fict | React Compiler |
+| :------------------------------ | --------: | -----: | -------: | -----: | -------------: |
+| Create rows (1k)                |     30.99 |  30.32 |    31.27 |  35.77 |          36.81 |
+| Replace all rows (1k)           |     35.41 |  35.01 |    36.31 |  41.47 |          45.33 |
+| Partial update (every 10th row) |     19.71 |  18.84 |    19.71 |  19.83 |          25.07 |
+| Select row                      |      6.12 |   6.76 |     9.16 |   6.27 |          13.76 |
+| Swap rows                       |     21.57 |  22.21 |    22.41 |  22.65 |         146.31 |
+| Remove row                      |     17.10 |  16.91 |    17.04 |  17.55 |          19.61 |
+| Create many rows (10k)          |    337.70 | 332.10 |   336.85 | 365.26 |         621.51 |
+| Append rows (1k to 1k)          |     36.83 |  36.72 |    36.93 |  41.53 |          43.36 |
+| Clear rows (1k)                 |     15.00 |  18.53 |    17.09 |  17.43 |          27.57 |
+| **CPU geometric mean**          |     1.012 |  1.039 |    1.082 |  1.101 |          1.745 |
+
+Each case is normalized to its fastest mean among these five implementations;
+the geometric mean gives equal weight to the nine CPU cases. Fict's score is
+**1.100919** to six decimals. Against the original comparison's fixed denominators it
+is **1.104012**, a **16.99%** reduction from **1.329953**.
+The strict **≤1.10** check did **not** pass under either normalization.
+
+The default fixture now uses a selector, per-row label signals, `textContent`,
+and stable row captures. Automatic compiler/runtime optimizations reduce
+template traversal, binding, allocation, and disposal costs. The compiler does
+not infer that source representation for arbitrary applications.
+
+**Versions:** Vue Vapor 3.6.0-alpha.2 · Solid 1.9.3 · Svelte 5.42.1 · Fict 0.34.0
+(workspace implementation based on `27dbe2d9`) · React 19.0.0 with React Compiler
+`19.0.0-beta-37ed2a7-20241206`.
+
+The Fict build passed the browser model and official keyed checks; the reference
+bundles retain their previously checked source and hashes. These are local,
+recorded versions and workloads. See [implemented changes, validation, and
+remaining costs](./docs/runtime-benchmark.md#implemented-optimizations-2026-09-13)
+and [raw samples and exact source/bundle provenance](./docs/benchmarks/runtime-implementation-2026-09-13.json).
+The earlier five-framework comparison and source experiments remain below.
+
+<details>
+<summary><strong>Previous five-framework comparison and source experiments — 2026-09-12</strong></summary>
+
 ### js-framework-benchmark — 2026-09-12
 
-Fresh same-run comparison of Vue Vapor, Solid, Svelte, the final Fict runtime,
-and React Compiler. Mean total durations are milliseconds, including browser
+Historical same-run comparison of Vue Vapor, Solid, Svelte, the Fict runtime
+after the first audit, and React Compiler. Mean total durations are milliseconds, including browser
 rendering; lower is better. Chrome 152.0.7977.83 on macOS arm64, headless, using
 identical per-case CPU throttling. Each case has 15 samples; selection has 25.
 
@@ -549,6 +594,36 @@ All five entries passed the official keyed correctness checks. These are the
 recorded versions and workload implementations, not a survey of current releases.
 See [conditions and implementation details](./docs/runtime-benchmark.md#framework-comparison-2026-09-12)
 and [all 45 results, samples, and provenance](./docs/benchmarks/js-framework-benchmark-2026-09-12.json).
+
+### Source optimization experiment — 2026-09-12
+
+A later experiment using the same runtime reached **1.128** by changing the
+benchmark source to use `createSelector`, per-row label signals, `textContent`,
+and stable row objects. This is a **15.15% reduction** in geometric-mean total
+duration against the fixed normalization baseline of the five-framework table.
+These measurements predate the compiler/runtime changes described in the latest
+implementation results. The source strategy is now used by the default fixture;
+the generated-code prototypes remain archived experiments.
+
+| Implementation                           | CPU geometric mean |
+| :--------------------------------------- | -----------------: |
+| Original fixture, reference batch        |              1.330 |
+| Existing-API source optimization         |          **1.128** |
+| Plus one-time row ID write prototype     |              1.135 |
+| Plus class/label effect fusion prototype |              1.141 |
+
+Each optimized entry has a complete nine-case measurement with 15 samples per
+case, except selection with 25. The original and optimized entries were measured
+in separate batches; Solid and Vue Vapor were remeasured as references. The two
+generated-code prototypes did not improve the aggregate score. The experiments
+did not reach **1.10**; that required another 2.52% reduction from their best
+measured variant. These experiments do not establish automatic compiler optimizations
+for the original JSX or a new five-framework ranking.
+
+See [case timings, bottlenecks, and experiment scope](./docs/runtime-benchmark.md#source-optimization-experiments-2026-09-12)
+and [all 69 result groups, source snapshots, and provenance](./docs/benchmarks/runtime-optimization-2026-09-12.json).
+
+</details>
 
 <details>
 <summary><strong>Runtime audit: changes and memory</strong></summary>

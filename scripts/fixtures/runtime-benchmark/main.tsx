@@ -1,4 +1,5 @@
-import { $state, render } from 'fict'
+import { $state, render, createSelector, batch, untrack } from 'fict'
+import { createSignal, type Signal } from 'fict/advanced'
 
 const adjectives = [
   'pretty',
@@ -68,22 +69,15 @@ function buildData(count: number) {
   for (let i = 0; i < count; i++) {
     data[i] = {
       id: nextId++,
-      label: `${adjectives[random(adjectives.length)]} ${colours[random(colours.length)]} ${nouns[random(nouns.length)]}`,
+      label: createSignal(
+        `${adjectives[random(adjectives.length)]} ${colours[random(colours.length)]} ${nouns[random(nouns.length)]}`,
+      ),
     }
   }
   return data
 }
 
-function updateEvery10Rows(rows: { id: number; label: string }[]) {
-  const next = rows.slice()
-  for (let i = 0, len = next.length; i < len; i += 10) {
-    const row = next[i]!
-    next[i] = { id: row.id, label: row.label + ' !!!' }
-  }
-  return next
-}
-
-function removeById(rows: { id: number; label: string }[], id: number) {
+function removeById(rows: { id: number; label: Signal<string> }[], id: number) {
   const index = rows.findIndex(row => row.id === id)
   if (index < 0) return rows
   const next = rows.slice()
@@ -102,8 +96,9 @@ function Button(props: any) {
 }
 
 function App() {
-  let data: { id: number; label: string }[] = $state([])
+  let data: { id: number; label: Signal<string> }[] = $state([])
   let selected: number | null = $state(null)
+  const isSelected = createSelector(() => selected)
 
   const run = () => {
     data = buildData(1000)
@@ -120,7 +115,12 @@ function App() {
   }
 
   const update = () => {
-    data = updateEvery10Rows(data)
+    batch(() => {
+      for (let i = 0, rows = data; i < rows.length; i += 10) {
+        const label = rows[i]!.label
+        label(label() + ' !!!')
+      }
+    })
   }
 
   const swapRows = () => {
@@ -171,20 +171,23 @@ function App() {
       </div>
       <table class="table table-hover table-striped test-data">
         <tbody>
-          {data.map(row => (
-            <tr key={row.id} class={row.id === selected ? 'danger' : ''}>
-              <td class="col-md-1">{row.id}</td>
-              <td class="col-md-4">
-                <a onClick={() => select(row.id)}>{row.label}</a>
-              </td>
-              <td class="col-md-1">
-                <a onClick={() => remove(row.id)}>
-                  <span class="glyphicon glyphicon-remove" aria-hidden="true"></span>
-                </a>
-              </td>
-              <td class="col-md-6"></td>
-            </tr>
-          ))}
+          {data.map(item => {
+            const row = untrack(() => item)
+            return (
+              <tr key={item.id} class={isSelected(row.id) ? 'danger' : ''}>
+                <td class="col-md-1" textContent={row.id} />
+                <td class="col-md-4">
+                  <a onClick={() => select(row.id)} textContent={row.label()} />
+                </td>
+                <td class="col-md-1">
+                  <a onClick={() => remove(row.id)}>
+                    <span class="glyphicon glyphicon-remove" aria-hidden="true"></span>
+                  </a>
+                </td>
+                <td class="col-md-6"></td>
+              </tr>
+            )
+          })}
         </tbody>
       </table>
       <span class="preloadicon glyphicon glyphicon-remove" aria-hidden="true"></span>

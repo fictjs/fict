@@ -1,7 +1,7 @@
 import { enterRootGuard, exitRootGuard } from './cycle-guard'
 import { getSafeDevtoolsHook as getDevtoolsHook } from './devtools'
 import { runOutsideComponentRender } from './render-phase'
-import { getActiveSub, untrack, type ReactiveNode } from './signal'
+import { getActiveSub, setActiveSub, untrack, type ReactiveNode } from './signal'
 import type { Cleanup, ErrorInfo, SuspenseToken } from './types'
 
 const isDev =
@@ -11,6 +11,7 @@ const isDev =
 
 type LifecycleFn = () => void | Cleanup
 type MountPhase = 'flushing' | 'mounted'
+const ROOT_MOUNT_PHASE = Symbol('fict:root-mount-phase')
 
 export type RenderNamespaceContext =
   | 'html'
@@ -21,6 +22,7 @@ export type RenderNamespaceContext =
   | null
 
 export interface RootContext {
+  [ROOT_MOUNT_PHASE]?: MountPhase | undefined
   parent?: RootContext | undefined
   ownerDocument?: Document | undefined
   renderNamespace?: RenderNamespaceContext | undefined
@@ -84,13 +86,14 @@ type SuspenseHandler = (token: SuspenseToken | PromiseLike<unknown>) => boolean 
 let currentRoot: RootContext | undefined
 export interface EffectCleanupScope {
   cleanups: Cleanup[] | undefined
+  /** A render effect with no dependencies or cleanup can finish immediately. */
+  released?: boolean
 }
 
 let currentEffectCleanups: EffectCleanupScope | undefined
 let currentEffectCleanupOwner: ReactiveNode | undefined
 let currentEffectCleanupRoot: RootContext | undefined
 const rootDevtoolsIds = new WeakMap<RootContext, number>()
-const rootMountPhases = new WeakMap<RootContext, MountPhase>()
 let nextRootDevtoolsId = 0
 
 function registerRootDevtools(root: RootContext): void {
@@ -127,8 +130,12 @@ export function createRootContext(parent?: RootContext): RootContext {
     cleanups: [],
     destroyCallbacks: [],
     suspended: false,
+    destroying: false,
+    destroyed: false,
+    [ROOT_MOUNT_PHASE]: undefined as MountPhase | undefined,
   }
-  // Absence means pending. Short-lived evaluation roots often never mount.
+  // Undefined means pending; the mount phase lives with its root, without a
+  // second WeakMap entry for every mounted row.
   registerRootDevtools(root)
   return root
 }
@@ -158,7 +165,7 @@ export function onMount(fn: LifecycleFn): void {
   if (root) {
     if (root.destroying || root.destroyed) return
     ;(root.onMountCallbacks ||= []).push(fn)
-    if (rootMountPhases.get(root) === 'mounted') flushOnMount(root)
+    if (root[ROOT_MOUNT_PHASE] === 'mounted') flushOnMount(root)
     return
   }
   runLifecycle(fn)
@@ -183,13 +190,13 @@ export function flushOnMount(root: RootContext): void {
     if (root.onMountCallbacks) root.onMountCallbacks.length = 0
     return
   }
-  if (rootMountPhases.get(root) === 'flushing') return
+  if (root[ROOT_MOUNT_PHASE] === 'flushing') return
   const cbs = root.onMountCallbacks
   if (!cbs || cbs.length === 0) {
-    rootMountPhases.set(root, 'mounted')
+    root[ROOT_MOUNT_PHASE] = 'mounted'
     return
   }
-  rootMountPhases.set(root, 'flushing')
+  root[ROOT_MOUNT_PHASE] = 'flushing'
   try {
     withRootContext(root, () => {
       for (let i = 0; i < cbs.length; i++) {
@@ -202,7 +209,7 @@ export function flushOnMount(root: RootContext): void {
     })
   } finally {
     cbs.length = 0
-    if (!root.destroying && !root.destroyed) rootMountPhases.set(root, 'mounted')
+    if (!root.destroying && !root.destroyed) root[ROOT_MOUNT_PHASE] = 'mounted'
   }
 }
 
@@ -290,9 +297,9 @@ export function destroyRoot(root: RootContext): void {
     }
     if (root.deferredRefAssignments) {
       root.deferredRefAssignments.length = 0
+      root.deferredRefAssignments = undefined
     }
-    root.deferredRefAssignments = undefined
-    root.deferRefAssignments = false
+    if (root.deferRefAssignments) root.deferRefAssignments = false
     if (root.errorHandlers) {
       root.errorHandlers.length = 0
     }
@@ -380,30 +387,34 @@ export function runCleanupList(list: Cleanup[], root?: RootContext): void {
   let error: unknown
   let didThrow = false
   const prevEffectCleanups = currentEffectCleanups
+  const prevRoot = currentRoot
   // Disposal can happen inside another effect's body. New cleanup registered
   // by a teardown belongs to the root being drained, not that caller's bucket.
   currentEffectCleanups = undefined
+  currentRoot = root
   try {
-    withRootContext(root, () => {
-      runOutsideComponentRender(() =>
-        untrack(() => {
-          while (list.length > 0) {
-            try {
-              list.pop()?.()
-            } catch (err) {
-              if (!didThrow) {
-                error = err
-                didThrow = true
-              }
+    runOutsideComponentRender(() => {
+      const prevSub = setActiveSub(undefined)
+      try {
+        while (list.length > 0) {
+          try {
+            list.pop()?.()
+          } catch (err) {
+            if (!didThrow) {
+              error = err
+              didThrow = true
             }
           }
-        }),
-      )
-      if (didThrow && !handleError(error, { source: 'cleanup' }, root)) {
-        throw error
+        }
+      } finally {
+        setActiveSub(prevSub)
       }
     })
+    if (didThrow && !handleError(error, { source: 'cleanup' }, root)) {
+      throw error
+    }
   } finally {
+    currentRoot = prevRoot
     currentEffectCleanups = prevEffectCleanups
   }
 }

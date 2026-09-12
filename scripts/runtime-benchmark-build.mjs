@@ -17,16 +17,22 @@ const { values } = parseArgs({
       default: path.join(repositoryRoot, 'js-framework-benchmark'),
     },
     name: { type: 'string', default: 'fict-local' },
+    source: { type: 'string' },
+    sourcemap: { type: 'boolean', default: false },
   },
 })
 assert.match(values.name, /^fict-[a-z0-9-]+$/)
 const benchmarkRoot = path.resolve(values['benchmark-root'])
 const outputRoot = path.join(benchmarkRoot, 'frameworks/keyed', values.name)
 const fixtureRoot = path.join(import.meta.dirname, 'fixtures/runtime-benchmark')
+const sourcePath = path.resolve(values.source ?? path.join(fixtureRoot, 'main.tsx'))
 const git = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8' }).trim()
 const sourceIdentity = () => ({
   revision: git(repositoryRoot, 'rev-parse', 'HEAD'),
   runtimeDiff: git(repositoryRoot, 'diff', 'HEAD', '--', 'packages/runtime/src'),
+  compilerDiff: git(repositoryRoot, 'diff', 'HEAD', '--', 'crates'),
+  fixtureDiff: git(repositoryRoot, 'diff', 'HEAD', '--', path.relative(repositoryRoot, sourcePath)),
+  toolingDiff: git(repositoryRoot, 'diff', 'HEAD', '--', 'scripts/runtime-benchmark-build.mjs'),
 })
 const initialIdentity = sourceIdentity()
 for (const args of [
@@ -44,7 +50,7 @@ const nativePath = path.resolve(
     path.join(repositoryRoot, 'target/release/fict_compiler_napi.node'),
 )
 const binding = require(nativePath)
-const source = await readFile(path.join(fixtureRoot, 'main.tsx'), 'utf8')
+const source = await readFile(sourcePath, 'utf8')
 const result = binding.transformSync({
   code: source,
   filename: '/js-framework-benchmark/main.tsx',
@@ -54,6 +60,7 @@ assert.ok(result.code, JSON.stringify(result.diagnostics))
 assert.equal(result.diagnostics.filter(diagnostic => diagnostic.severity === 'error').length, 0)
 assert.doesNotMatch(result.code, /\$state\s*\(/)
 await mkdir(outputRoot, { recursive: true })
+await writeFile(path.join(outputRoot, 'source.tsx'), source)
 await writeFile(path.join(outputRoot, 'compiled.js'), result.code)
 await copyFile(path.join(fixtureRoot, 'index.html'), path.join(outputRoot, 'index.html'))
 
@@ -85,6 +92,7 @@ const bundle = await build({
     emptyOutDir: true,
     minify: true,
     target: 'es2022',
+    sourcemap: values.sourcemap,
     lib: {
       entry: path.join(outputRoot, 'compiled.js'),
       formats: ['es'],
@@ -140,9 +148,12 @@ await writeFile(
   ) + '\n',
 )
 const sha256 = value => createHash('sha256').update(value).digest('hex')
-assert.deepEqual(sourceIdentity(), initialIdentity, 'Runtime source changed during the build')
+assert.deepEqual(sourceIdentity(), initialIdentity, 'Benchmark inputs changed during the build')
 const provenance = {
   ...initialIdentity,
+  sourcePath: path.relative(repositoryRoot, sourcePath),
+  compilerOptions: { dev: false, strictGuarantee: false },
+  sourceMap: values.sourcemap,
   benchmarkRevision: git(benchmarkRoot, 'rev-parse', 'HEAD'),
   compilerBuildId: result.compilerBuildId,
   nativeSha256: sha256(await readFile(nativePath)),

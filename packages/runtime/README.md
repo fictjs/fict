@@ -134,17 +134,33 @@ Recommendation:
 
 ## Performance
 
-The [2026-09-12 runtime audit](../../docs/runtime-benchmark.md#recorded-snapshot-2026-09-12) compares
-`43ecf80` with `b79c6494` using the same native-compiled js-framework-benchmark
-fixture. Seven of nine CPU total-duration means improved; creating 1,000 rows
-improved 4.04%, selection 5.64%, and page memory after clearing decreased 7.20%.
-Swap and single-row removal means increased slightly. These results are specific
-to the recorded environment and revisions.
+The latest five-framework CPU score is **1.100919**; the original fixed-baseline
+score is **1.104012**. The strict **≤1.10** check did **not** pass under either normalization.
 
-See the [measurement and reproduction guide](../../docs/runtime-benchmark.md)
-for sample counts, repeated measurements, reference results, and raw data. The
-[README comparison](../../README.md#performance) also includes a fresh same-run CPU
-batch with Vue Vapor, Solid, Svelte, and React Compiler.
+Separate three-sample page-memory measurements compare the original fixture and
+runtime with the combined implementation: **5.324 → 4.440 MiB** after creating
+1,000 rows and **1.411 → 1.292 MiB** after clearing. Ready-page memory changes from
+**0.894 → 0.905 MiB**. The detailed results also include a baseline using the
+optimized fixture with the original runtime.
+
+The [2026-09-13 implementation](../../docs/runtime-benchmark.md#implemented-optimizations-2026-09-13)
+optimizes template traversal, text-property bindings, render-effect ownership,
+keyed-item signal allocation, and root/list disposal. The default benchmark also
+adopts a selector, per-row label signals, and stable row objects. Those source
+choices are explicit; the compiler does not infer them for arbitrary row models.
+
+The [main README](../../README.md#performance) contains the latest complete CPU
+comparison with Vue Vapor, Solid, Svelte, and React Compiler. The
+[implementation archive](../../docs/benchmarks/runtime-implementation-2026-09-13.json)
+preserves all samples, both normalization baselines, the strict unrounded 1.10
+check, and exact runtime/compiler/source/bundle provenance. The
+[measurement guide](../../docs/runtime-benchmark.md#setup-and-validation) covers
+reproduction and separate correctness checks.
+
+The [earlier runtime audit](../../docs/runtime-benchmark.md#recorded-snapshot-2026-09-12)
+and [source-only experiments](../../docs/runtime-benchmark.md#source-optimization-experiments-2026-09-12)
+remain available as history. They measured different stages of the implementation
+and are not the latest workspace results.
 
 ## Runtime Stability Stress
 

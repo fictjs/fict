@@ -46,18 +46,19 @@ function matchesDomConstructor<T>(
   brandProperty: string,
   acceptsBrand: (brand: unknown) => boolean = () => true,
 ): boolean | undefined {
-  const valueDocument = getOwnerDocument(value)
-  const valueCtor = hasCtor<T>(valueDocument, name)
-  const ownerCtor =
-    ownerDocument && ownerDocument !== valueDocument ? hasCtor<T>(ownerDocument, name) : undefined
+  // A Web IDL getter accepts branded nodes from other realms too. Try the
+  // known host document first, avoiding an ownerDocument lookup on every node.
+  // Server DOMs whose getters are realm-specific still get the value's realm.
+  const ownerCtor = ownerDocument ? hasCtor<T>(ownerDocument, name) : undefined
+  let valueCtor: DomConstructor<T> | undefined
 
   let foundBrandGetter = false
 
   // There are at most two constructors. Avoid allocating a Set and three
   // arrays for every DOM node tested while keeping both realm checks.
   for (let i = 0; i < 2; i++) {
-    const ctor = i === 0 ? valueCtor : ownerCtor
-    if (!ctor || (i === 1 && ctor === valueCtor)) continue
+    const ctor = i === 0 ? ownerCtor : (valueCtor = hasCtor<T>(getOwnerDocument(value), name))
+    if (!ctor || (i === 1 && ctor === ownerCtor)) continue
     const getter = getDomBrandGetter(ctor, brandProperty)
     if (!getter) continue
     foundBrandGetter = true

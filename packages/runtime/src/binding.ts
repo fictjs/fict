@@ -757,6 +757,19 @@ function isAttributeCurrent(
  * Bind a reactive value to an element's property.
  */
 export function bindProperty(el: Element, key: string, getValue: () => unknown): Cleanup {
+  if (key === 'textContent') {
+    // A fixed property needs no per-element property dictionary. Keep property
+    // coercion (including booleans/objects) distinct from JSX text formatting,
+    // and check the live DOM so an external mutation is repaired on the next run.
+    let previous: unknown
+    return createRenderEffect(() => {
+      const value = getValue()
+      const next = value == null ? '' : value
+      if (previous === value && el.textContent === next) return
+      el.textContent = next as string
+      previous = value
+    })
+  }
   return createRenderEffect(() => setProp(el, key, getValue()))
 }
 

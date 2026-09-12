@@ -8,6 +8,7 @@ import {
   registerManagedEffectCleanup,
   registerRootCleanup,
   withRootContext,
+  type EffectCleanupScope,
   type RootContext,
 } from './lifecycle'
 import { runOutsideComponentRender } from './render-phase'
@@ -318,6 +319,7 @@ let inCleanup = false
 const SIGNAL_MARKER = Symbol.for('fict:signal')
 const COMPUTED_MARKER = Symbol.for('fict:computed')
 const EFFECT_MARKER = Symbol.for('fict:effect')
+const releasedEffectDisposer: EffectDisposer = Object.assign(() => {}, { [EFFECT_MARKER]: true })
 const EFFECT_SCOPE_MARKER = Symbol.for('fict:effectScope')
 export const ReactiveFlags = {
   None: 0,
@@ -1587,6 +1589,7 @@ export function effectWithCleanup(
   root?: RootContext,
   options?: EffectOptions,
   onDispose?: () => void,
+  releaseUnobserved?: EffectCleanupScope,
 ): EffectDisposer {
   const e: EffectNode = {
     fn,
@@ -1638,6 +1641,13 @@ export function effectWithCleanup(
     requeueSelfNotifiedEffect(e)
   }
 
+  if (releaseUnobserved && e.deps === undefined && !releaseUnobserved.cleanups) {
+    // The initial body has completed. With neither subscriptions nor owned
+    // children/cleanup there is no future work to retain in its owner graph.
+    disposeNode(e)
+    releaseUnobserved.released = true
+    return releasedEffectDisposer
+  }
   const disposer = effectOper.bind(e) as EffectDisposer & Record<symbol, boolean>
   disposer[EFFECT_MARKER] = true
   return disposer as EffectDisposer

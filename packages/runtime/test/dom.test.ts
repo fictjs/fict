@@ -424,33 +424,38 @@ describe('DOM Module', () => {
   })
 
   describe('hydrateComponent', () => {
-    it('aligns compiled marker paths past server-rendered dynamic text', async () => {
-      container.innerHTML =
-        '<section><span>US East<!----></span><strong>65<!---->%</strong></section>'
-      const label = createSignal('US East')
-      const capacity = createSignal(65)
-      const section = container.firstChild
+    it.each([false, true])(
+      'aligns compiled marker paths past server-rendered dynamic text (fresh=%s)',
+      async fresh => {
+        container.innerHTML =
+          '<section><span>US East<!----></span><strong>65<!---->%</strong></section>'
+        const label = createSignal('US East')
+        const capacity = createSignal(65)
+        const section = container.firstChild
 
-      const teardown = hydrateComponent(() => {
-        const root = template('<section><span><!----></span><strong><!---->%</strong></section>')()
-        const labelParent = resolvePath(root, [0])!
-        const labelMarker = resolvePath(root, [0, 0])!
-        const capacityParent = resolvePath(root, [1])!
-        const capacityMarker = resolvePath(root, [1, 0])!
-        insert(labelParent as ParentNode & Node, label, labelMarker)
-        insert(capacityParent as ParentNode & Node, capacity, capacityMarker)
-      }, container)
+        const teardown = hydrateComponent(() => {
+          const root = template(
+            '<section><span><!----></span><strong><!---->%</strong></section>',
+          )()
+          const labelParent = resolvePath(root, [0], fresh)!
+          const labelMarker = resolvePath(root, [0, 0], fresh)!
+          const capacityParent = resolvePath(root, [1], fresh)!
+          const capacityMarker = resolvePath(root, [1, 0], fresh)!
+          insert(labelParent as ParentNode & Node, label, labelMarker)
+          insert(capacityParent as ParentNode & Node, capacity, capacityMarker)
+        }, container)
 
-      expect(container.firstChild).toBe(section)
-      expect(container.querySelector('span')?.textContent).toBe('US East')
-      expect(container.querySelector('strong')?.textContent).toBe('65%')
+        expect(container.firstChild).toBe(section)
+        expect(container.querySelector('span')?.textContent).toBe('US East')
+        expect(container.querySelector('strong')?.textContent).toBe('65%')
 
-      capacity(70)
-      await tick()
+        capacity(70)
+        await tick()
 
-      expect(container.querySelector('strong')?.textContent).toBe('70%')
-      teardown()
-    })
+        expect(container.querySelector('strong')?.textContent).toBe('70%')
+        teardown()
+      },
+    )
 
     it('splits server text coalesced after a static prefix before an insert marker', async () => {
       container.innerHTML = '<span>US East<!---->:65<!----></span>'
@@ -1419,69 +1424,75 @@ describe('DOM Module', () => {
       warnSpy.mockRestore()
     })
 
-    it('preserves claimed multi-root template nodes during hydration', () => {
-      container.innerHTML = '<div>one</div><p>two</p>'
-      const first = container.firstChild
-      const second = container.lastChild
-      let hydratedNode: Node | null = null
-      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    it.each([false, true])(
+      'preserves claimed multi-root template nodes during hydration (fresh=%s)',
+      fresh => {
+        container.innerHTML = '<div>one</div><p>two</p>'
+        const first = container.firstChild
+        const second = container.lastChild
+        let hydratedNode: Node | null = null
+        const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
 
-      const teardown = hydrateComponent(() => {
-        const factory = template('<div>one</div><p>two</p>')
-        hydratedNode = factory()
-        return hydratedNode
-      }, container)
-
-      expect(container.childNodes).toHaveLength(2)
-      expect(container.firstChild).toBe(first)
-      expect(container.lastChild).toBe(second)
-      expect(hydratedNode).toBeInstanceOf(DocumentFragment)
-      expect(toNodeArray(hydratedNode)).toEqual([first, second])
-      expect(resolvePath(hydratedNode as Node, [1])).toBe(second)
-      expect(first?.parentNode).toBe(container)
-      expect(second?.parentNode).toBe(container)
-
-      teardown()
-      warnSpy.mockRestore()
-    })
-
-    it('preserves mounted multi-root fallback nodes after hydration mismatch', () => {
-      container.innerHTML = '<span>server</span>'
-      const issues: HydrationIssue[] = []
-      let hydratedNode: Node | null = null
-      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
-
-      const teardown = hydrateComponent(
-        () => {
+        const teardown = hydrateComponent(() => {
           const factory = template('<div>one</div><p>two</p>')
           hydratedNode = factory()
           return hydratedNode
-        },
-        container,
-        {
-          onHydrationIssue: issue => issues.push(issue),
-        },
-      )
+        }, container)
 
-      expect(issues).toContainEqual(
-        expect.objectContaining({
-          code: 'node_type_mismatch',
-          expected: 'div',
-          actual: 'span',
-        }),
-      )
-      expect(container.childNodes).toHaveLength(2)
-      expect(container.querySelector('span')).toBeNull()
+        expect(container.childNodes).toHaveLength(2)
+        expect(container.firstChild).toBe(first)
+        expect(container.lastChild).toBe(second)
+        expect(hydratedNode).toBeInstanceOf(DocumentFragment)
+        expect(toNodeArray(hydratedNode)).toEqual([first, second])
+        expect(resolvePath(hydratedNode as Node, [1], fresh)).toBe(second)
+        expect(first?.parentNode).toBe(container)
+        expect(second?.parentNode).toBe(container)
 
-      const nodes = toNodeArray(hydratedNode)
-      expect(nodes.map(node => (node as Element).tagName)).toEqual(['DIV', 'P'])
-      expect(nodes.map(node => node.textContent)).toEqual(['one', 'two'])
-      expect(nodes.every(node => node.isConnected)).toBe(true)
-      expect(resolvePath(hydratedNode as Node, [1])).toBe(nodes[1])
+        teardown()
+        warnSpy.mockRestore()
+      },
+    )
 
-      teardown()
-      warnSpy.mockRestore()
-    })
+    it.each([false, true])(
+      'preserves mounted multi-root fallback nodes after hydration mismatch (fresh=%s)',
+      fresh => {
+        container.innerHTML = '<span>server</span>'
+        const issues: HydrationIssue[] = []
+        let hydratedNode: Node | null = null
+        const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+        const teardown = hydrateComponent(
+          () => {
+            const factory = template('<div>one</div><p>two</p>')
+            hydratedNode = factory()
+            return hydratedNode
+          },
+          container,
+          {
+            onHydrationIssue: issue => issues.push(issue),
+          },
+        )
+
+        expect(issues).toContainEqual(
+          expect.objectContaining({
+            code: 'node_type_mismatch',
+            expected: 'div',
+            actual: 'span',
+          }),
+        )
+        expect(container.childNodes).toHaveLength(2)
+        expect(container.querySelector('span')).toBeNull()
+
+        const nodes = toNodeArray(hydratedNode)
+        expect(nodes.map(node => (node as Element).tagName)).toEqual(['DIV', 'P'])
+        expect(nodes.map(node => node.textContent)).toEqual(['one', 'two'])
+        expect(nodes.every(node => node.isConnected)).toBe(true)
+        expect(resolvePath(hydratedNode as Node, [1], fresh)).toBe(nodes[1])
+
+        teardown()
+        warnSpy.mockRestore()
+      },
+    )
 
     it('replaces non-text hydrated nodes when hydrating text output', () => {
       container.innerHTML = '<span>server</span>'
@@ -2435,7 +2446,7 @@ describe('DOM Module', () => {
       expect(node).toBeInstanceOf(HTMLImageElement)
     })
 
-    it('resolves paths through template element content', () => {
+    it.each([false, true])('resolves paths through template element content (fresh=%s)', fresh => {
       const factory = template(
         '<template><span data-id="inner">inner</span><template><b data-id="nested">nested</b></template></template>',
       )
@@ -2446,8 +2457,25 @@ describe('DOM Module', () => {
       const nested = nestedTemplate.content.querySelector('[data-id="nested"]')
 
       expect(node.childNodes).toHaveLength(0)
-      expect(resolvePath(node, [0])).toBe(inner)
-      expect(resolvePath(node, [1, 0])).toBe(nested)
+      expect(resolvePath(node, [0], fresh)).toBe(inner)
+      expect(resolvePath(node, [1, 0], fresh)).toBe(nested)
+    })
+
+    it('resolves fresh physical paths before sibling bindings populate their markers', () => {
+      const node = template('<div><!----><!----><span><!----></span></div>')()
+      const children = Array.from(node.childNodes)
+      expect(resolvePath(node, [], true)).toBe(node)
+      expect(resolvePath(node, [0], true)).toBe(children[0])
+      expect(resolvePath(node, [1], true)).toBe(children[1])
+      expect(resolvePath(node, [2, 0], true)).toBe(children[2]?.firstChild)
+      expect(resolvePath(node, [3], true)).toBeNull()
+      expect(resolvePath(node, [2, 1, 0], true)).toBeNull()
+    })
+
+    it('resolves fresh fragments and foreign-namespace children', () => {
+      const fragment = template('<svg><g><circle/></g></svg><math><mi>x</mi></math>')()
+      expect(resolvePath(fragment, [0, 0, 0], true)?.nodeName).toBe('circle')
+      expect(resolvePath(fragment, [1, 0], true)?.nodeName).toBe('mi')
     })
 
     it('handles SVG templates', () => {

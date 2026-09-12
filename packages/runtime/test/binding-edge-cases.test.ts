@@ -814,6 +814,46 @@ describe('Binding Edge Cases', () => {
   })
 
   describe('bindProperty', () => {
+    it('preserves textContent property coercion and repairs externally replaced children', () => {
+      const el = document.createElement('div')
+      const value = createSignal<unknown>('first')
+      const refresh = createSignal(0)
+      const dispose = bindProperty(el, 'textContent', () => {
+        refresh()
+        return value()
+      })
+      try {
+        expect(el.textContent).toBe('first')
+        for (const [input, expected] of [
+          [false, 'false'],
+          [true, 'true'],
+          [42, '42'],
+          [null, ''],
+          [undefined, ''],
+          ['again', 'again'],
+        ] as const) {
+          batch(() => value(input))
+          expect(el.textContent).toBe(expected)
+        }
+        const child = document.createElement('b')
+        child.textContent = 'external'
+        el.replaceChildren(child)
+        batch(() => refresh(1))
+        expect(el.textContent).toBe('again')
+        expect(child.parentNode).toBeNull()
+
+        let conversions = 0
+        batch(() => value({ toString: () => `object-${++conversions}` }))
+        expect(el.textContent).toBe('object-1')
+        batch(() => refresh(2))
+        expect(el.textContent).toBe('object-2')
+      } finally {
+        dispose()
+      }
+      batch(() => value('disposed'))
+      expect(el.textContent).toBe('object-2')
+    })
+
     it('unwraps and reactively patches dangerouslySetInnerHTML payloads', async () => {
       const el = document.createElement('div')
       const html = createSignal('<b>first</b>')
