@@ -40,6 +40,11 @@ const proxyCache = new WeakMap<object, unknown>()
 const signalCache = new WeakMap<object, Map<string | symbol, SignalAccessor<unknown>>>()
 // Map of target object -> Map<key, presence Signal>
 const presenceSignalCache = new WeakMap<object, Map<string | symbol, SignalAccessor<boolean>>>()
+// Descriptor reflection must not evaluate getters or share value equality.
+const descriptorSignalCache = new WeakMap<
+  object,
+  Map<string | symbol, SignalAccessor<PropertyDescriptor | undefined>>
+>()
 // Map of target object -> monotonically increasing iterate version
 const iterateVersionCache = new WeakMap<object, number>()
 const defineNotificationSuppressions = new WeakMap<object, Set<string | symbol>>()
@@ -145,22 +150,6 @@ function descriptorContentChanged(
   if (!before || !after) return false
   if ('value' in before && 'value' in after) return before.value !== after.value
   return false
-}
-
-function descriptorValue(
-  target: object,
-  prop: string | symbol,
-  descriptor: PropertyDescriptor | undefined,
-  receiver: object,
-  fallback: unknown,
-): unknown {
-  if (!descriptor) return fallback
-  if ('value' in descriptor) return descriptor.value
-  try {
-    return Reflect.get(target, prop, receiver)
-  } catch {
-    return fallback
-  }
 }
 
 type ReactiveCollection =
@@ -317,8 +306,13 @@ function wrap<T>(value: T): T {
       return Reflect.ownKeys(target)
     },
     getOwnPropertyDescriptor(target, prop) {
-      track(target, prop)
-      return Reflect.getOwnPropertyDescriptor(target, prop)
+      const descriptor = Reflect.getOwnPropertyDescriptor(target, prop)
+      // Reflect.set consults the receiver's descriptor as part of assignment;
+      // that internal check is not an observable read by the calling effect.
+      if (!isDefineNotificationSuppressed(target, prop)) {
+        trackDescriptor(target, prop, descriptor)
+      }
+      return descriptor
     },
     set(target, prop, value, receiver) {
       if (prop === PROXY || prop === TARGET) return false
@@ -353,6 +347,7 @@ function wrap<T>(value: T): T {
           trigger(target, prop, isArrayLength ? target.length : value, true)
         }
         triggerPresence(target, prop)
+        triggerDescriptor(target, prop)
         if (!hadKey) {
           trigger(target, ITERATE_KEY)
         }
@@ -360,11 +355,13 @@ function wrap<T>(value: T): T {
           const nextLength = target.length
           if (typeof oldLength === 'number' && nextLength !== oldLength) {
             trigger(target, 'length')
+            triggerDescriptor(target, 'length')
           }
         }
         if (isArrayLength) {
           const nextLength = target.length
           if (typeof oldLength === 'number' && nextLength < oldLength) {
+            triggerTruncatedDescriptors(target, nextLength, oldLength)
             const signals = signalCache.get(target)
             if (signals) {
               for (const key of signals.keys()) {
@@ -406,13 +403,10 @@ function wrap<T>(value: T): T {
 
       const nextDescriptor = Reflect.getOwnPropertyDescriptor(target, prop)
       const hasKey = Object.prototype.hasOwnProperty.call(target, prop)
-      trigger(
-        target,
-        prop,
-        descriptorValue(target, prop, nextDescriptor, proxy as object, undefined),
-        true,
-      )
+      if (nextDescriptor && !('value' in nextDescriptor)) invalidateProperty(target, prop)
+      else trigger(target, prop, nextDescriptor?.value, true)
       triggerPresence(target, prop)
+      triggerDescriptor(target, prop)
 
       if (hadKey !== hasKey || descriptorShapeChanged(oldDescriptor, nextDescriptor)) {
         trigger(target, ITERATE_KEY)
@@ -421,8 +415,10 @@ function wrap<T>(value: T): T {
       if (Array.isArray(target)) {
         if (target.length !== oldLength) {
           trigger(target, 'length', target.length, true)
+          triggerDescriptor(target, 'length')
         }
         if (prop === 'length' && typeof oldLength === 'number' && target.length < oldLength) {
+          triggerTruncatedDescriptors(target, target.length, oldLength)
           const signals = signalCache.get(target)
           if (signals) {
             for (const key of signals.keys()) {
@@ -457,6 +453,7 @@ function wrap<T>(value: T): T {
       if (result) {
         trigger(target, prop)
         triggerPresence(target, prop)
+        triggerDescriptor(target, prop)
         if (hadKey) {
           trigger(target, ITERATE_KEY)
         }
@@ -536,6 +533,40 @@ function triggerPresence(target: object, prop: string | symbol) {
   const signal = presenceSignalCache.get(target)?.get(prop)
   if (signal) {
     signal(Reflect.has(target, prop))
+  }
+}
+
+function trackDescriptor(
+  target: object,
+  prop: string | symbol,
+  descriptor: PropertyDescriptor | undefined,
+) {
+  if (!getActiveSub()) return
+  let signals = descriptorSignalCache.get(target)
+  if (!signals) {
+    signals = new Map()
+    descriptorSignalCache.set(target, signals)
+  }
+  let s = signals.get(prop)
+  if (!s) {
+    s = signal(descriptor, { equals: (a, b) => !descriptorContentChanged(a, b) })
+    signals.set(prop, s)
+  }
+  s()
+}
+
+function triggerDescriptor(target: object, prop: string | symbol) {
+  const s = descriptorSignalCache.get(target)?.get(prop)
+  if (s) s(Reflect.getOwnPropertyDescriptor(target, prop))
+}
+
+function triggerTruncatedDescriptors(target: object, nextLength: number, oldLength: number) {
+  const signals = descriptorSignalCache.get(target)
+  if (!signals) return
+  for (const key of signals.keys()) {
+    if (isArrayIndexKey(key) && Number(key) >= nextLength && Number(key) < oldLength) {
+      triggerDescriptor(target, key)
+    }
   }
 }
 
