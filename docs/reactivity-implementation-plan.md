@@ -17,7 +17,7 @@ not only an analysis pass, an API sketch, or a passing unrelated test suite.
 | S6   | Local build caches include the native compiler source and artifact identity used by each host.                                                                        | A changed compiler invalidates dependent build tasks; final qualification forces fresh application builds.                                                                                    | Complete |
 | S7   | Bundle-size gates resolve distributed modules without silently following workspace source aliases.                                                                    | Actual ESM/CJS package measurements, import-specific budgets, and an executable resolution check.                                                                                             | Complete |
 | G1   | Safe implicit memos with one logical JSX consumer can be removed without erasing observable computation or ownership semantics.                                       | Native output and browser/SSR behavior across safe/full/disabled options, explicit memo, multi-consumer, coercion, errors, and cleanup controls.                                              | Complete |
-| G2   | Reactive allocation and optimization decisions are traceable from source consumers through EmitIR to generated bindings and owners.                                   | Verified graph/decision information and final-output counters, including reasons for materialization, inlining, retention, and rejected fusion.                                               | Pending  |
+| G2   | Reactive allocation and optimization decisions are traceable from source consumers through EmitIR to generated bindings and owners.                                   | Verified graph/decision information and final-output counters, including reasons for materialization, inlining, retention, and rejected fusion.                                               | Complete |
 | G3   | Existing SSA simplification facts and lazy placement opportunities are either safely realized in emitted code or accurately reported as retained work.                | Semantic differential tests and final generated-code evidence; no claims based solely on unused analysis fields.                                                                              | Pending  |
 | G4   | Creation, replacement, and append costs are profiled and reduced where measurements support safe changes.                                                             | Controlled allocation/CPU profiles, complete repeated benchmark batches, memory and disposal checks, documented rejected experiments.                                                         | Pending  |
 | G5   | README performance claims correspond to the qualified strict build and identify versions, artifact hashes, normalization, uncertainty, and the unrounded 1.10 target. | Frozen source/build provenance, complete keyed/browser checks, reproducible archive and README data validation.                                                                               | Pending  |
@@ -246,6 +246,42 @@ output and correctness results; no CPU improvement or 1.10 score is inferred.
 The complete `pnpm commit` preflight also passes, including the fresh workspace
 build, frozen corpus, distributed size limits, review regressions, workspace
 tests, production/test typechecks, formatting and lint.
+
+## G2: source, plan and final-output tracing
+
+`options.explain` now includes an optional versioned
+[reactive graph trace](./reactive-graph-trace.md). It preserves source binding and
+reference identities, EmitIR slots and operation indices, known storage/cleanup
+owners, operation purposes, actual inline decisions, and resolved helper calls
+in the reparsed main output. Independent TypeScript parsing checks final call
+spans, lexical parents and counts in ESM/CommonJS, both DOM backends and all
+three optimizer profiles. Source reference counts do not count generated namespace
+copies as additional authored consumers.
+
+The trace separates planned work from final call sites. It reports preserved
+explicit/runtime creations, policy restrictions, shared or unused memos,
+uncached derivations, and missing movement/lifetime proofs. General fusion is
+explicitly not attempted. Static function/call counts do not claim dynamic node
+counts, CPU cost, imported implementation coverage, or Preview handler-artifact
+coverage. Synthetic source/operation associations remain absent when unproved.
+The existing result-payload limit also bounds explanations.
+
+Validation: all 588 native compiler tests pass, including 22 graph cases, real
+ESM/CJS facade examples, worker-pool parity, effect/event cleanup identities,
+source captures, limits and independent output parsing. Tracing on/off is
+observational across all 3,172 frozen requests; 2,807 accepted requests produce a
+reconciled trace. Compared with the retained G1 addon, every complete result is
+unchanged after excluding timing/build identity and removing the new graph field.
+Only five already-explained replay fixtures need deterministic digest updates;
+JavaScript, maps, diagnostics, metadata, artifacts, existing explain events and
+core counters remain identical. Primary corpus/oracle hashes and all legacy
+capture data are preserved.
+
+Both Rust frozen replay suites, all-target/all-feature Clippy, 119 compiler package
+tests, compiler typechecking/lint and 63 corpus/guard contract tests pass. The
+[evidence archive](./testing/reactive-graph-trace-evidence-2026-09-14.json) records
+the five reviewed reports and exact source/native identities. No CPU or runtime
+allocation improvement is attributed to this observational feature.
 
 ## A1: executable async readiness contract
 

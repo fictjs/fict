@@ -65,6 +65,8 @@ mod named_evaluation;
 mod operation_support;
 mod polymorphic_root;
 mod pure_optimizer;
+mod reactive_graph;
+mod reactive_graph_output;
 mod reactive_mutations;
 mod semantic_identity;
 
@@ -80,6 +82,18 @@ pub fn emit_program(
     filename: &str,
     options: OxcCompileOptions,
     emit: &EmitProgram,
+) -> OxcCompileOutput {
+    emit_program_with_trace(source, filename, options, emit, false)
+}
+
+/// Emit the same program with an optional observational source/plan/output trace.
+#[must_use]
+pub fn emit_program_with_trace(
+    source: &str,
+    filename: &str,
+    options: OxcCompileOptions,
+    emit: &EmitProgram,
+    trace: bool,
 ) -> OxcCompileOutput {
     let mut diagnostics = unsupported_operations(emit);
     if !diagnostics.is_empty() {
@@ -183,6 +197,7 @@ pub fn emit_program(
     );
     let jsx_inline_reads =
         jsx_derived_inline::analyze(&program, &identities, emit, &creations.derived_bindings);
+    let mut reactive_graph = trace.then(|| reactive_graph::prepare(&program, &identities, emit));
     let mut rewriter = AstRewriter {
         allocator: &allocator,
         creations: &creations.expressions,
@@ -463,6 +478,15 @@ pub fn emit_program(
         Ok(inlined) => inlined,
         Err(findings) => return failed_output(findings),
     };
+    if let Some(graph) = &mut reactive_graph {
+        reactive_graph::decisions(
+            graph,
+            emit,
+            &creations.derived_bindings,
+            &inlined_derived,
+            &jsx_inline_reads,
+        );
+    }
     if let Some(plan) = &full_optimization {
         full_optimizer::rewrite(&allocator, &mut program, &identities, plan);
     }
@@ -762,6 +786,9 @@ pub fn emit_program(
     } else {
         input_source_type
     };
+    let output_trace = reactive_graph
+        .as_ref()
+        .map(|_| reactive_graph_output::capture(&program, rebuilt.semantic.scoping(), emit));
     let generated = Codegen::new()
         .with_options(CodegenOptions {
             source_map_path: options.sourcemap.then(|| PathBuf::from(filename)),
@@ -796,11 +823,21 @@ pub fn emit_program(
     if validation_has_errors {
         return failed_output(diagnostics);
     }
+    if let (Some(graph), Some(captured)) = (&mut reactive_graph, output_trace) {
+        reactive_graph_output::finish(
+            graph,
+            captured,
+            &validation.program,
+            validation_semantic.semantic.scoping(),
+            source.len(),
+        );
+    }
     OxcCompileOutput {
         code: generated.code,
         source_map_json: generated.map.map(|map| map.to_json_string()),
         handler_artifacts,
         runtime_helpers,
+        reactive_graph,
         diagnostics: sorted(diagnostics),
     }
 }

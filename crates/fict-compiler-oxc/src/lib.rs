@@ -14,6 +14,7 @@ mod frontend;
 mod hir_builder;
 mod jsx_text;
 mod preview_codegen;
+pub mod reactive_graph;
 mod scan;
 mod source_map;
 mod typescript;
@@ -23,7 +24,7 @@ pub use compile::{
     OxcCompileOptions, OxcCompileOutput, OxcHandlerArtifact, OxcModuleKind, OxcSourceLanguage,
     compile_disabled, compile_passthrough,
 };
-pub use emit_codegen::emit_program;
+pub use emit_codegen::{emit_program, emit_program_with_trace};
 pub use facts::{
     FictDirectiveKind, FictReturnShape, FrontendDirective, FrontendSourceFacts,
     FrontendSuppression, ParsedFictReturn, PureAnnotation, PureComment, PureCommentKind,
@@ -38,6 +39,7 @@ pub use frontend::{
 pub use hir_builder::{
     HirAnalysisBudgets, HirBuildOptions, HirBuildOutput, OxcSyntaxFragment, build_hir,
 };
+pub use reactive_graph::OxcReactiveGraph;
 pub use scan::{
     OxcScanOutput, ScanModuleRequest, ScanModuleRequestKind, scan_static_module_requests,
 };

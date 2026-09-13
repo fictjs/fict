@@ -599,6 +599,7 @@ for the earlier five-framework comparison and source experiments.
 | [Architecture](./docs/architecture.md)                            | How the compiler and runtime work      |
 | [API Reference](./docs/api-reference.md)                          | Complete API documentation             |
 | [Compiler Spec](./docs/compiler-spec.md)                          | Formal semantics                       |
+| [Reactive Graph Trace](./docs/reactive-graph-trace.md)            | Source plans and final helper calls    |
 | [Migration Guide](./docs/migration-guide.md)                      | React/Vue/Svelte/Solid migration       |
 | [Strict Guarantee Cookbook](./docs/strict-guarantee-cookbook.md)  | Fail-closed diagnostic rewrites        |
 | [Store API](./docs/store-api.md)                                  | `$state` vs `$store` ownership         |

@@ -12,25 +12,25 @@
     "fileOverrideRatchetReductionLines": 100
   },
   "total": {
-    "reviewedLines": 190972,
-    "maxLines": 192000,
-    "rationale": "G1 adds a focused source consumer and scalar-write proof, then reconciles generated namespace copies by binding and name. Review the accumulated async/JSX correctness work and this bounded optimization module; restore at least 1000 lines of policy reserve. Central builder, codegen, verifier and default per-file ceilings are unchanged."
+    "reviewedLines": 191860,
+    "maxLines": 193000,
+    "rationale": "G2 adds opt-in source/EmitIR/output tracing in focused modules, including independently verified static calls, ownership and cleanup facts. Review these observational additions and preserve the minimum 1000-line reserve. All central orchestration and per-file ceilings remain unchanged."
   },
   "defaultFileMaxLines": 2000,
   "crates": {
     "fict-compiler": {
-      "reviewedLines": 31196,
+      "reviewedLines": 31216,
       "maxLines": 31400,
-      "rationale": "Async metadata uses the same derived-getter plan as emission, including snapshots, callable resolved values and selected accessor wrappers."
+      "rationale": "Attach the optional graph only to successful explanation output; existing bounded-result validation also covers its serialized payload."
     },
     "fict-compiler-napi": {
       "reviewedLines": 1389,
       "maxLines": 1500
     },
     "fict-compiler-oxc": {
-      "reviewedLines": 122616,
-      "maxLines": 123000,
-      "rationale": "Logical JSX consumer inlining adds a focused scalar and write-dependency proof. Existing inliner ownership checks remain intact for unproved expressions; generated-copy lookup verifies source binding and name. No increase to orchestration or individual file ceilings."
+      "reviewedLines": 123488,
+      "maxLines": 124000,
+      "rationale": "G2 owns its trace schema, source-plan collection and post-codegen census in separate modules. Explain-disabled compilation skips collection; exact final call spans and CommonJS import identities are tested independently. No central builder, codegen or individual file ceiling is raised."
     },
     "fict-compiler-preview": {
       "reviewedLines": 2333,

@@ -14,7 +14,7 @@ use crate::{
 };
 use fict_compiler_oxc::{
     FrontendSuppression, HirBuildOptions, OxcCompileOptions, OxcModuleKind, OxcSourceLanguage,
-    OxcTypeScriptOptions, analyze_frontend, build_hir, compile_disabled, emit_program,
+    OxcTypeScriptOptions, analyze_frontend, build_hir, compile_disabled, emit_program_with_trace,
 };
 use fict_diagnostics::{
     Diagnostic, DiagnosticBundle, DiagnosticCode, DiagnosticSeverity, GuaranteeClass,
@@ -422,7 +422,14 @@ fn compile_normalized_inner(request: NormalizedCompileRequest) -> CompileResult 
             return result;
         }
     }
-    let output = emit_program(&request.code, &request.filename, oxc_options, &emit);
+    let output = emit_program_with_trace(
+        &request.code,
+        &request.filename,
+        oxc_options,
+        &emit,
+        request.options.explain,
+    );
+    let reactive_graph = output.reactive_graph;
     let helpers = output.runtime_helpers.clone();
     result.diagnostics.extend(output.diagnostics);
     finalize_source_diagnostics(&mut result, &request, &suppressions);
@@ -491,6 +498,11 @@ fn compile_normalized_inner(request: NormalizedCompileRequest) -> CompileResult 
         result.artifacts.clear();
     }
     attach_explain_if_requested(&mut result, &request, &source_events, &helpers);
+    if !result.has_errors()
+        && let Some(explain) = &mut result.explain
+    {
+        explain.reactive_graph = reactive_graph;
+    }
     result
 }
 
@@ -677,6 +689,7 @@ fn attach_explain_if_requested(
         version: 1,
         file_name: request.filename.clone(),
         helpers: helpers.to_vec(),
+        reactive_graph: None,
         diagnostics: result.diagnostics.clone(),
         events: source_events
             .iter()

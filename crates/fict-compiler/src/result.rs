@@ -136,6 +136,9 @@ pub struct CompilerExplainArtifact {
     pub diagnostics: Vec<Diagnostic>,
     /// Ordered compiler decisions.
     pub events: Vec<CompilerExplainEvent>,
+    /// Static source/EmitIR/main-output trace, present only after successful reactive emission.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reactive_graph: Option<fict_compiler_oxc::OxcReactiveGraph>,
 }
 
 /// Local-only performance and size counters; keys are stable and deterministically ordered.

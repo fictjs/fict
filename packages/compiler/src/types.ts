@@ -318,6 +318,68 @@ export interface NativeCompilerExplainArtifact {
   helpers: string[]
   diagnostics: FictDiagnostic[]
   events: NativeCompilerExplainEvent[]
+  /** Observational source/EmitIR/final-main-output trace, absent when no reactive output is emitted. */
+  reactiveGraph?: NativeReactiveGraph
+}
+
+/** Static syntax and compiler decisions; these counts are not runtime allocations or cost. */
+export interface NativeReactiveGraph {
+  version: 1
+  scope: 'main-module'
+  bindings: {
+    id: number
+    name: string
+    declaration: FictSourceSpan | null
+    references: { span: FictSourceSpan; owner: FictSourceSpan | null; write: boolean }[]
+  }[]
+  functions: {
+    id: number
+    kind: string
+    span: FictSourceSpan | null
+    contextHelper: string | null
+    regions: number[]
+    slots: {
+      id: number
+      binding: number | null
+      kind: string
+      storage: 'owned' | 'alias' | 'captured' | 'captured-hook-return' | 'imported' | 'hook-return'
+      owner: number | null
+    }[]
+  }[]
+  operations: {
+    id: number
+    function: number
+    index: number
+    kind: string
+    slot: number | null
+    binding: number | null
+    helper: string | null
+    span: FictSourceSpan | null
+    purpose: string
+    cleanup: { kind: 'function' | 'slot' | 'region'; id: number } | null
+  }[]
+  decisions: { binding: number; action: string; reason: string }[]
+  calls: {
+    id: number
+    helper: string
+    /** UTF-8 byte offsets in generated JavaScript. */
+    span: FictSourceSpan
+    sourceSpan: FictSourceSpan | null
+    owner: number | null
+    operations: number[]
+  }[]
+  owners: {
+    id: number
+    parent: number | null
+    kind: string
+    /** Lexical function span in generated JavaScript, not an inferred cleanup root. */
+    span: FictSourceSpan
+    sourceSpan: FictSourceSpan | null
+    function: number | null
+  }[]
+  counters: Record<string, number>
+  sourceAnchorsVerified: boolean
+  fusion: 'not-attempted:no-general-fusion-pass'
 }
 
 export interface CompilerStats {

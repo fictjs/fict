@@ -1,0 +1,333 @@
+{
+  "schemaVersion": 1,
+  "item": "G2 - observational reactive graph trace",
+  "recordedAt": "2026-09-13T20:23:13.453Z",
+  "baselineRevision": "c77fb1773cfbe46d5c130f649b0f9b6f7743588b",
+  "baselineCompiler": {
+    "backend": "rust",
+    "nativeTarget": "aarch64-apple-darwin",
+    "oxcVersion": "0.139.0",
+    "nodeApiVersion": 10,
+    "compilerBuildId": "fict-rust-p1-oxc0.139.0-m1-b7fadddadcb27d8775487221ee8b03b3bfbe0c052f70bf01a56d9a123a398d8e",
+    "compilerBuildRevision": null,
+    "compilerProtocolVersion": 1,
+    "metadataSchemaVersion": 1,
+    "compilerCapabilityManifestVersion": 2,
+    "compilerCapabilityManifestDigest": "sha256:8d85c68309d486fb1ac13747f35b2236f2893df69a1fae6f80edc065cb53c361",
+    "compilerCapabilityPackageVersion": "0.35.0"
+  },
+  "compiler": {
+    "backend": "rust",
+    "nativeTarget": "aarch64-apple-darwin",
+    "oxcVersion": "0.139.0",
+    "nodeApiVersion": 10,
+    "compilerBuildId": "fict-rust-p1-oxc0.139.0-m1-8b344ead78f784b93d69d3cf9beafa7a68334b4169eb6ce6a632a38016d6c081",
+    "compilerBuildRevision": null,
+    "compilerProtocolVersion": 1,
+    "metadataSchemaVersion": 1,
+    "compilerCapabilityManifestVersion": 2,
+    "compilerCapabilityManifestDigest": "sha256:8d85c68309d486fb1ac13747f35b2236f2893df69a1fae6f80edc065cb53c361",
+    "compilerCapabilityPackageVersion": "0.35.0"
+  },
+  "nativeArtifactSha256": "e7f7f5549b27720cd5799866e46b4e12ccc3a80c7595c477fcbc1f713e302f7d",
+  "sourceFiles": [
+    {
+      "file": "crates/fict-compiler-oxc/src/compile.rs",
+      "sha256": "98b2b3d375434abec76f2e45c372b4fa586e0dd3702a4ea765af7d597f158397"
+    },
+    {
+      "file": "crates/fict-compiler-oxc/src/emit_codegen.rs",
+      "sha256": "8a4f594dedf2c93c211a2e7855fec7773fb95c371ae44847ea4cb601d41a5636"
+    },
+    {
+      "file": "crates/fict-compiler-oxc/src/lib.rs",
+      "sha256": "5b3548263b925b5fca58a4f9936a14869148dd699431e03d868521cc7b02647e"
+    },
+    {
+      "file": "crates/fict-compiler-oxc/src/reactive_graph.rs",
+      "sha256": "df7fc7d28ef00640c4b25b29e2e76f70d7bed525b42c20f30cdaa4b561701e5d"
+    },
+    {
+      "file": "crates/fict-compiler-oxc/src/emit_codegen/reactive_graph.rs",
+      "sha256": "52b92ce1ea4bff2de9d33ad395632b0df9fbd3f58d58a17cf17be168817b30f7"
+    },
+    {
+      "file": "crates/fict-compiler-oxc/src/emit_codegen/reactive_graph_output.rs",
+      "sha256": "bcb29205c4d0fdd68db5ca3795976636304bca092c45c9fe30baa648e35c71b9"
+    },
+    {
+      "file": "crates/fict-compiler/src/pipeline.rs",
+      "sha256": "c85bc05c3e8a9752a44c2b1574c883b286e8c89304a014b1a8e26eb0e1aa3eb3"
+    },
+    {
+      "file": "crates/fict-compiler/src/result.rs",
+      "sha256": "0ca5311e182e59326ca49c59542791223378228344c6bca0773c23cb14242dd6"
+    },
+    {
+      "file": "packages/compiler/src/types.ts",
+      "sha256": "e63044539f372a2c28b7b497099ce4ae5cdca56abc4daf3d41ecb988261afede"
+    },
+    {
+      "file": "scripts/native-compiler-reactive-graph.test.mjs",
+      "sha256": "346fdd4fae1baa4d40491c33fb0293492e7024e04f885c192080ed4b9277e38e"
+    }
+  ],
+  "review": {
+    "inputs": 3172,
+    "onlyOptionalGraphAdded": 5,
+    "unchanged": [
+      "all generated JavaScript",
+      "source maps",
+      "acceptance and complete diagnostics",
+      "metadata and artifacts",
+      "existing explain events and helper lists",
+      "core analysis counters",
+      "all source requests and legacy capture data",
+      "primary corpus and DOM oracle provenance"
+    ],
+    "method": "Reproduce the previous frozen expectations with the retained baseline addon. Deep-compare complete results after excluding timings/build identity and removing only explain.reactiveGraph. Independently parse final JavaScript with the TypeScript checker across 12 module/DOM/optimizer profiles. Manually review the five affected memo-import variants.",
+    "scope": "Main-module compiler-helper call sites and lexical functions; no dynamic allocation counts, runtime cost, imported bodies or Preview handler-artifact census.",
+    "comparisonSha256": "b6d6a3d9294e6b6783459426c4eb3abd2ad8ba1ca19b87bba2c47f48c0b9b4cf"
+  },
+  "validation": [
+    {
+      "command": "pnpm test:compiler:native-runtime",
+      "passed": 588,
+      "failed": 0,
+      "focusedGraphCases": 22
+    },
+    {
+      "command": "tracing on/off over both frozen corpora",
+      "requests": 3172,
+      "successfulGraphTraces": 2807,
+      "status": "passed"
+    },
+    {
+      "command": "pnpm --dir packages/compiler test",
+      "passed": 119,
+      "failed": 0
+    },
+    {
+      "command": "pnpm --filter @fictjs/compiler build",
+      "status": "passed"
+    },
+    {
+      "command": "cargo fmt --all --check && cargo clippy --workspace --all-targets --all-features -- -D warnings",
+      "status": "passed"
+    },
+    {
+      "command": "cargo test -p fict-compiler --features preview --test rust_codegen_corpus --test legacy_unrepresented_callsite_replay",
+      "status": "passed",
+      "inputs": 3172,
+      "deterministicRunsPerInput": 2
+    },
+    {
+      "command": "pnpm guardrails:rust-crates",
+      "passed": 60,
+      "failed": 0,
+      "guards": "passed"
+    },
+    {
+      "command": "node --test scripts/compiler-corpus-replay.test.mjs scripts/compiler-review-provenance.test.mjs",
+      "passed": 3,
+      "failed": 0
+    },
+    {
+      "command": "pnpm --dir packages/compiler typecheck",
+      "status": "passed"
+    },
+    {
+      "command": "pnpm --dir packages/compiler lint",
+      "status": "passed"
+    },
+    {
+      "command": "distributed public API example after final declaration formatting",
+      "status": "passed",
+      "formats": ["esm", "commonjs"]
+    }
+  ],
+  "corpus": {
+    "file": "crates/fict-compiler/tests/legacy_unrepresented_callsite_replay.json",
+    "beforeSha256": "eb8607658dc092d3b65be6fab05c82ec65976a1d9f01d057c94c937568ef5188",
+    "afterSha256": "573162acded1637a2a1323295d247cb5a95c3a1148d6c6dc020d34107ffd61e3",
+    "changes": [
+      {
+        "id": "legacy-unrepresented-2fac287e93b337ef3cd9",
+        "beforeDeterministicResultSha256": "9cb08c054521f95337de2f347ee4a005e428a148b0066adbe36e809d3ff1334d",
+        "deterministicResultSha256": "fa6fd7a217570984e83038fdbe366d71d8de46a6c333945e32dbb64e0a3ced36"
+      },
+      {
+        "id": "legacy-unrepresented-5c9414a277c11f2602bc",
+        "beforeDeterministicResultSha256": "f34ccddbf5e7ba39bcb9189c1a807b8d1a5006841c2d8c47bb4f4101e80a9d81",
+        "deterministicResultSha256": "d8bf719e13509a0d3d7a94b133ba2ee37a226656446bb55b872c361e6ce9415f"
+      },
+      {
+        "id": "legacy-unrepresented-9200734049065e3dc799",
+        "beforeDeterministicResultSha256": "baee16f3c509e0b0dfb0dc10b61137d20eca34389f0161bd1a49171c63b0363a",
+        "deterministicResultSha256": "b24abe6e5ac9e73ceb03aeb37f88a297c3c538d2e1513f005401ab256f185bf0"
+      },
+      {
+        "id": "legacy-unrepresented-9a488eea630f498c2027",
+        "beforeDeterministicResultSha256": "123c47d3fe677110ddc0c2de8a006082d145f599cfd8bf0482ae70c0848c4e03",
+        "deterministicResultSha256": "b2a8031d3635666ae773b2ec363338c00741617f5e7b0a547fdbd24a6352243f"
+      },
+      {
+        "id": "legacy-unrepresented-bfc02e2da508047c4b4f",
+        "beforeDeterministicResultSha256": "0651e0be0c7c071b38cb7ccf92883dde92464a85155c6fc4fd7710c4ea7b678f",
+        "deterministicResultSha256": "050e38945bae9269e7958b50a4337f19f63d738314d70014eff36c85f496a267"
+      }
+    ]
+  },
+  "graphs": [
+    {
+      "id": "legacy-unrepresented-2fac287e93b337ef3cd9",
+      "sourceSha256": "49b82e3814330c4ceb964d211db70f2fe8b3ba5c9096af3f3852364c577444c6",
+      "codeSha256": "033689b65437fdcd1de7583c98c8bd42a721f1e44dcb906ac1e3b3afeaf87a49",
+      "graphSha256": "53ddcecb5d0fbcb2df4ddd135f99646e5ad94d562f2f002be378bff6f2f6111c",
+      "counters": {
+        "decision.runtime-owned-creation": 1,
+        "emit.operation.clone-template": 1,
+        "emit.operation.insert": 1,
+        "emit.operation.read-reactive": 1,
+        "emit.operation.resolve-element": 1,
+        "emit.operation.template": 1,
+        "emit.operation.track-runtime-reactive": 1,
+        "emit.slots": 1,
+        "output.function-sites": 5,
+        "output.helper.elementNamespaceMatches": 1,
+        "output.helper.insert": 1,
+        "output.helper.reactiveGetter": 1,
+        "output.helper.resolvePath": 1,
+        "output.helper.template": 1,
+        "source.bindings": 1
+      },
+      "decisions": [
+        {
+          "action": "preserve",
+          "binding": 2,
+          "reason": "runtime-owned-creation"
+        }
+      ]
+    },
+    {
+      "id": "legacy-unrepresented-5c9414a277c11f2602bc",
+      "sourceSha256": "53d3953c105bc7cd63b0c8323ea61886183edc098cca7ef982f58fade587c958",
+      "codeSha256": "d00c42ccbc691f11d3dea45d8fc1e17b61cf0c5627866888efe2e8d69cb271d3",
+      "graphSha256": "2c6747cc75276d85251c60d9443b3d4b17d5b779ef13d97d5e7cbb2ae766c69b",
+      "counters": {
+        "decision.runtime-owned-creation": 1,
+        "emit.operation.clone-template": 1,
+        "emit.operation.insert": 1,
+        "emit.operation.read-reactive": 1,
+        "emit.operation.resolve-element": 1,
+        "emit.operation.template": 1,
+        "emit.operation.track-runtime-reactive": 1,
+        "emit.slots": 1,
+        "output.function-sites": 5,
+        "output.helper.elementNamespaceMatches": 1,
+        "output.helper.insert": 1,
+        "output.helper.reactiveGetter": 1,
+        "output.helper.resolvePath": 1,
+        "output.helper.template": 1,
+        "source.bindings": 1
+      },
+      "decisions": [
+        {
+          "action": "preserve",
+          "binding": 2,
+          "reason": "runtime-owned-creation"
+        }
+      ]
+    },
+    {
+      "id": "legacy-unrepresented-9200734049065e3dc799",
+      "sourceSha256": "a2ea951e21ddcadcfd473925891022a53d244aa4923f30f9d7c50b5e7a58850d",
+      "codeSha256": "1cf46fb9df52b7ccb505604704a66f80976aef341e878b479885e8fd1e5b6a60",
+      "graphSha256": "2ee520a4b7e70021d54e8fa51571986218e28b64c60031c55a727e1f60338ac9",
+      "counters": {
+        "decision.runtime-owned-creation": 1,
+        "emit.operation.clone-template": 1,
+        "emit.operation.insert": 1,
+        "emit.operation.read-reactive": 1,
+        "emit.operation.resolve-element": 1,
+        "emit.operation.template": 1,
+        "emit.operation.track-runtime-reactive": 1,
+        "emit.slots": 1,
+        "output.function-sites": 5,
+        "output.helper.elementNamespaceMatches": 1,
+        "output.helper.insert": 1,
+        "output.helper.reactiveGetter": 1,
+        "output.helper.resolvePath": 1,
+        "output.helper.template": 1,
+        "source.bindings": 1
+      },
+      "decisions": [
+        {
+          "action": "preserve",
+          "binding": 2,
+          "reason": "runtime-owned-creation"
+        }
+      ]
+    },
+    {
+      "id": "legacy-unrepresented-9a488eea630f498c2027",
+      "sourceSha256": "e951cd7f716e3bf28ba24abceb97e18f3d850cd2ac3768d5a9710893922b9281",
+      "codeSha256": "0a1224b48d01b2dfb9f758196a265a277f03ebd34faeaa8edd27539cdbfab983",
+      "graphSha256": "d1d5b858499e1582f6c78a82687b79b5a38ebe5b9c0520b448713c210dd46d34",
+      "counters": {
+        "decision.runtime-owned-creation": 1,
+        "emit.operation.clone-template": 1,
+        "emit.operation.insert": 1,
+        "emit.operation.read-reactive": 1,
+        "emit.operation.resolve-element": 1,
+        "emit.operation.template": 1,
+        "emit.operation.track-runtime-reactive": 1,
+        "emit.slots": 1,
+        "output.function-sites": 5,
+        "output.helper.elementNamespaceMatches": 1,
+        "output.helper.insert": 1,
+        "output.helper.reactiveGetter": 1,
+        "output.helper.resolvePath": 1,
+        "output.helper.template": 1,
+        "source.bindings": 1
+      },
+      "decisions": [
+        {
+          "action": "preserve",
+          "binding": 2,
+          "reason": "runtime-owned-creation"
+        }
+      ]
+    },
+    {
+      "id": "legacy-unrepresented-bfc02e2da508047c4b4f",
+      "sourceSha256": "6a8f9a914bd470a59b059a0e785266f61dbb1fe48742cd58270b5706e582e5ef",
+      "codeSha256": "3fe60478025a91f871ac373b88790ee0e85357abf37822d4730faaf147f448ec",
+      "graphSha256": "e021e2e295aee248482317558ad599ac782d5c16d0762b7de4c32d44dfe90bd5",
+      "counters": {
+        "decision.runtime-owned-creation": 1,
+        "emit.operation.clone-template": 1,
+        "emit.operation.insert": 1,
+        "emit.operation.read-reactive": 1,
+        "emit.operation.resolve-element": 1,
+        "emit.operation.template": 1,
+        "emit.operation.track-runtime-reactive": 1,
+        "emit.slots": 1,
+        "output.function-sites": 5,
+        "output.helper.elementNamespaceMatches": 1,
+        "output.helper.insert": 1,
+        "output.helper.reactiveGetter": 1,
+        "output.helper.resolvePath": 1,
+        "output.helper.template": 1,
+        "source.bindings": 1
+      },
+      "decisions": [
+        {
+          "action": "preserve",
+          "binding": 2,
+          "reason": "runtime-owned-creation"
+        }
+      ]
+    }
+  ]
+}
