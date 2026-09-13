@@ -28,9 +28,9 @@
       "maxLines": 1500
     },
     "fict-compiler-oxc": {
-      "reviewedLines": 121179,
-      "maxLines": 121500,
-      "rationale": "Explicit async macro placement, runtime-generation ownership, primitive snapshot capture and source-call rewriting. The central builder file ceiling is unchanged."
+      "reviewedLines": 122066,
+      "maxLines": 122400,
+      "rationale": "Collection receiver and factory-result proofs are isolated in focused builder modules. Factory exposure, marked Resource getters, and immutable accessor/method/container identities feed verified HIR facts. Retain 334 lines of crate reserve; the central builder and total workspace ceilings remain unchanged."
     },
     "fict-compiler-preview": {
       "reviewedLines": 2333,

@@ -30,9 +30,9 @@ pub use ir::{
     ImportedReactiveKind, ImportedReactiveMember, ImportedReactiveMemberMatch,
     ImportedReactiveProperty, InstructionSemantics, IterationKind, LocalKind, MutationEffect,
     ObjectEntry, ObjectPropertyKind, Place, PlaceBase, Projection, PropertyKey, Purity,
-    ReactiveCallKind, ReactiveScopeHost, ReactiveScopeKind, ScopeKind, StructuredSourceHint,
-    StructuredSourceKind, StructuredSwitchCaseHint, SwitchCase, TaggedTemplateQuasi,
-    TerminatorKind, UnaryOperator, UpdateOperator, ValueKind,
+    ReactiveCallKind, ReactiveScopeHost, ReactiveScopeKind, RuntimeBindingFact, RuntimeBindingKind,
+    ScopeKind, StructuredSourceHint, StructuredSourceKind, StructuredSwitchCaseHint, SwitchCase,
+    TaggedTemplateQuasi, TerminatorKind, UnaryOperator, UpdateOperator, ValueKind,
 };
 pub use jsx::{
     JsxAttribute, JsxAttributeValue, JsxChild, JsxElement, JsxElementName, JsxExpressionKind,

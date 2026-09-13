@@ -248,6 +248,26 @@ pub struct ImportBinding {
     pub hook_members: Vec<ImportedHookMember>,
 }
 
+/// Runtime representation certified by the frontend for an intact factory result.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum RuntimeBindingKind {
+    /// A stable factory method; reads do not require a derived memo.
+    Stable,
+    /// A manual accessor; authored calls and function identity are preserved.
+    Accessor,
+    /// A stable container whose members can carry reactive reads.
+    Container,
+}
+
+/// A binding-level runtime fact, including destructured factory results.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct RuntimeBindingFact {
+    /// Intact lexical binding; never resolved by display name.
+    pub binding: BindingId,
+    /// Existing runtime representation; this fact does not request allocation.
+    pub kind: RuntimeBindingKind,
+}
+
 /// Semantic binding. `display_name` is never an identity key.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Binding {
@@ -897,7 +917,7 @@ pub enum ReactiveCallKind {
     AsyncMemo,
     /// Deep proxy returned by `$store`.
     Store,
-    /// Async resource factory returned by `resource`.
+    /// Resource container returned by `resource` or a proven factory's `read` method.
     Resource,
     /// Keyed boolean accessor factory returned by `createSelector`.
     Selector,
@@ -939,7 +959,7 @@ pub struct ReactiveScopeHost {
 pub enum CallHost {
     /// Host cannot be proven and must be handled conservatively.
     Unknown,
-    /// Resolved direct callee binding.
+    /// Resolved callee or proven namespace/factory receiver binding.
     Binding(BindingId),
     /// Known nested HIR function.
     Function(FunctionId),
@@ -1465,6 +1485,8 @@ pub struct HirFile {
     /// references and names inside dynamic `with` scopes. Compiler-generated lexical names must
     /// reserve this complete set without treating every entry as a structured runtime place.
     pub authored_free_names: Vec<String>,
+    /// Sorted, unique runtime representation facts for immutable factory results.
+    pub runtime_bindings: Vec<RuntimeBindingFact>,
     /// Functions in deterministic ID order.
     pub functions: Vec<HirFunction>,
     /// JSX templates in deterministic ID order.

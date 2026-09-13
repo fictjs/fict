@@ -55,6 +55,56 @@ detached work that needs only an initial primitive value, capture that value in 
 synchronous `untrack` before scheduling the callback. An unrelated package or a
 reassigned function with the same name does not inherit a Fict runtime contract.
 
+### Resource Getters And Transition Handles
+
+`resource.read` distinguishes ordinary function data from reactive argument
+getters. Mark a live getter explicitly and create the resource view once in its
+owning component:
+
+<!-- strict-example: resource-getter -->
+
+```tsx
+import { $state, useTransition } from 'fict'
+import { reactive } from 'fict/advanced'
+import { resource } from 'fict/plus'
+
+const users = resource(async (_context, id: number) => ({ name: `User ${id}` }))
+
+export function ResourceExample() {
+  let id = $state(1)
+  const [pending, start] = useTransition()
+  const user = users.read(reactive(() => id))
+  return (
+    <section>
+      <button onClick={() => start(() => id++)}>Next user</button>
+      <p>{pending() ? 'Updating' : 'Ready'}</p>
+      <p>{user.loading ? 'Loading' : user.data?.name}</p>
+    </section>
+  )
+}
+```
+
+<!-- /strict-example -->
+
+The compiler recognizes intact results of the official local `resource` and
+`useTransition` factories. It preserves the marker call and the Resource view's
+reactive result shape. It does not convert `users.read(() => id)` into a getter:
+that ordinary function is data, and a live reactive capture still crosses a
+boundary. A marked getter passed to an unknown `read` implementation also remains
+a boundary. Exported mutable resource objects and overwritten methods cannot
+certify the local method contract. This proof accepts direct immutable aliases and
+extracted methods. Storing a mutable factory object inside another object, array
+or class, returning or throwing it, and passing it across an external boundary
+conservatively end the proof; they require stronger lifetime/borrowing analysis.
+
+The compiler preserves the `pending` accessor and stable `start` method as distinct
+runtime bindings. Direct pending reads and derived labels update in both DOM
+backends, while extracting an intact method does not allocate an implicit memo.
+
+The transition callback executes synchronously in its owner's transition context;
+registered downstream async work determines readiness. An `async` callback with
+live captures after `await` is still outside this synchronous callback contract.
+
 ### Prop Rest Or Native Spread Fallback
 
 Native element rest spreads can hide which DOM props are reactive.

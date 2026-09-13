@@ -44,6 +44,15 @@ pub fn print_hir(file: &HirFile) -> String {
         )
         .expect("writing to String cannot fail");
     }
+    for fact in &file.runtime_bindings {
+        writeln!(
+            output,
+            "runtime_binding binding{} kind={:?}",
+            fact.binding.index(),
+            fact.kind
+        )
+        .expect("writing to String cannot fail");
+    }
     for global in &file.globals {
         writeln!(
             output,

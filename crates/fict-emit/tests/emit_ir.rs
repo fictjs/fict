@@ -28,6 +28,7 @@ fn hir() -> HirFile {
         bindings: Vec::new(),
         globals: Vec::new(),
         authored_free_names: Vec::new(),
+        runtime_bindings: Vec::new(),
         functions: vec![HirFunction {
             id: FunctionId::new(0),
             parent: FunctionId::new(0),

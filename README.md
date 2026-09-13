@@ -383,6 +383,7 @@ import { ErrorBoundary } from 'fict'
 
 ```tsx
 import { Suspense } from 'fict'
+import { reactive } from 'fict/advanced'
 import { resource, lazy } from 'fict/plus'
 
 const userResource = resource({
@@ -392,10 +393,11 @@ const userResource = resource({
 
 const LazyChart = lazy(() => import('./Chart'))
 
-function Profile({ id }) {
+function Profile(props: { id: number }) {
+  const user = userResource.read(reactive(() => props.id))
   return (
     <Suspense fallback="Loading...">
-      <h1>{userResource.read(() => id).data?.name}</h1>
+      <h1>{user.data?.name}</h1>
       <LazyChart />
     </Suspense>
   )

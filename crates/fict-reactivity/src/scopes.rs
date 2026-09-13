@@ -168,6 +168,13 @@ pub fn analyze_reactive_scopes(
             ShapeSource::RuntimeReactive(ReactiveCallKind::Selector) => {
                 Some(ReactiveBindingKind::Selector)
             }
+            ShapeSource::RuntimeBinding(fict_hir::RuntimeBindingKind::Accessor) => {
+                Some(ReactiveBindingKind::Memo)
+            }
+            ShapeSource::RuntimeBinding(fict_hir::RuntimeBindingKind::Container) => {
+                Some(ReactiveBindingKind::Resource)
+            }
+            ShapeSource::RuntimeBinding(fict_hir::RuntimeBindingKind::Stable) => None,
             ShapeSource::ImportedReactive(ImportedReactiveKind::Signal) => {
                 Some(ReactiveBindingKind::State)
             }
@@ -236,7 +243,13 @@ pub fn analyze_reactive_scopes(
                         }))
         };
         for candidate in &candidates {
-            if previous.contains_key(&candidate.name) || !candidate.eligible_for_derivation {
+            if previous.contains_key(&candidate.name)
+                || !candidate.eligible_for_derivation
+                || shape_by_name.get(&candidate.name).is_some_and(|shape| {
+                    shape.source
+                        == ShapeSource::RuntimeBinding(fict_hir::RuntimeBindingKind::Stable)
+                })
+            {
                 continue;
             }
             if alias_sources

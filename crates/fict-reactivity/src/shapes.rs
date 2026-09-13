@@ -63,6 +63,8 @@ pub enum ShapeSource {
     ReactiveMacro(FictMacroKind),
     /// Binding-resolved runtime memo/store/resource/selector call.
     RuntimeReactive(ReactiveCallKind),
+    /// Intact factory result certified by binding identity, including tuple destructuring.
+    RuntimeBinding(fict_hir::RuntimeBindingKind),
     /// Reactive value imported through authoritative module metadata.
     ImportedReactive(ImportedReactiveKind),
     /// Direct alias of another SSA definition.
@@ -378,6 +380,11 @@ pub fn analyze_shapes(
         }
     }
 
+    let runtime_bindings: BTreeMap<_, _> = file
+        .runtime_bindings
+        .iter()
+        .map(|fact| (fact.binding, fact.kind))
+        .collect();
     let alias_sources: BTreeMap<_, _> = aliases
         .edges
         .iter()
@@ -400,7 +407,18 @@ pub fn analyze_shapes(
         let previous = shapes.clone();
         let mut changed = false;
         for definition in &ssa.definitions {
-            let next = if let Some(source) = alias_sources.get(&definition.name) {
+            let runtime = function.locals[definition.name.local.as_usize()]
+                .binding
+                .and_then(|binding| runtime_bindings.get(&binding));
+            let next = if let Some(kind) = runtime {
+                let mut shape = unknown_shape(ShapeSource::RuntimeBinding(*kind));
+                shape.kind = if *kind == fict_hir::RuntimeBindingKind::Stable {
+                    ShapeKind::Function
+                } else {
+                    ShapeKind::Reactive
+                };
+                Some(shape)
+            } else if let Some(source) = alias_sources.get(&definition.name) {
                 previous.get(source).cloned().flatten().map(|mut shape| {
                     shape.source = ShapeSource::Alias(*source);
                     shape

@@ -102,6 +102,8 @@ mod collection_receivers;
 mod dangerous_html;
 mod execution_state;
 mod explicit_snapshots;
+mod factory_callbacks;
+mod factory_exposure;
 mod function_abi;
 mod historical_aliases;
 mod inline_jsx_functions;
@@ -1746,6 +1748,7 @@ struct Builder<'source, 'semantic> {
     diagnostics: Vec<Diagnostic>,
     macro_bindings: BTreeMap<BindingId, FictMacroKind>,
     reactive_bindings: BTreeMap<BindingId, RuntimeReactiveClassification>,
+    runtime_bindings: Vec<fict_hir::RuntimeBindingFact>,
     reactive_namespace_sources: BTreeMap<BindingId, String>,
     unavailable_metadata_sources: BTreeSet<String>,
     configured_scope_names: BTreeSet<String>,
@@ -2002,6 +2005,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             diagnostics: Vec::new(),
             macro_bindings,
             reactive_bindings,
+            runtime_bindings: Vec::new(),
             reactive_namespace_sources,
             unavailable_metadata_sources,
             configured_scope_names: option_names,
@@ -2210,7 +2214,21 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             .exclusive_json_replacer_arrays
             .clone_from(&exclusive_json_replacer_arrays);
         let runtime_imports = runtime_callbacks::RuntimeImports::new(&self.frontend.bindings);
+        let factory_callbacks = factory_callbacks::FactoryCallbacks::collect(
+            program,
+            self.semantic.scoping(),
+            &static_hook_aliases,
+            &runtime_imports,
+            &self.frontend.module_exports,
+        );
+        self.runtime_bindings = factory_callbacks.bindings(
+            self.semantic.scoping(),
+            &static_hook_aliases,
+            &self.frontend.bindings,
+            &self.symbol_to_binding,
+        );
         let mut calls = CallCollector {
+            factory_callbacks: &factory_callbacks,
             runtime_imports: &runtime_imports,
             static_aliases: &static_hook_aliases,
             scoping: self.semantic.scoping(),
@@ -2836,6 +2854,12 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             .flat_map(|parameter| parameter.bindings.iter().copied())
             .collect();
         let mut reactive_symbols = source_reactive_symbols.clone();
+        reactive_symbols.extend(
+            self.runtime_bindings
+                .iter()
+                .filter(|fact| fact.kind != fict_hir::RuntimeBindingKind::Stable)
+                .filter_map(|fact| binding_to_symbol.get(&fact.binding).copied()),
+        );
         reactive_symbols.extend(component_parameter_symbols.iter().copied());
 
         let mut dependencies = ReactiveBindingDependencyCollector {
@@ -3233,6 +3257,13 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
         );
 
         let runtime_imports = runtime_callbacks::RuntimeImports::new(&self.frontend.bindings);
+        let factory_callbacks = factory_callbacks::FactoryCallbacks::collect(
+            program,
+            self.semantic.scoping(),
+            callback_aliases,
+            &runtime_imports,
+            &self.frontend.module_exports,
+        );
         let exported_storage_bindings = self
             .frontend
             .module_exports
@@ -3334,6 +3365,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             },
         );
         let mut collector = ReactiveEscapeCollector {
+            factory_callbacks: &factory_callbacks,
             scoping: self.semantic.scoping(),
             call_facts: &call_facts,
             macro_bindings: &self.macro_bindings,
@@ -6725,6 +6757,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             bindings,
             globals: self.globals,
             authored_free_names,
+            runtime_bindings: self.runtime_bindings,
             functions: self.functions,
             templates: self.templates,
             syntax_fragments: self.syntax_fragments,
@@ -9654,6 +9687,7 @@ impl<'a> Visit<'a> for ImmediateInvocationCollector {
 }
 
 struct CallCollector<'facts, 'semantic> {
+    factory_callbacks: &'facts factory_callbacks::FactoryCallbacks,
     runtime_imports: &'facts runtime_callbacks::RuntimeImports,
     static_aliases: &'facts StaticHookAliases,
     scoping: &'semantic Scoping,
@@ -9801,9 +9835,19 @@ impl<'a> Visit<'a> for CallCollector<'_, '_> {
                 self.imported_hook_member_paths,
             )
         });
+        let factory_host =
+            self.factory_callbacks
+                .host(self.scoping, self.static_aliases, &call.callee);
         let binding = direct_binding
             .or(namespace_reactive.map(|(binding, _)| binding))
-            .or(imported_hook_member_binding);
+            .or(imported_hook_member_binding)
+            .or_else(|| {
+                (factory_host == Some(runtime_callbacks::RuntimeCallbackHost::ResourceRead))
+                    .then(|| static_alias_source_path(self.scoping, &call.callee))
+                    .flatten()
+                    .and_then(|path| path.binding_root())
+                    .and_then(|symbol| self.symbol_to_binding.get(&symbol).copied())
+            });
         let runtime_reactive = direct_binding
             .and_then(|binding| self.reactive_bindings.get(&binding).copied())
             .or(namespace_reactive.map(|(_, classification)| classification))
@@ -9819,6 +9863,13 @@ impl<'a> Visit<'a> for CallCollector<'_, '_> {
                     return None;
                 }
                 runtime_reactive_call_classification(source, &name)
+            })
+            .or_else(|| {
+                (factory_host == Some(runtime_callbacks::RuntimeCallbackHost::ResourceRead))
+                    .then_some(RuntimeReactiveClassification {
+                        reactive_kind: Some(ReactiveCallKind::Resource),
+                        creation_kind: None,
+                    })
             });
         let reactive_kind =
             runtime_reactive.and_then(|classification| classification.reactive_kind);
@@ -42572,6 +42623,7 @@ enum CallbackResultDisposition {
 }
 
 struct ReactiveEscapeCollector<'facts, 'semantic, 'reactive> {
+    factory_callbacks: &'facts factory_callbacks::FactoryCallbacks,
     scoping: &'semantic Scoping,
     call_facts: &'facts BTreeMap<(u32, u32), &'facts CallFact>,
     macro_bindings: &'facts BTreeMap<BindingId, FictMacroKind>,
@@ -42938,7 +42990,13 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
         {
             return;
         }
-        if self.is_non_escaping_callback_host(&call.callee, arguments) {
+        if (self
+            .factory_callbacks
+            .resource_getters
+            .contains(&(call.span.start, call.span.end))
+            && self.runtime_callbacks_are_synchronous(arguments))
+            || self.is_non_escaping_callback_host(&call.callee, arguments)
+        {
             return;
         }
         if self.is_non_escaping_hook_accumulator(&call.callee, arguments) {
@@ -43842,10 +43900,15 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
         if let Some(host) = self
             .runtime_imports
             .host(self.scoping, self.callback_aliases, callee)
+            .or_else(|| {
+                self.factory_callbacks
+                    .host(self.scoping, self.callback_aliases, callee)
+            })
         {
             use runtime_callbacks::RuntimeCallbackHost;
             return match host {
                 RuntimeCallbackHost::Selector => self.selector_callbacks_are_owned(arguments),
+                RuntimeCallbackHost::ResourceRead => self.resource_getter_is_owned(arguments),
                 RuntimeCallbackHost::Snapshot
                 | RuntimeCallbackHost::Managed
                 | RuntimeCallbackHost::Computation

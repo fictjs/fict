@@ -70,6 +70,25 @@ struct Verifier<'file> {
 
 impl Verifier<'_> {
     fn verify_file(&mut self) {
+        let mut previous_runtime_binding = None;
+        for fact in &self.file.runtime_bindings {
+            if previous_runtime_binding.is_some_and(|previous| previous >= fact.binding)
+                || !self
+                    .file
+                    .bindings
+                    .get(fact.binding.as_usize())
+                    .is_some_and(|binding| {
+                        matches!(binding.kind, BindingKind::Const | BindingKind::Let)
+                    })
+            {
+                self.error(
+                    "FICT-HIR-RUNTIME-BINDING",
+                    "runtime facts require sorted unique local variable bindings",
+                    None,
+                );
+            }
+            previous_runtime_binding = Some(fact.binding);
+        }
         if self.file.root_function.as_usize() >= self.file.functions.len() {
             self.error(
                 "FICT-HIR-ID",
@@ -1156,7 +1175,7 @@ impl Verifier<'_> {
                 {
                     self.error(
                         "FICT-HIR-CALL-KIND",
-                        "runtime reactive creators must retain their resolved import binding",
+                        "runtime reactive creators must retain their proven lexical host binding",
                         Some(instruction.origin),
                     );
                 }

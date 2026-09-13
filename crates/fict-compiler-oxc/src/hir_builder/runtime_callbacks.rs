@@ -97,6 +97,7 @@ pub(super) enum RuntimeCallbackHost {
     AsyncComputation,
     Render,
     Selector,
+    ResourceRead,
 }
 
 impl ReactiveEscapeCollector<'_, '_, '_> {

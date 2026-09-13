@@ -26,6 +26,7 @@ fn empty_file() -> HirFile {
         bindings: Vec::new(),
         globals: Vec::new(),
         authored_free_names: Vec::new(),
+        runtime_bindings: Vec::new(),
         functions: vec![HirFunction {
             id: FunctionId::new(0),
             parent: FunctionId::new(0),
@@ -1256,4 +1257,35 @@ fn verifier_rejects_overlapping_try_targets() {
         diagnostic.code.as_str() == "FICT-HIR-CFG"
             && diagnostic.message.contains("must be distinct")
     }));
+}
+
+#[test]
+fn runtime_binding_facts_require_unique_valid_lexical_bindings() {
+    use fict_hir::{RuntimeBindingFact, RuntimeBindingKind};
+    let mut file = empty_file();
+    file.bindings.push(Binding {
+        id: BindingId::new(0),
+        scope: ScopeId::new(0),
+        kind: BindingKind::Const,
+        display_name: "pending".into(),
+        import: None,
+        origin: Origin::source(fict_hir::SourceSpan::empty(0)),
+    });
+    let fact = RuntimeBindingFact {
+        binding: BindingId::new(0),
+        kind: RuntimeBindingKind::Accessor,
+    };
+    file.runtime_bindings = vec![fact];
+    verify_hir(&file).expect("intact accessor fact");
+    assert!(print_hir(&file).contains("runtime_binding binding0 kind=Accessor"));
+    file.runtime_bindings.push(fact);
+    assert!(verify_hir(&file).is_err(), "duplicate binding fact");
+    file.runtime_bindings = vec![RuntimeBindingFact {
+        binding: BindingId::new(1),
+        ..fact
+    }];
+    assert!(verify_hir(&file).is_err(), "out of arena fact");
+    file.runtime_bindings = vec![fact];
+    file.bindings[0].kind = BindingKind::Parameter;
+    assert!(verify_hir(&file).is_err(), "unproved parameter fact");
 }

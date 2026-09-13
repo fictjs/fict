@@ -62,6 +62,7 @@ fn base_file(functions: Vec<HirFunction>, bindings: Vec<Binding>) -> HirFile {
         bindings,
         globals: Vec::new(),
         authored_free_names: Vec::new(),
+        runtime_bindings: Vec::new(),
         functions,
         templates: Vec::new(),
         syntax_fragments: Vec::new(),

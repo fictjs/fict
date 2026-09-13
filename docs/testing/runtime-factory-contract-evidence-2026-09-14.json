@@ -1,0 +1,117 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-09-14",
+  "item": "S2b - local runtime factory result contracts",
+  "baselineRevision": "8589d773fc59783f203e4e44d3957d7f5591f4c1",
+  "baselineCompiler": {
+    "backend": "rust",
+    "nativeTarget": "aarch64-apple-darwin",
+    "oxcVersion": "0.139.0",
+    "nodeApiVersion": 10,
+    "compilerBuildId": "fict-rust-p1-oxc0.139.0-m1-e9dbed77d664dc3219c1fa4c191ba7f179a05005d0a4cc343071c81738cd1010",
+    "compilerBuildRevision": null,
+    "compilerProtocolVersion": 1,
+    "metadataSchemaVersion": 1,
+    "compilerCapabilityManifestVersion": 2,
+    "compilerCapabilityManifestDigest": "sha256:8d85c68309d486fb1ac13747f35b2236f2893df69a1fae6f80edc065cb53c361",
+    "compilerCapabilityPackageVersion": "0.35.0"
+  },
+  "compiler": {
+    "backend": "rust",
+    "nativeTarget": "aarch64-apple-darwin",
+    "oxcVersion": "0.139.0",
+    "nodeApiVersion": 10,
+    "compilerBuildId": "fict-rust-p1-oxc0.139.0-m1-f9fd203df579779091b1204a31ab48b62365187468c52f2cf639b5f17cbcf4df",
+    "compilerBuildRevision": null,
+    "compilerProtocolVersion": 1,
+    "metadataSchemaVersion": 1,
+    "compilerCapabilityManifestVersion": 2,
+    "compilerCapabilityManifestDigest": "sha256:8d85c68309d486fb1ac13747f35b2236f2893df69a1fae6f80edc065cb53c361",
+    "compilerCapabilityPackageVersion": "0.35.0"
+  },
+  "nativeArtifact": {
+    "path": "target/release/fict_compiler_napi.node",
+    "sha256": "ca420ef77349d9d48df7d11188e25bb0e925ed39ae03d5cf10a98226f3b1eac9"
+  },
+  "sourceHashes": {
+    "crates/fict-compiler-oxc/src/hir_builder.rs": "0ef9f42ea0682a2ce7da8e7b25859ea9b30162c30400ad49392aba094c5290fe",
+    "crates/fict-compiler-oxc/src/hir_builder/factory_callbacks.rs": "1dd9311232be06dc917b2f463076f64761ab0bd73a8465891c15df4f08b2e379",
+    "crates/fict-compiler-oxc/src/hir_builder/factory_exposure.rs": "5e57fbf8c199976ee5deaebe95288c93f8bfc67abdffc554f60137bdc16abba2",
+    "crates/fict-compiler-oxc/src/hir_builder/runtime_callbacks.rs": "234786fd710a0f51a98258b542419a5042deb42dfed6c28216aee75ad7c8211a",
+    "crates/fict-hir/src/ir.rs": "2dcd930e951a2dd33aa72c1f1c313c0976fe44b3608a94fef82819476b432b90",
+    "crates/fict-hir/src/lib.rs": "4c5ba837f893edf765881a0d0cddfb9161ec08530214ddfe7747b00572da6510",
+    "crates/fict-hir/src/printer.rs": "9957b612762e1f96cf4375ec0676257ae697ef22d16b715e01b08d0db1c9d11d",
+    "crates/fict-hir/src/verify.rs": "73a5bc15569ba3f56e074f3acf432d124305aa343c85ee6848e38e6a4ba1960a",
+    "crates/fict-hir/tests/hir_contract.rs": "7ba0ebd84e6ef785b0e2b4004a120a0d227557a99f4eb4e1daf3775f70f90a3a",
+    "crates/fict-reactivity/src/shapes.rs": "a865cfe926aa0a333211275c8b7af718f5940ac0f2a4814643472fe16831c892",
+    "crates/fict-reactivity/src/scopes.rs": "9094b9e0f979084cfc0a29191d7c9de99c9874724863bf023ece9698528623d2",
+    "scripts/native-compiler-factory-callbacks.test.mjs": "347ea09eb768e74838616ab957e3fd695631cc0de7476ca7a7b06621ac5bf699",
+    "docs/strict-guarantee-cookbook.md": "c18c7b0187751020161432692527c3272852ca45f9d44aad4278f1094956461a",
+    "README.md": "10b763be1abdfd0a8725a818daf24335ae48009caf693914911685a798c815a9",
+    "package.json": "54da1055409b4ad91dc1dc8b79193c4ec7735f7da27fc87bc74fc55ebe2c14ce",
+    ".github/rust-compiler-complexity-budget.json": "29f8e39067a8542b43e7e850f6e55c12c94a3bd22a59d73d4238cc05199a7179"
+  },
+  "validation": {
+    "nativeSuite": {
+      "command": "pnpm test:compiler:native-runtime",
+      "passed": 484,
+      "failed": 0
+    },
+    "factorySuite": {
+      "command": "node --test scripts/native-compiler-factory-callbacks.test.mjs",
+      "passed": 9,
+      "failed": 0,
+      "profiles": "disabled, safe, full optimization crossed with direct DOM and VNode output",
+      "coverage": [
+        "Executable README and cookbook Resource examples",
+        "Intact imports, namespace references, immutable aliases, extracted methods and tuple projections",
+        "Raw function data versus explicitly marked live getters",
+        "Overwrites, unknown factories, mutation through aliases, mutable container storage, exports, returned/thrown/yielded objects and modified array iterators",
+        "Resource key changes, pending and derived-pending updates, stable function identity, stale completion exclusion, cancellation and terminal owner disposal"
+      ]
+    },
+    "rustClippy": {
+      "command": "cargo clippy --workspace --all-targets --all-features -- -D warnings",
+      "passed": true
+    },
+    "historicalCorpus": {
+      "method": "Retained baseline addon reproduces prior expected outcomes before candidate comparison. Every acceptance status, diagnostic sequence, output SHA-256 and recorded deterministic result remains unchanged; no baseline regeneration.",
+      "suites": [
+        {
+          "file": "crates/fict-compiler/tests/rust_frozen_codegen_corpus.json",
+          "sha256": "a13468a4c5d9ed3d242974df318cf37327ee679ec793936be81c327577bf5846",
+          "inputs": 1950,
+          "changed": 0
+        },
+        {
+          "file": "crates/fict-compiler/tests/legacy_unrepresented_callsite_replay.json",
+          "sha256": "21762131e61deeaf01ec0d44eccf443a514ca8d387e53924f4a14639c711f6b6",
+          "inputs": 1222,
+          "changed": 0
+        }
+      ]
+    },
+    "hirContract": {
+      "command": "cargo test -p fict-hir --test hir_contract",
+      "passed": 21,
+      "failed": 0
+    },
+    "guards": {
+      "passed": 57,
+      "failed": 0
+    },
+    "commitPreflight": {
+      "command": "pnpm commit (precommit lifecycle)",
+      "passed": true,
+      "workspaceBuildTasks": 31,
+      "workspaceBuildCacheHits": 0,
+      "scope": "Local preflight, fresh workspace build, frozen corpus, bundle size, review regressions, workspace tests, production and test typechecks, formatting and lint. Existing lint warnings remain."
+    }
+  },
+  "limits": [
+    "Factory identity proof is local and conservative; storage in mutable containers and outward lifetime escapes remain boundaries.",
+    "No automatic conversion of plain function arguments into Resource key getters.",
+    "No tracking across native async or generator continuations is introduced.",
+    "Local validation only; no new CPU or memory benchmark samples, remote CI or registry publication."
+  ]
+}

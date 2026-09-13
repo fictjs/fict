@@ -9,6 +9,7 @@ not only an analysis pass, an API sketch, or a passing unrelated test suite.
 | ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- |
 | S1   | Explicit snapshot semantics and diagnostic fixes agree under default strict compilation. Retained reactive closures and unsafe lifetime escapes remain diagnosed.     | Executable cookbook examples, adversarial native compiler tests, disabled/safe/full behavioral checks.                                                                                        | Complete |
 | S2   | Official selector and reactive callback APIs are recognized by binding identity and their actual tracking/lifetime contracts.                                         | Positive imports/aliases and negative shadowed, external, deferred, and reassigned-host cases.                                                                                                | Complete |
+| S2b  | Known runtime factory results preserve Resource getter and transition callback contracts, including reactive Resource views.                                          | Strict marked-getter, alias/mutation, VNode/direct DOM, causal readiness and disposal checks discovered during application qualification.                                                     | Complete |
 | S3   | Collection/fresh-copy analysis and explicit per-row signal boundaries support the optimized keyed fixture with strict guarantees.                                     | Strict fixture compilation, precise alias/mutation regressions, same-key replacement and teardown behavior.                                                                                   | Complete |
 | S4   | Custom compiler host environment and metadata obligations are executable and documented.                                                                              | Facade/native integration contract tests, missing metadata cases, consumer package checks.                                                                                                    | Complete |
 | S5   | Representative application coverage measures strict boundary incidence and usable diagnostic repairs.                                                                 | Maintained corpus with source identity, diagnostics, boundary/LOC counts, migration evidence, strict production and browser gates; distinguish maintained fixtures from independent adoption. | Pending  |
@@ -91,6 +92,38 @@ Both frozen replay suites pass, covering 3,172 inputs including the one Preview
 fixture, with deterministic checks twice per input. The complete `pnpm commit`
 preflight, build, corpus, bundle-size, review-regression, workspace-test, typecheck,
 format, and lint sequence passes.
+
+## S2b: local runtime factory result contracts
+
+Application qualification exposed missing return-value knowledge for Resource
+views and transition handles. Intact local `resource` results now certify
+`read(reactive(getter))` and preserve the view's reactivity. The marker remains
+explicit: ordinary function arguments remain data and live unmarked captures
+retain their strict boundary.
+
+Verified HIR binding facts distinguish manual accessors, stable methods and
+containers. This preserves `pending` function identity, updates direct and
+derived pending labels in both DOM backends, and avoids incorrectly materializing
+an extracted `start` or `read` method as an implicit memo. The facts are visible
+in HIR output and validated before downstream analysis.
+
+Proofs follow official import identities, direct immutable aliases and intact
+method/tuple projections. Overwrites, reassigned aliases, mutable nested storage,
+exports, returns, throws, yields, unknown hosts and modified array iterators
+remain conservative boundaries. This does not infer borrowed container lifetimes
+or add cross-package metadata for manually returned transition accessors.
+
+Validation: all 484 native compiler tests pass, including nine new grouped cases
+covering six optimizer/DOM profiles, executable README/cookbook examples, key
+changes, causal readiness, stale completions, function identity, cancellation and
+disposal. The retained baseline reproduces all 3,172 frozen inputs; acceptance,
+diagnostics, generated code and recorded deterministic results remain unchanged.
+Rust all-target/all-feature Clippy, HIR contracts and 57 compiler/corpus/complexity
+guard tests pass. The [evidence archive](./testing/runtime-factory-contract-evidence-2026-09-14.json)
+records source and native artifact identity. No CPU or memory samples are inferred
+from this correctness qualification. The complete `pnpm commit` preflight, fresh
+workspace build, frozen corpus, bundle-size, review-regression, workspace-test,
+typecheck, format and lint sequence also passes.
 
 ## S3: strict collections and the optimized keyed fixture
 
