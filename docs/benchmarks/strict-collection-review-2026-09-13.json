@@ -1,0 +1,282 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-09-13",
+  "baselineRevision": "6e37b761d973558b723b0aa8141435c793d9aa56",
+  "candidate": "S3 certified collection receivers and strict keyed benchmark fixture",
+  "baselineCompilerBuildId": "fict-rust-p1-oxc0.139.0-m1-26c75a39c504b9389f312e96611a518548334778070babebe7950f5d9ce63f08",
+  "compilerBuildId": "fict-rust-p1-oxc0.139.0-m1-e9dbed77d664dc3219c1fa4c191ba7f179a05005d0a4cc343071c81738cd1010",
+  "method": "The retained baseline addon reproduced prior acceptance, diagnostic sequences, and output digests for all 3172 inputs. Every generated output and acceptance status is unchanged. Only six redundant dynamic-property warnings are removed across three inputs with proven array receivers.",
+  "preserved": "All non-H diagnostics, frozen Babel source and outputs, input options, acceptance policies, diagnostic policy categories and counts, and semantic expectations remain unchanged.",
+  "suites": [
+    {
+      "file": "crates/fict-compiler/tests/rust_frozen_codegen_corpus.json",
+      "inputs": 1950,
+      "changed": 2,
+      "changes": [
+        {
+          "id": "packages/compiler/test/semantic-validation.test.ts:1995:transform",
+          "sourceSha256": "ea83cee188e5e9ad5cd961f0694ae845780646b463a612627b5e7c8454617827",
+          "codeSha256": "2eaaf181a6c8709e85f83cf5991a7ddc784176b009b4406be5d90ccd8d278d67",
+          "beforeDiagnostics": [
+            {
+              "code": "FICT-R006",
+              "severity": "warning",
+              "guaranteeClass": "fallback"
+            },
+            {
+              "code": "FICT-H",
+              "severity": "warning",
+              "guaranteeClass": "fallback"
+            },
+            {
+              "code": "FICT-H",
+              "severity": "warning",
+              "guaranteeClass": "fallback"
+            },
+            {
+              "code": "FICT-H",
+              "severity": "warning",
+              "guaranteeClass": "fallback"
+            },
+            {
+              "code": "FICT-H",
+              "severity": "warning",
+              "guaranteeClass": "fallback"
+            }
+          ],
+          "afterDiagnostics": [
+            {
+              "code": "FICT-R006",
+              "severity": "warning",
+              "guaranteeClass": "fallback"
+            }
+          ],
+          "removed": [
+            {
+              "span": {
+                "end": 274,
+                "start": 263
+              },
+              "source": "shuffled[i]"
+            },
+            {
+              "span": {
+                "end": 287,
+                "start": 276
+              },
+              "source": "shuffled[j]"
+            },
+            {
+              "span": {
+                "end": 303,
+                "start": 292
+              },
+              "source": "shuffled[j]"
+            },
+            {
+              "span": {
+                "end": 316,
+                "start": 305
+              },
+              "source": "shuffled[i]"
+            }
+          ]
+        },
+        {
+          "id": "packages/compiler/test/template-integration.test.ts:774:compileAndLoad",
+          "sourceSha256": "11e30af34e3a01ff8526836ca44c0af8dc3048574eb8d36a964eed580a3d2e44",
+          "codeSha256": "03e1a2902fd8f535dbae93c91dc53a2fb05c2bb50a03987219ca8abd6ec67ee2",
+          "beforeDiagnostics": [
+            {
+              "code": "FICT-H",
+              "severity": "warning",
+              "guaranteeClass": "fallback"
+            },
+            {
+              "code": "FICT-R006",
+              "severity": "warning",
+              "guaranteeClass": "fallback"
+            },
+            {
+              "code": "FICT-R006",
+              "severity": "warning",
+              "guaranteeClass": "fallback"
+            },
+            {
+              "code": "FICT-R006",
+              "severity": "warning",
+              "guaranteeClass": "fallback"
+            },
+            {
+              "code": "FICT-R006",
+              "severity": "warning",
+              "guaranteeClass": "fallback"
+            },
+            {
+              "code": "FICT-R006",
+              "severity": "warning",
+              "guaranteeClass": "fallback"
+            },
+            {
+              "code": "FICT-R006",
+              "severity": "warning",
+              "guaranteeClass": "fallback"
+            },
+            {
+              "code": "FICT-R002",
+              "severity": "warning",
+              "guaranteeClass": "fallback"
+            }
+          ],
+          "afterDiagnostics": [
+            {
+              "code": "FICT-R006",
+              "severity": "warning",
+              "guaranteeClass": "fallback"
+            },
+            {
+              "code": "FICT-R006",
+              "severity": "warning",
+              "guaranteeClass": "fallback"
+            },
+            {
+              "code": "FICT-R006",
+              "severity": "warning",
+              "guaranteeClass": "fallback"
+            },
+            {
+              "code": "FICT-R006",
+              "severity": "warning",
+              "guaranteeClass": "fallback"
+            },
+            {
+              "code": "FICT-R006",
+              "severity": "warning",
+              "guaranteeClass": "fallback"
+            },
+            {
+              "code": "FICT-R006",
+              "severity": "warning",
+              "guaranteeClass": "fallback"
+            },
+            {
+              "code": "FICT-R002",
+              "severity": "warning",
+              "guaranteeClass": "fallback"
+            }
+          ],
+          "removed": [
+            {
+              "span": {
+                "end": 252,
+                "start": 238
+              },
+              "source": "setters[index]"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "file": "crates/fict-compiler/tests/legacy_unrepresented_callsite_replay.json",
+      "inputs": 1222,
+      "changed": 1,
+      "changes": [
+        {
+          "id": "legacy-unrepresented-0ef0a6651511bca3bf5c",
+          "sourceSha256": "11e30af34e3a01ff8526836ca44c0af8dc3048574eb8d36a964eed580a3d2e44",
+          "codeSha256": "3ae0d965541d2db6036fe5fde70d4a58a7b6a202f1a51d3e19bf7b91d8951ef0",
+          "beforeDiagnostics": [
+            {
+              "code": "FICT-H",
+              "severity": "warning",
+              "guaranteeClass": "fallback"
+            },
+            {
+              "code": "FICT-R006",
+              "severity": "warning",
+              "guaranteeClass": "fallback"
+            },
+            {
+              "code": "FICT-R006",
+              "severity": "warning",
+              "guaranteeClass": "fallback"
+            },
+            {
+              "code": "FICT-R006",
+              "severity": "warning",
+              "guaranteeClass": "fallback"
+            },
+            {
+              "code": "FICT-R006",
+              "severity": "warning",
+              "guaranteeClass": "fallback"
+            },
+            {
+              "code": "FICT-R006",
+              "severity": "warning",
+              "guaranteeClass": "fallback"
+            },
+            {
+              "code": "FICT-R006",
+              "severity": "warning",
+              "guaranteeClass": "fallback"
+            },
+            {
+              "code": "FICT-R002",
+              "severity": "warning",
+              "guaranteeClass": "fallback"
+            }
+          ],
+          "afterDiagnostics": [
+            {
+              "code": "FICT-R006",
+              "severity": "warning",
+              "guaranteeClass": "fallback"
+            },
+            {
+              "code": "FICT-R006",
+              "severity": "warning",
+              "guaranteeClass": "fallback"
+            },
+            {
+              "code": "FICT-R006",
+              "severity": "warning",
+              "guaranteeClass": "fallback"
+            },
+            {
+              "code": "FICT-R006",
+              "severity": "warning",
+              "guaranteeClass": "fallback"
+            },
+            {
+              "code": "FICT-R006",
+              "severity": "warning",
+              "guaranteeClass": "fallback"
+            },
+            {
+              "code": "FICT-R006",
+              "severity": "warning",
+              "guaranteeClass": "fallback"
+            },
+            {
+              "code": "FICT-R002",
+              "severity": "warning",
+              "guaranteeClass": "fallback"
+            }
+          ],
+          "removed": [
+            {
+              "span": {
+                "end": 252,
+                "start": 238
+              },
+              "source": "setters[index]"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "boundary": "The shuffled-loop and switch-control-flow fixtures retain their R006 opt-out diagnostics. Native strict DOM tests separately exercise live indexes, shallow-copy edits, per-row signals, keyed object replacement, and cleanup. This archive is a diagnostic review, not a new CPU performance result."
+}

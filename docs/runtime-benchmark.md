@@ -2,6 +2,32 @@
 
 The runtime benchmark uses the native compiler and the current workspace runtime. It writes a separate `keyed/fict-local` entry in a local [js-framework-benchmark checkout](https://github.com/krausest/js-framework-benchmark), preserving any existing `keyed/fict` implementation and results.
 
+## Current strict fixture
+
+`pnpm perf:build` now requires `strictGuarantee: true` and zero diagnostics, and
+records those exact options with the native and production bundle hashes. The
+compiler preserves direct array type contracts through immutable aliases and
+shallow copies, distinguishes scalar search results from retained references,
+and keeps dynamic element reads reactive.
+
+The fixture retains its explicit selector and per-row signals. Label updates use
+one synchronous `untrack` inside the batch; each rendered label owns its tracked
+signal read. Removal uses `findIndex`, a shallow copy, and `splice` directly.
+Unknown local helper calls still require their own lifetime contract: this change
+does not introduce general interprocedural borrowing or infer signal identity
+from a structural TypeScript function type.
+
+The fixture's untracked row capture relies on the row object staying identical
+while its key is present. Applications replacing an object under the same key
+must read the item reactively, for example through a keyed row component's props.
+Generic VNode array rendering retains its existing replacement behavior; keyed
+DOM identity checks apply to the direct DOM list lowering.
+
+The CPU and memory results below describe the archived 0.34.0 implementation.
+They do not measure the subsequent async graph work or this strict fixture.
+Fresh final-stack performance qualification is tracked by G4/G5 in the
+[implementation checklist](./reactivity-implementation-plan.md).
+
 ## Implemented optimizations: 2026-09-13
 
 The default fixture, compiler, and runtime now include the follow-up changes. The
@@ -43,7 +69,7 @@ class/label effects were not adopted: their complete measured scores were worse.
 
 ### CPU results and the strict 1.10 check
 
-The latest five-framework CPU geometric means are Vue Vapor **1.012232**, Solid **1.038705**, Svelte 5 **1.082474**, Fict **1.100919**, React Compiler **1.745426**.
+The archived five-framework CPU geometric means are Vue Vapor **1.012232**, Solid **1.038705**, Svelte 5 **1.082474**, Fict **1.100919**, React Compiler **1.745426**.
 The [README](../README.md#performance) lists every case mean. Each batch has 45
 result records and 725 CPU samples; both complete batches remain in the archive.
 

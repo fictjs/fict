@@ -520,8 +520,9 @@ return branches) and lowers them to reactive conditionals.
 
 ### js-framework-benchmark — 2026-09-13
 
-Latest complete comparison after the default fixture, compiler, and runtime
-optimizations. Mean total durations are milliseconds, including browser
+Historical comparison of the archived 0.34.0 fixture, compiler, and runtime.
+The subsequent async graph changes and current strict fixture require a new
+qualified batch; this table does not measure them. Mean total durations are milliseconds, including browser
 rendering; lower is better. Chrome 152.0.7977.83 on macOS arm64, headless, with
 identical per-case throttling. Each case has 15 samples; selection has 25.
 

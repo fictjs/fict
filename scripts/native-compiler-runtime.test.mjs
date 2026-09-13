@@ -1369,8 +1369,7 @@ test('projected assignment patterns rewrite dynamic reactive accessor roots', as
     }
   `
   const compiled = await compileAndImport(source, 'projected-pattern-mutations', {
-    options: { strictGuarantee: false },
-    diagnosticCodes: ['FICT-H', 'FICT-H', 'FICT-H', 'FICT-H'],
+    options: { strictGuarantee: true },
   })
 
   assert.deepEqual(compiled.probe(), [2, 1])

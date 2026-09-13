@@ -77,14 +77,6 @@ function buildData(count: number) {
   return data
 }
 
-function removeById(rows: { id: number; label: Signal<string> }[], id: number) {
-  const index = rows.findIndex(row => row.id === id)
-  if (index < 0) return rows
-  const next = rows.slice()
-  next.splice(index, 1)
-  return next
-}
-
 function Button(props: any) {
   return (
     <div class="col-sm-6 smallpad">
@@ -116,10 +108,13 @@ function App() {
 
   const update = () => {
     batch(() => {
-      for (let i = 0, rows = data; i < rows.length; i += 10) {
-        const label = rows[i]!.label
-        label(label() + ' !!!')
-      }
+      // An event consumes the current rows once; label bindings own their live reads.
+      untrack(() => {
+        for (let i = 0, rows = data; i < rows.length; i += 10) {
+          const label = rows[i]!.label
+          label(label() + ' !!!')
+        }
+      })
     })
   }
 
@@ -139,8 +134,13 @@ function App() {
   }
 
   const remove = (id: number) => {
-    const next = removeById(data, id)
-    if (next !== data) data = next
+    const rows = data
+    const index = rows.findIndex(row => row.id === id)
+    if (index >= 0) {
+      const next = rows.slice()
+      next.splice(index, 1)
+      data = next
+    }
     if (selected === id) {
       selected = null
     }

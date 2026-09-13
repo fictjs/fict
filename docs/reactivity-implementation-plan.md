@@ -9,7 +9,7 @@ not only an analysis pass, an API sketch, or a passing unrelated test suite.
 | ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- |
 | S1   | Explicit snapshot semantics and diagnostic fixes agree under default strict compilation. Retained reactive closures and unsafe lifetime escapes remain diagnosed.     | Executable cookbook examples, adversarial native compiler tests, disabled/safe/full behavioral checks.                                                                                        | Complete |
 | S2   | Official selector and reactive callback APIs are recognized by binding identity and their actual tracking/lifetime contracts.                                         | Positive imports/aliases and negative shadowed, external, deferred, and reassigned-host cases.                                                                                                | Complete |
-| S3   | Collection, fresh-copy, and per-row signal analysis supports the optimized keyed fixture with strict guarantees.                                                      | Strict fixture compilation, precise alias/mutation regressions, same-key replacement and teardown behavior.                                                                                   | Pending  |
+| S3   | Collection/fresh-copy analysis and explicit per-row signal boundaries support the optimized keyed fixture with strict guarantees.                                     | Strict fixture compilation, precise alias/mutation regressions, same-key replacement and teardown behavior.                                                                                   | Complete |
 | S4   | Custom compiler host environment and metadata obligations are executable and documented.                                                                              | Facade/native integration contract tests, missing metadata cases, consumer package checks.                                                                                                    | Pending  |
 | S5   | Representative application coverage measures strict boundary incidence and usable diagnostic repairs.                                                                 | Maintained corpus with source identity, diagnostics, boundary/LOC counts, migration evidence, strict production and browser gates; distinguish maintained fixtures from independent adoption. | Pending  |
 | S6   | Local build caches include the native compiler source and artifact identity used by each host.                                                                        | A changed compiler invalidates dependent build tasks; final qualification forces fresh application builds.                                                                                    | Complete |
@@ -91,6 +91,42 @@ Both frozen replay suites pass, covering 3,172 inputs including the one Preview
 fixture, with deterministic checks twice per input. The complete `pnpm commit`
 preflight, build, corpus, bundle-size, review-regression, workspace-test, typecheck,
 format, and lint sequence passes.
+
+## S3: strict collections and the optimized keyed fixture
+
+Direct built-in array annotations enter alias analysis before method calls are
+classified. Immutable aliases and certified fresh-copy results retain their
+receiver family in HIR; arbitrary nested properties do not inherit that family.
+Dynamic array element reads remain reactive. Proven scalar results such as
+`findIndex` can occupy built-in index/count positions, while inserted closures,
+object arguments, deep mutation, and overwritten methods retain their boundaries.
+
+The optimized fixture now requires strict compilation with zero diagnostics. Its
+selector, per-row signals, text bindings and stable row captures remain explicit
+representation choices. The event update uses one `untrack` inside the batch;
+removal uses a shallow copy directly. This does not add general local-function
+borrowing or assume runtime signal identity from a structural function type.
+
+Validation: all 468 native compiler/DOM/SSR/optimizer tests pass, including 11 new
+collection cases and a prior projected-assignment case upgraded from warning
+opt-out to strict success. The six compiler profiles cover disabled/safe/full
+optimization and both DOM backends. Keyed row components preserve DOM identity
+and subscribe to replacement signals under the same key; stale signal writes no
+longer affect them, and each row cleanup runs once. The generic VNode backend
+retains its existing array replacement behavior.
+
+Both frozen Rust replay suites pass with deterministic checks twice per input.
+The retained baseline addon also reproduces all 3,172 prior inputs: acceptance and
+generated code are unchanged, with six redundant array-access warnings removed
+from three diagnostic sets. The [review archive](./benchmarks/strict-collection-review-2026-09-13.json)
+records each removal; all 32 corpus-policy checks, Rust boundaries and Clippy pass.
+
+The [strict production fixture archive](./benchmarks/strict-runtime-fixture-2026-09-13.json)
+contains its source, compiled output, native/build provenance and served bundle
+hash. Chrome passes 15 model checks through 11,000 rows and the official keyed
+create/remove/swap checks. These are correctness checks. No new CPU or memory
+samples were collected, and README now explicitly labels its prior 0.34.0 table
+as historical. Current-stack timing and the unrounded 1.10 target remain G4/G5.
 
 ## S6: compiler-aware build caching
 

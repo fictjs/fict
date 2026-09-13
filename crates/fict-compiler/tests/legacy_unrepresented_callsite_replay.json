@@ -18,7 +18,7 @@
     "legacyLockfileSha256": "2b385eb419b90cf4f512a80ae925c2e2899bdb0e8d8c202cba8e09a9343b5af6",
     "legacyTestSourceSha256": "65e6c3961af46d92d88d40d4ee0bb50901538ea15b4468dc8c79c73eef9da8bb",
     "assertionInventorySha256": "96ad04d4812624987fec46895ca7a54c5cc6b8de3f5552252cba4362051eb186",
-    "rustCodegenCorpusSha256": "0a3d01e47b10c9f77567bb4b9dd89867fa2ff0e9ad59e813ed003014ded5341a",
+    "rustCodegenCorpusSha256": "a13468a4c5d9ed3d242974df318cf37327ee679ec793936be81c327577bf5846",
     "generatorSha256": "ec50a19976c812c42f62e87fcd3cd57545b1bdbf24039859c9790f864fadaf72",
     "captureConfigSha256": "5b383415eefeff180428cf22bad269597133a0d190ce35a57b4567434113bc65",
     "selectedTestFiles": 29,
@@ -29,8 +29,8 @@
     "zeroInvocationCallsites": 2,
     "matchedCallsiteExecutions": 1444,
     "replayFixtures": 1222,
-    "reviewedRevision": "67f98741d75a503c18aa86dfff6f061e10c7a5b1",
-    "reviewedCompilerBuildId": "fict-rust-p1-oxc0.139.0-m1-26c75a39c504b9389f312e96611a518548334778070babebe7950f5d9ce63f08"
+    "reviewedRevision": "6e37b761d973558b723b0aa8141435c793d9aa56",
+    "reviewedCompilerBuildId": "fict-rust-p1-oxc0.139.0-m1-e9dbed77d664dc3219c1fa4c191ba7f179a05005d0a4cc343071c81738cd1010"
   },
   "transitionCounts": {
     "ok-to-error": 3,
@@ -10567,11 +10567,6 @@
         "status": "ok",
         "diagnostics": [
           {
-            "code": "FICT-H",
-            "severity": "warning",
-            "guaranteeClass": "fallback"
-          },
-          {
             "code": "FICT-R006",
             "severity": "warning",
             "guaranteeClass": "fallback"
@@ -10608,7 +10603,7 @@
           }
         ],
         "codeSha256": "3ae0d965541d2db6036fe5fde70d4a58a7b6a202f1a51d3e19bf7b91d8951ef0",
-        "deterministicResultSha256": "f4a22b4334161f6d76a1197fb24fd6a4286f70e9391227bf2b96da8ca052a8fe"
+        "deterministicResultSha256": "41eeb2e5f6c4d8626284031a1e1f62ece05b887c2b9e85d9f1cac02a72be729f"
       },
       "statusTransition": null,
       "transitionPolicy": null

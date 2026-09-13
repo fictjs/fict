@@ -98,6 +98,7 @@ use static_alias_resolution::{
 mod advisory_diagnostics;
 mod builtin_effects;
 mod class_components;
+mod collection_receivers;
 mod dangerous_html;
 mod execution_state;
 mod explicit_snapshots;
@@ -111,6 +112,7 @@ mod native_jsx_spreads;
 mod reactive_jsx_writes;
 mod resource_declarations;
 mod runtime_callbacks;
+use collection_receivers::collect_proven_receiver_kinds;
 mod storage_origin;
 mod structured_control_flow;
 
@@ -1752,6 +1754,7 @@ struct Builder<'source, 'semantic> {
     class_self_reference_spans: BTreeSet<(u32, u32)>,
     reactive_functions: BTreeMap<FunctionId, ReactiveScopeKind>,
     state_receivers: BTreeMap<SymbolId, StateReceiverKind>,
+    alias_receiver_calls: BTreeMap<(u32, u32), StateReceiverKind>,
     transformed_list_calls: BTreeSet<(u32, u32)>,
     control_flow_plans: BTreeMap<FunctionId, structured_control_flow::FunctionControlFlowPlan>,
     strict_guarantee: bool,
@@ -2007,6 +2010,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             class_self_reference_spans: BTreeSet::new(),
             reactive_functions: BTreeMap::new(),
             state_receivers: BTreeMap::new(),
+            alias_receiver_calls: BTreeMap::new(),
             transformed_list_calls: BTreeSet::new(),
             control_flow_plans: BTreeMap::new(),
             strict_guarantee: options.strict_guarantee,
@@ -2109,6 +2113,14 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             .collect();
         let mut known_arrays = KnownArrayCollector::new(self.semantic.scoping());
         known_arrays.visit_program(program);
+        known_arrays
+            .symbols
+            .extend(collection_receivers::declared_arrays(
+                program,
+                self.semantic.scoping(),
+                &symbol_to_binding,
+                &self.macro_bindings,
+            ));
         known_arrays.resolve_aliases();
         let mut json_replacer_array_uses =
             JsonReplacerArrayUseCollector::new(self.semantic.scoping());
@@ -2325,11 +2337,26 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
         );
         self.state_receivers
             .clone_from(&reactive_symbols.state_receivers);
+        let proven_receivers = collect_proven_receiver_kinds(
+            program,
+            self.semantic.scoping(),
+            &reactive_symbols.state_receivers,
+            &static_hook_aliases,
+        );
+        self.alias_receiver_calls = collection_receivers::certified_alias_calls(
+            &calls.calls,
+            &proven_receivers,
+            &static_hook_aliases,
+        );
         self.validate_advisory_diagnostics(program, &calls.calls, &reactive_symbols.reactive);
         self.validate_memo_side_effects(program, &calls.calls);
         self.validate_inline_jsx_functions(program);
         self.validate_native_jsx_spreads(program);
-        self.validate_dynamic_property_access(program, &reactive_symbols.reactive);
+        self.validate_dynamic_property_access(
+            program,
+            &reactive_symbols.reactive,
+            &proven_receivers,
+        );
         self.validate_reactive_jsx_writes(program, &reactive_symbols.reactive);
         self.apply_call_classification(&calls.calls);
         self.populate_function_bodies(
@@ -2719,6 +2746,14 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
         };
         declared_binding_receivers.visit_program(program);
         let mut expression_receivers = declared_binding_receivers.receivers;
+        // A direct binding annotation has the same built-in receiver contract as
+        // the explicit $state<T> argument. Do not let the initializer erase it.
+        for symbol in &state {
+            if let Some(receiver) = expression_receivers.get(symbol) {
+                state_receivers.insert(*symbol, *receiver);
+                declared_state_receivers.insert(*symbol);
+            }
+        }
         for (symbol, receiver) in &state_receivers {
             expression_receivers.insert(*symbol, *receiver);
         }
@@ -2885,10 +2920,12 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
         &mut self,
         program: &Program<'_>,
         reactive_symbols: &BTreeSet<SymbolId>,
+        receivers: &BTreeMap<SymbolId, StateReceiverKind>,
     ) {
         let mut dynamic = DynamicReactivePropertyCollector {
             scoping: self.semantic.scoping(),
             reactive_symbols,
+            receivers,
             spans: BTreeSet::new(),
         };
         dynamic.visit_program(program);
@@ -3244,10 +3281,23 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             .difference(&immutable_storage_aliases)
             .copied()
             .collect::<BTreeSet<_>>();
+        let mut receiver_seeds = reactive.state_receivers.clone();
+        receiver_seeds.extend(
+            known_arrays
+                .iter()
+                .map(|symbol| (*symbol, StateReceiverKind::Array)),
+        );
+        let proven_receivers = collect_proven_receiver_kinds(
+            program,
+            self.semantic.scoping(),
+            &receiver_seeds,
+            callback_aliases,
+        );
         let mut primitive_values = KnownPrimitiveCollector::new(
             self.semantic.scoping(),
             callback_aliases,
             &immutable_storage_aliases,
+            &proven_receivers,
         );
         primitive_values.visit_program(program);
         let definitely_primitive_symbols = primitive_values.finish();
@@ -3270,14 +3320,6 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             .iter()
             .map(|call| ((call.span.start(), call.span.end()), call))
             .collect();
-        let mut receiver_seeds = reactive.state_receivers.clone();
-        receiver_seeds.extend(
-            known_arrays
-                .iter()
-                .map(|symbol| (*symbol, StateReceiverKind::Array)),
-        );
-        let proven_receivers =
-            collect_proven_receiver_kinds(program, self.semantic.scoping(), &receiver_seeds);
         let snapshots = explicit_snapshots::SnapshotFacts::collect(
             program,
             explicit_snapshots::SnapshotInputs {
@@ -5332,11 +5374,19 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             .contains(&(call.span.start(), call.span.end()))
         {
             StateReceiverKind::Array
+        } else if let Some(receiver) = self
+            .alias_receiver_calls
+            .get(&(call.span.start(), call.span.end()))
+        {
+            *receiver
         } else {
             call.callee_reference
                 .as_ref()
                 .and_then(|place| match &place.base {
-                    PlannedPlaceBase::Binding(symbol) => self.state_receivers.get(symbol).copied(),
+                    PlannedPlaceBase::Binding(symbol) if place.projections.is_empty() => {
+                        self.state_receivers.get(symbol).copied()
+                    }
+                    PlannedPlaceBase::Binding(_) => None,
                     PlannedPlaceBase::UnresolvedGlobal { .. }
                     | PlannedPlaceBase::Context { .. }
                     | PlannedPlaceBase::Expression { .. } => None,
@@ -7065,6 +7115,7 @@ struct KnownPrimitiveCollector<'facts, 'semantic> {
     scoping: &'semantic Scoping,
     aliases: &'facts StaticHookAliases,
     immutable_symbols: &'facts BTreeSet<SymbolId>,
+    receivers: &'facts BTreeMap<SymbolId, StateReceiverKind>,
     candidates: Vec<(SymbolId, BTreeSet<SymbolId>)>,
 }
 
@@ -7073,11 +7124,13 @@ impl<'facts, 'semantic> KnownPrimitiveCollector<'facts, 'semantic> {
         scoping: &'semantic Scoping,
         aliases: &'facts StaticHookAliases,
         immutable_symbols: &'facts BTreeSet<SymbolId>,
+        receivers: &'facts BTreeMap<SymbolId, StateReceiverKind>,
     ) -> Self {
         Self {
             scoping,
             aliases,
             immutable_symbols,
+            receivers,
             candidates: Vec::new(),
         }
     }
@@ -7109,12 +7162,18 @@ impl<'a> Visit<'a> for KnownPrimitiveCollector<'_, '_> {
             let Some(target) = binding.symbol_id.get() else {
                 continue;
             };
-            if self.immutable_symbols.contains(&target)
-                && let Some(dependencies) = expression_primitive_result_dependencies(
-                    self.scoping,
-                    self.aliases,
-                    initializer,
-                )
+            if !self.immutable_symbols.contains(&target) {
+                continue;
+            }
+            if collection_receivers::primitive_result(
+                self.scoping,
+                self.aliases,
+                self.receivers,
+                initializer,
+            ) {
+                self.candidates.push((target, BTreeSet::new()));
+            } else if let Some(dependencies) =
+                expression_primitive_result_dependencies(self.scoping, self.aliases, initializer)
             {
                 self.candidates.push((target, dependencies));
             }
@@ -7333,106 +7392,6 @@ impl<'a> Visit<'a> for KnownArrayCollector<'_> {
         }
         walk_variable_declaration(self, declaration);
     }
-}
-
-#[derive(Clone, Copy)]
-struct ReceiverDeclarationFact {
-    symbol: SymbolId,
-    source: ReceiverDeclarationSource,
-}
-
-#[derive(Clone, Copy)]
-enum ReceiverDeclarationSource {
-    Known(StateReceiverKind),
-    Alias(SymbolId),
-}
-
-struct ReceiverDeclarationCollector<'semantic> {
-    scoping: &'semantic Scoping,
-    facts: Vec<ReceiverDeclarationFact>,
-}
-
-impl<'a> Visit<'a> for ReceiverDeclarationCollector<'_> {
-    fn visit_variable_declaration(&mut self, declaration: &VariableDeclaration<'a>) {
-        if declaration.kind == VariableDeclarationKind::Const {
-            for declarator in &declaration.declarations {
-                let (BindingPattern::BindingIdentifier(binding), Some(initializer)) =
-                    (&declarator.id, &declarator.init)
-                else {
-                    continue;
-                };
-                if let Some(symbol) = binding.symbol_id.get() {
-                    let direct = classify_state_receiver_assignment(
-                        self.scoping,
-                        initializer,
-                        &BTreeMap::new(),
-                    );
-                    let source = if direct != StateReceiverKind::Unknown {
-                        Some(ReceiverDeclarationSource::Known(direct))
-                    } else {
-                        let Expression::Identifier(identifier) = initializer.get_inner_expression()
-                        else {
-                            continue;
-                        };
-                        identifier_symbol(self.scoping, identifier)
-                            .map(ReceiverDeclarationSource::Alias)
-                    };
-                    if let Some(source) = source {
-                        self.facts.push(ReceiverDeclarationFact { symbol, source });
-                    }
-                }
-            }
-        }
-        walk_variable_declaration(self, declaration);
-    }
-}
-
-fn collect_proven_receiver_kinds<'ast>(
-    program: &Program<'ast>,
-    scoping: &Scoping,
-    seeds: &BTreeMap<SymbolId, StateReceiverKind>,
-) -> BTreeMap<SymbolId, StateReceiverKind> {
-    let mut collector = ReceiverDeclarationCollector {
-        scoping,
-        facts: Vec::new(),
-    };
-    collector.visit_program(program);
-    let mut receivers = seeds.clone();
-    let mut dependents = BTreeMap::<SymbolId, Vec<SymbolId>>::new();
-    for fact in collector.facts {
-        match fact.source {
-            ReceiverDeclarationSource::Known(receiver) => {
-                if receivers
-                    .get(&fact.symbol)
-                    .is_none_or(|current| *current == StateReceiverKind::Unknown)
-                {
-                    receivers.insert(fact.symbol, receiver);
-                }
-            }
-            ReceiverDeclarationSource::Alias(source) => {
-                dependents.entry(source).or_default().push(fact.symbol);
-            }
-        }
-    }
-    let mut pending = receivers
-        .iter()
-        .filter_map(|(symbol, receiver)| {
-            (*receiver != StateReceiverKind::Unknown).then_some((*symbol, *receiver))
-        })
-        .collect::<VecDeque<_>>();
-    while let Some((source, receiver)) = pending.pop_front() {
-        for target in dependents.get(&source).into_iter().flatten() {
-            if receivers
-                .get(target)
-                .is_some_and(|current| *current != StateReceiverKind::Unknown)
-            {
-                continue;
-            }
-            receivers.insert(*target, receiver);
-            pending.push_back((*target, receiver));
-        }
-    }
-    receivers
 }
 
 impl JsxCollector<'_> {
@@ -26559,9 +26518,11 @@ impl StaticHookAliasCollector<'_> {
     fn known_array_path(&self, path: &StaticAliasPath) -> bool {
         let resolved = resolve_static_alias_path(&self.aliases, path);
         [path, &resolved].into_iter().any(|candidate| {
-            candidate
-                .binding_root()
-                .is_some_and(|root| self.known_arrays.contains(&root))
+            (candidate.properties.is_empty()
+                && !candidate.element_wildcard
+                && candidate
+                    .binding_root()
+                    .is_some_and(|root| self.known_arrays.contains(&root)))
                 || self.known_array_length(candidate).is_some()
         })
     }
@@ -43013,6 +42974,7 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
                         arguments,
                     )
                     || self.is_non_retaining_identity_argument(&call.callee, index, *argument)
+                    || self.is_non_retaining_collection_index(&call.callee, index, *argument)
                     || self.is_non_escaping_string_replacer(
                         &call.callee,
                         index,
@@ -43059,6 +43021,7 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
                     arguments,
                 )
                 || self.is_non_retaining_identity_argument(&call.callee, index, *argument)
+                || self.is_non_retaining_collection_index(&call.callee, index, *argument)
                 || self.is_non_escaping_string_replacer(&call.callee, index, *argument, arguments)
                 || self.is_non_escaping_json_replacer_array(&call.callee, index, *argument)
                 || self.is_non_escaping_json_replacer_push_argument(call, *argument)
@@ -44894,6 +44857,7 @@ fn is_safe_global_path(path: &StaticAliasPath) -> bool {
 struct DynamicReactivePropertyCollector<'semantic, 'reactive> {
     scoping: &'semantic Scoping,
     reactive_symbols: &'reactive BTreeSet<SymbolId>,
+    receivers: &'reactive BTreeMap<SymbolId, StateReceiverKind>,
     spans: BTreeSet<(u32, u32)>,
 }
 
@@ -44908,6 +44872,10 @@ impl<'a> Visit<'a> for DynamicReactivePropertyCollector<'_, '_> {
             Expression::StringLiteral(_) | Expression::NumericLiteral(_)
         );
         if !literal_property
+            && !matches!(member.object.get_inner_expression(), Expression::Identifier(identifier)
+                if identifier_symbol(self.scoping, identifier)
+                    .and_then(|symbol| self.receivers.get(&symbol))
+                    == Some(&StateReceiverKind::Array))
             && expression_root_symbol(self.scoping, &member.object)
                 .is_some_and(|symbol| self.reactive_symbols.contains(&symbol))
         {

@@ -2695,26 +2695,6 @@
           "code": "FICT-R006",
           "severity": "warning",
           "guaranteeClass": "fallback"
-        },
-        {
-          "code": "FICT-H",
-          "severity": "warning",
-          "guaranteeClass": "fallback"
-        },
-        {
-          "code": "FICT-H",
-          "severity": "warning",
-          "guaranteeClass": "fallback"
-        },
-        {
-          "code": "FICT-H",
-          "severity": "warning",
-          "guaranteeClass": "fallback"
-        },
-        {
-          "code": "FICT-H",
-          "severity": "warning",
-          "guaranteeClass": "fallback"
         }
       ],
       "policy": "rust-warning-removal"
@@ -4480,11 +4460,6 @@
         }
       ],
       "rustDiagnostics": [
-        {
-          "code": "FICT-H",
-          "severity": "warning",
-          "guaranteeClass": "fallback"
-        },
         {
           "code": "FICT-R006",
           "severity": "warning",

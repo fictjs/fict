@@ -51,13 +51,14 @@ const nativePath = path.resolve(
 )
 const binding = require(nativePath)
 const source = await readFile(sourcePath, 'utf8')
+const compilerOptions = { dev: false, strictGuarantee: true }
 const result = binding.transformSync({
   code: source,
   filename: '/js-framework-benchmark/main.tsx',
-  options: { dev: false, strictGuarantee: false },
+  options: compilerOptions,
 })
 assert.ok(result.code, JSON.stringify(result.diagnostics))
-assert.equal(result.diagnostics.filter(diagnostic => diagnostic.severity === 'error').length, 0)
+assert.deepEqual(result.diagnostics, [], 'Benchmark compilation must have no diagnostics')
 assert.doesNotMatch(result.code, /\$state\s*\(/)
 await mkdir(outputRoot, { recursive: true })
 await writeFile(path.join(outputRoot, 'source.tsx'), source)
@@ -152,7 +153,7 @@ assert.deepEqual(sourceIdentity(), initialIdentity, 'Benchmark inputs changed du
 const provenance = {
   ...initialIdentity,
   sourcePath: path.relative(repositoryRoot, sourcePath),
-  compilerOptions: { dev: false, strictGuarantee: false },
+  compilerOptions,
   sourceMap: values.sourcemap,
   benchmarkRevision: git(benchmarkRoot, 'rev-parse', 'HEAD'),
   compilerBuildId: result.compilerBuildId,
