@@ -2,6 +2,10 @@
 
 This note defines where Fict reactive metadata should be generated, packaged, and published for third-party hook libraries.
 
+For an executable consumer integration, see [Custom compiler hosts](./custom-compiler-host.md).
+It distinguishes package declaration failures from an explicitly opaque JavaScript
+dependency and verifies metadata changes against the real native compiler.
+
 ## Decision
 
 Fict metadata should be split across two responsibilities:

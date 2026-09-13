@@ -1,6 +1,8 @@
 import {
   analyze,
   analyzeSync,
+  applyCompileRequestEnvironmentPolicy,
+  applyAnalyzeRequestEnvironmentPolicy,
   nativeCompilerInfo,
   scan,
   scanSync,
@@ -56,6 +58,15 @@ const buildRevision: string | null = nativeCompilerInfo().compilerBuildRevision
 const parsedMetadata = parseModuleReactiveMetadata('{"version":1,"exports":{}}')
 const packageMetadata = resolvePackageModuleMetadata('fict-library', __filename)
 
+const effectiveRequest: CompileRequest = applyCompileRequestEnvironmentPolicy(request, {
+  nodeEnv: 'production',
+})
+const effectiveAnalysis: AnalyzeRequest = applyAnalyzeRequestEnvironmentPolicy(analyzeRequest, {
+  nodeEnv: 'production',
+})
+
+void effectiveRequest
+void effectiveAnalysis
 void syncResult
 void asyncResult
 void analysis

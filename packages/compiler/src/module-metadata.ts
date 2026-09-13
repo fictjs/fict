@@ -400,7 +400,26 @@ export function resolvePackageModuleMetadataState(
   }
 
   if (hostResolution === null) return { kind: 'missing' }
-  if (hostResolution && 'kind' in hostResolution) return hostResolution
+  if (hostResolution && 'kind' in hostResolution) {
+    // JavaScript hosts can return untyped data. Apply the same schema contract as package files
+    // before treating their result as authoritative; never turn a failed declaration into plain JS.
+    try {
+      switch (hostResolution.kind) {
+        case 'resolved':
+          return isModuleReactiveMetadata(hostResolution.metadata)
+            ? hostResolution
+            : { kind: 'invalid' }
+        case 'plain':
+        case 'missing':
+        case 'invalid':
+          return hostResolution
+        default:
+          return { kind: 'invalid' }
+      }
+    } catch {
+      return { kind: 'invalid' }
+    }
+  }
 
   let publicSubpath = parsedSource.subpath
   let rawPublicSubpath = parsedSource.rawSubpath

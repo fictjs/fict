@@ -78,9 +78,9 @@ export interface NativeLoaderOptions {
 /**
  * Serializable direct-compiler API exposed by `@fictjs/compiler/native`.
  *
- * The facade intentionally omits the parser probes used by release verification. It owns only
- * binding discovery and method forwarding; filesystem resolution and bundler graph callbacks
- * remain integration responsibilities.
+ * The facade omits the parser probes used by release verification. It pins a validated binding
+ * and applies the current process environment policy to every transform and analyze request.
+ * Filesystem resolution, metadata snapshots, and bundler graph callbacks remain host-owned.
  */
 export type NativeCompilerFacade = Pick<
   NativeCompilerBinding,

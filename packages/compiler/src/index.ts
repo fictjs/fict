@@ -10,6 +10,7 @@ export type { NativeCompilerInfo } from './native-loader'
 export {
   applyCompilerEnvironmentPolicy,
   applyCompileRequestEnvironmentPolicy,
+  applyAnalyzeRequestEnvironmentPolicy,
   resolveStrictGuarantee,
 } from './environment-policy'
 export type { CompilerEnvironmentPolicyInput } from './environment-policy'

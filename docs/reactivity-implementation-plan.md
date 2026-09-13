@@ -10,7 +10,7 @@ not only an analysis pass, an API sketch, or a passing unrelated test suite.
 | S1   | Explicit snapshot semantics and diagnostic fixes agree under default strict compilation. Retained reactive closures and unsafe lifetime escapes remain diagnosed.     | Executable cookbook examples, adversarial native compiler tests, disabled/safe/full behavioral checks.                                                                                        | Complete |
 | S2   | Official selector and reactive callback APIs are recognized by binding identity and their actual tracking/lifetime contracts.                                         | Positive imports/aliases and negative shadowed, external, deferred, and reassigned-host cases.                                                                                                | Complete |
 | S3   | Collection/fresh-copy analysis and explicit per-row signal boundaries support the optimized keyed fixture with strict guarantees.                                     | Strict fixture compilation, precise alias/mutation regressions, same-key replacement and teardown behavior.                                                                                   | Complete |
-| S4   | Custom compiler host environment and metadata obligations are executable and documented.                                                                              | Facade/native integration contract tests, missing metadata cases, consumer package checks.                                                                                                    | Pending  |
+| S4   | Custom compiler host environment and metadata obligations are executable and documented.                                                                              | Facade/native integration contract tests, missing metadata cases, consumer package checks.                                                                                                    | Complete |
 | S5   | Representative application coverage measures strict boundary incidence and usable diagnostic repairs.                                                                 | Maintained corpus with source identity, diagnostics, boundary/LOC counts, migration evidence, strict production and browser gates; distinguish maintained fixtures from independent adoption. | Pending  |
 | S6   | Local build caches include the native compiler source and artifact identity used by each host.                                                                        | A changed compiler invalidates dependent build tasks; final qualification forces fresh application builds.                                                                                    | Complete |
 | S7   | Bundle-size gates resolve distributed modules without silently following workspace source aliases.                                                                    | Actual ESM/CJS package measurements, import-specific budgets, and an executable resolution check.                                                                                             | Complete |
@@ -127,6 +127,32 @@ hash. Chrome passes 15 model checks through 11,000 rows and the official keyed
 create/remove/swap checks. These are correctness checks. No new CPU or memory
 samples were collected, and README now explicitly labels its prior 0.34.0 table
 as historical. Current-stack timing and the unrounded 1.10 target remain G4/G5.
+
+## S4: custom compiler host contracts
+
+The [executable host recipe](./custom-compiler-host.md) scans value imports, resolves
+current metadata snapshots, and rejects missing or provisional graph output before
+final emission. Its actual source is executed by the native and isolated package
+consumer gates. Metadata changes alter generated accessor reads and fingerprints;
+type-only edges do not cause runtime resolution. A known Fict library that loses
+its package declaration remains an error. An `opaque` classification is explicitly
+documented and tested as a host trust boundary, not automatic proof of plain code.
+
+The analyze environment helper is now public alongside the compile helper. Raw
+native calls see serialized options only, while root and native facades enforce
+current process policy on every call. Both ESM and CJS checks exercise development,
+production, forced strict mode, explicit build environments, sync/worker-pool APIs,
+and unchanged caller requests. Authoritative virtual package metadata now receives
+the same schema validation as metadata read from disk.
+
+Validation: 475 native tests, 119 compiler unit tests, 35 native packaging contracts,
+production compiler typecheck, and ESM/CJS consumer declaration checks pass. Three
+optimizer profiles execute a real compiled hook and consumer through updates and
+disposal. An isolated local tarball install without a Rust toolchain passes 66 host
+policy assertions per format, the executable metadata recipe, and all 1,950 primary
+frozen corpus cases. The [evidence archive](./testing/custom-host-evidence-2026-09-13.json)
+records source hashes, native artifact identity, and package results. This is local
+Darwin arm64 consumer evidence, not a registry publication or remote platform result.
 
 ## S6: compiler-aware build caching
 

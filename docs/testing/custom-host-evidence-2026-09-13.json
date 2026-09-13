@@ -1,0 +1,97 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-09-13T15:05:57.426700+00:00",
+  "baseRevision": "e97f30aa0f1b78875d267c73fb29ac97d034d63d",
+  "scope": "S4 working tree; local Darwin arm64 qualification, not publication or remote CI",
+  "sourceHashes": {
+    "packages/compiler/src/index.ts": "70cbdceb99274a4d2644899b502b8c3ef26224c95e5df2930c3743b3a3662edc",
+    "packages/compiler/src/environment-policy.ts": "86c2eae9e482b416c91eb4cbaa4200ed1685c2844f24e35e85eec831c67f2308",
+    "packages/compiler/src/native-loader.ts": "c42d43654541a5b8a4833a5bad2013e35b1238d22ee391d2e9be3948816bb071",
+    "packages/compiler/src/module-metadata.ts": "539b7629206068e1898c74a14214a67c3a1fb314ed0c95c0bf18a7b116c3feb7",
+    "docs/custom-compiler-host.md": "f3dfc33a63093e7170c2669dc84d54822255ddd7e4abee91824460af5ec5a217",
+    "scripts/lib/compiler-host-contract.mjs": "7f222cc296922dbed819c45e8671c186f57b78b5a2c0f1cc1a62e9a46534198b",
+    "scripts/native-compiler-host-contract.test.mjs": "390d9e5d0ebf882e201b5eecf246653f01849cb843a83351768da5a0bd978e01",
+    "scripts/native-compiler-package-smoke.mjs": "fc341eb67b8abbc0e3cb7fca6a2de9088dbc64057415122cb3d65cfad6159097",
+    "scripts/fixtures/native-compiler-types/esm.mts": "0a71c14134e103f8445481bf0034ccba4dd8841571eb2f2ed6899a9d6a319a03",
+    "scripts/fixtures/native-compiler-types/cjs.cts": "ba092ec611c238bc417e38871efa40816251830d70114519b50d0ae446074d2f"
+  },
+  "checks": {
+    "nativeTests": 475,
+    "compilerUnitTests": 119,
+    "nativePackageContractTests": 35,
+    "liveConsumerOptimizerProfiles": ["disabled", "safe", "full"],
+    "compilerTypecheck": "passed",
+    "esmAndCjsDeclarationConsumers": "passed"
+  },
+  "installedConsumer": {
+    "schemaVersion": 4,
+    "target": "darwin-arm64",
+    "rustTarget": "aarch64-apple-darwin",
+    "nodeLane": null,
+    "node": "v24.16.0",
+    "platform": "darwin",
+    "arch": "arm64",
+    "libc": null,
+    "packageName": "@fictjs/compiler-darwin-arm64",
+    "packageVersion": "0.35.0",
+    "binarySha256": "090636d5dace3fe2bd056dce080521d4e7c6737bed1f89cd111a40d21eb74f7f",
+    "sourceRevision": null,
+    "sbomSha256": "4242f42dc7b17f898291d4bcbf216caf5fccebb02a0640a5aacd1177de574cb7",
+    "tarballSha256": "bb2e0ab1e6266b8547a6eebff9b12785c631bb01fdfec609cc8a6e9aacaccfec",
+    "tarballBytes": 5568526,
+    "unpackedBytes": 13417503,
+    "sizeGate": {
+      "schemaVersion": 1,
+      "target": "darwin-arm64",
+      "profile": "ci",
+      "tarballBytes": 5568526,
+      "unpackedBytes": 13417503,
+      "maximumTarballBytes": 8388608,
+      "maximumUnpackedBytes": 20971520,
+      "passed": true,
+      "violations": []
+    },
+    "provenanceAttestationSha256": null,
+    "sbomAttestationSha256": null,
+    "compilerBuildId": "fict-rust-p1-oxc0.139.0-m1-e9dbed77d664dc3219c1fa4c191ba7f179a05005d0a4cc343071c81738cd1010",
+    "compilerBuildRevision": null,
+    "compilerCapabilityManifestVersion": 2,
+    "compilerCapabilityManifestDigest": "sha256:8d85c68309d486fb1ac13747f35b2236f2893df69a1fae6f80edc065cb53c361",
+    "compilerCapabilityPackageVersion": "0.35.0",
+    "compatibilityCorpus": {
+      "schemaVersion": 1,
+      "corpusSchemaVersion": 5,
+      "corpusSha256": "sha256:a13468a4c5d9ed3d242974df318cf37327ee679ec793936be81c327577bf5846",
+      "fixtures": 1950,
+      "reviewedRevision": "6e37b761d973558b723b0aa8141435c793d9aa56",
+      "reviewedCompilerBuildId": "fict-rust-p1-oxc0.139.0-m1-e9dbed77d664dc3219c1fa4c191ba7f179a05005d0a4cc343071c81738cd1010"
+    },
+    "customHostContracts": [
+      {
+        "environment": {
+          "policyChecks": 66,
+          "compilerBuildId": "fict-rust-p1-oxc0.139.0-m1-e9dbed77d664dc3219c1fa4c191ba7f179a05005d0a4cc343071c81738cd1010"
+        },
+        "metadata": {
+          "metadataChangesObserved": true,
+          "missingAndMalformedRejected": true,
+          "incompleteEmissionRejected": true
+        }
+      },
+      {
+        "environment": {
+          "policyChecks": 66,
+          "compilerBuildId": "fict-rust-p1-oxc0.139.0-m1-e9dbed77d664dc3219c1fa4c191ba7f179a05005d0a4cc343071c81738cd1010"
+        },
+        "metadata": {
+          "metadataChangesObserved": true,
+          "missingAndMalformedRejected": true,
+          "incompleteEmissionRejected": true
+        }
+      }
+    ],
+    "formats": ["esm", "cjs"],
+    "syncAndAsync": true,
+    "rustToolchainRequired": false
+  }
+}

@@ -384,6 +384,25 @@ describe('@fictjs/compiler/graph-host', () => {
     ).toEqual({ kind: 'missing' })
   })
 
+  it.each([
+    {},
+    { exports: {} },
+    { version: 2, exports: {} },
+    { version: 1, exports: {}, unknown: true },
+    { version: 1, exports: { count: 'unknown' } },
+    { version: 1, exports: {}, hooks: { useCount: { arrayProps: { '01': 'signal' } } } },
+  ])('rejects malformed authoritative virtual metadata %j', async metadata => {
+    const { resolvePackageModuleMetadataState } = await import('../src/graph-host')
+    expect(
+      resolvePackageModuleMetadataState('virtual-hook', 'virtual:entry', {
+        resolvePackage: () => ({
+          kind: 'resolved',
+          metadata: metadata as never,
+        }),
+      }),
+    ).toEqual({ kind: 'invalid' })
+  })
+
   it('lets host resolution handle packages imported by virtual modules', async () => {
     const root = await mkdtemp(path.join(tmpdir(), 'fict-graph-host-virtual-importer-'))
     tempRoots.push(root)

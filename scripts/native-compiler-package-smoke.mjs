@@ -27,6 +27,7 @@ import {
   verifyNativeBundle,
 } from './native-compiler-packages.mjs'
 import { replayCompilerCorpus } from './lib/compiler-corpus-replay.mjs'
+import { extractHostRecipe } from './lib/compiler-host-contract.mjs'
 
 const packageManager = 'pnpm'
 const windowsPackageManagerCommand = /^(?:npm|pnpm)(?:\.cmd)?$/i
@@ -181,6 +182,16 @@ function packResolutionOnlyNativePackages(tempRoot, packsDirectory, host, hostTa
 }
 
 function writeConsumers(consumerDirectory) {
+  writeFileSync(
+    path.join(consumerDirectory, 'host-contract.mjs'),
+    readFileSync(path.join(repositoryRoot, 'scripts/lib/compiler-host-contract.mjs'), 'utf8'),
+  )
+  writeFileSync(
+    path.join(consumerDirectory, 'host-recipe.mjs'),
+    extractHostRecipe(
+      readFileSync(path.join(repositoryRoot, 'docs/custom-compiler-host.md'), 'utf8'),
+    ),
+  )
   const request = `{
     protocolVersion: 1,
     code: 'export const answer: number = 42',
@@ -190,8 +201,12 @@ function writeConsumers(consumerDirectory) {
   writeFileSync(
     path.join(consumerDirectory, 'smoke.mjs'),
     `import assert from 'node:assert/strict'
-import { loadNativeCompilerBinding } from '@fictjs/compiler/native'
-const binding = loadNativeCompilerBinding()
+import * as compiler from '@fictjs/compiler'
+import * as native from '@fictjs/compiler/native'
+import * as graphHost from '@fictjs/compiler/graph-host'
+import * as recipe from './host-recipe.mjs'
+import { assertHostEnvironmentContract, assertHostMetadataContract } from './host-contract.mjs'
+const binding = native.loadNativeCompilerBinding()
 const info = binding.nativeCompilerInfo()
 const syncResult = binding.transformSync(${request})
 const asyncResult = await binding.transform(${request})
@@ -200,23 +215,31 @@ assert.deepEqual(asyncResult.diagnostics, [])
 assert.match(syncResult.code, /answer = 42/)
 assert.doesNotMatch(syncResult.code, /: number/)
 assert.equal(asyncResult.code, syncResult.code)
-console.log(JSON.stringify({ format: 'esm', info, compilerBuildId: syncResult.compilerBuildId }))
+const environment = await assertHostEnvironmentContract(compiler, native)
+const metadata = await assertHostMetadataContract(compiler, graphHost, recipe)
+console.log(JSON.stringify({ format: 'esm', info, compilerBuildId: syncResult.compilerBuildId, hostContract: { environment, metadata } }))
 `,
   )
   writeFileSync(
     path.join(consumerDirectory, 'smoke.cjs'),
     `'use strict'
 const assert = require('node:assert/strict')
-const { loadNativeCompilerBinding } = require('@fictjs/compiler/native')
+const compiler = require('@fictjs/compiler')
+const native = require('@fictjs/compiler/native')
+const graphHost = require('@fictjs/compiler/graph-host')
 ;(async () => {
-  const binding = loadNativeCompilerBinding()
+  const { assertHostEnvironmentContract, assertHostMetadataContract } = await import('./host-contract.mjs')
+  const recipe = await import('./host-recipe.mjs')
+  const binding = native.loadNativeCompilerBinding()
   const info = binding.nativeCompilerInfo()
   const syncResult = binding.transformSync(${request})
   const asyncResult = await binding.transform(${request})
   assert.deepEqual(syncResult.diagnostics, [])
   assert.deepEqual(asyncResult.diagnostics, [])
   assert.equal(asyncResult.code, syncResult.code)
-  console.log(JSON.stringify({ format: 'cjs', info, compilerBuildId: syncResult.compilerBuildId }))
+  const environment = await assertHostEnvironmentContract(compiler, native)
+  const metadata = await assertHostMetadataContract(compiler, graphHost, recipe)
+  console.log(JSON.stringify({ format: 'cjs', info, compilerBuildId: syncResult.compilerBuildId, hostContract: { environment, metadata } }))
 })().catch(error => {
   console.error(error)
   process.exitCode = 1
@@ -370,16 +393,24 @@ function main() {
     )
 
     const esm = parseLastJsonLine(
-      run(process.execPath, [path.join(consumerDirectory, 'smoke.mjs')], { capture: true }),
+      run(process.execPath, [path.join(consumerDirectory, 'smoke.mjs')], {
+        capture: true,
+        env: { FICT_COMPILER_NATIVE_PATH: '' },
+      }),
     )
     const cjs = parseLastJsonLine(
-      run(process.execPath, [path.join(consumerDirectory, 'smoke.cjs')], { capture: true }),
+      run(process.execPath, [path.join(consumerDirectory, 'smoke.cjs')], {
+        capture: true,
+        env: { FICT_COMPILER_NATIVE_PATH: '' },
+      }),
     )
     for (const result of [esm, cjs]) {
       assert.equal(result.info.backend, 'rust')
       assert.equal(result.info.nativeTarget, host.rustTarget)
       assert.equal(result.info.nodeApiVersion, 10)
       assert.equal(result.info.compilerBuildId, result.compilerBuildId)
+      assert.equal(result.hostContract.environment.policyChecks, 66)
+      assert.equal(result.hostContract.environment.compilerBuildId, result.compilerBuildId)
       assert.equal(
         result.info.compilerCapabilityManifestVersion,
         COMPILER_CAPABILITY_MANIFEST_VERSION,
@@ -436,6 +467,7 @@ function main() {
       compilerCapabilityManifestDigest: esm.info.compilerCapabilityManifestDigest,
       compilerCapabilityPackageVersion: esm.info.compilerCapabilityPackageVersion,
       compatibilityCorpus,
+      customHostContracts: [esm.hostContract, cjs.hostContract],
       formats: [esm.format, cjs.format],
       syncAndAsync: true,
       rustToolchainRequired: false,

@@ -179,6 +179,14 @@ Direct hosts own scan, resolution, fingerprints, and invalidation, then pass a
 does not expose the former process-global `setModuleMetadata`,
 `clearModuleMetadata`, or `invalidateModuleMetadata` state.
 
+The [executable custom host recipe](../../docs/custom-compiler-host.md) covers
+production policy, virtual/package resolution, missing declarations, changed
+metadata, and rejecting provisional graph output. `opaque` is an explicit ordinary
+JavaScript boundary; it cannot stand in for unavailable Fict hook metadata. Raw
+native hosts can use the exported `applyCompileRequestEnvironmentPolicy` and
+`applyAnalyzeRequestEnvironmentPolicy` helpers; public facade calls already apply
+the process policy on every request.
+
 See [Third-party Fict libraries](../../docs/third-party-libraries.md) for the
 publishing contract.
 
