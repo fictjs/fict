@@ -40,6 +40,7 @@ function fixture() {
   const esm = "import { marker } from '@fictjs/runtime'; console.log(marker)\n"
   write('packages/fict/dist/index.js', esm)
   write('packages/fict/dist/advanced.js', esm)
+  write('packages/fict/dist/plus.js', esm)
   write('packages/fict/dist/index.cjs', "console.log(require('@fictjs/runtime').marker)\n")
   write('packages/fict/src/index.ts', esm)
   return root

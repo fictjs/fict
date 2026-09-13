@@ -2044,6 +2044,11 @@ export function getActiveSub(): ReactiveNode | undefined {
   return activeSub
 }
 
+/** Internal projections may read already-stored snapshots during cleanup. */
+export function isRunningCleanup(): boolean {
+  return inCleanup
+}
+
 interface AsyncErrorTarget {
   asyncFailure?: { error: unknown } | undefined
 }

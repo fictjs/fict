@@ -143,6 +143,23 @@ readiness and generation acceptance use the shared async protocol. Existing
 Resource access patterns and documented Suspense/error behavior must keep their
 regression coverage during migration.
 
+Each Resource cache entry owns an async **source** node. Unlike an async derived
+node, the source has no producer input subscriptions: the cache policy decides
+when to start, share, abort, or replace transport. Both node kinds use `AsyncState`
+and the same computed-node publication and pending/error propagation protocol.
+Resource no longer stores independent data, loading, and error signals. Pure,
+lazy, shared field projections preserve equality suppression for consumers that
+only read one field; the remaining version signal is a cache invalidation input.
+
+With `suspense: true`, reactive data reads propagate initial pending and errors
+through memo/effect/render consumers. A successful previous value remains readable
+while refreshing, as before. Legacy synchronous setup reads retain their replay
+adapter. Without Suspense, callers continue to inspect `data`, `loading`, and
+`error` explicitly. Evicting a settled entry removes its cache lookup while
+existing readers retain its snapshot; active shared requests outlive individual
+readers. Invalidation and non-cache transport cleanup explicitly cancel their
+generation. No request token or generation is exposed as public Resource API.
+
 ## Server and compiler obligations
 
 Server rendering preserves the request owner across registered completions.
@@ -172,6 +189,11 @@ and `async-suspense.test.ts` cover chains, diamonds, conditional subscriptions,
 consumer-owned waits, independent boundaries, prepare/commit cleanup, exact error
 identity, retained DOM, nested mounts, resets, and fallback-cleanup reentrancy.
 
-Indirect and overlapping transitions, Resource policy integration, and real
-SSR/streaming/hydration qualification remain separate A4–A8 items. Passing state,
-node, or composition tests alone does not satisfy those integration requirements.
+`async-source.test.ts` and `packages/fict/test/resource-graph.test.ts` cover source
+identity, cache ownership, generation resets, graph composition, field equality,
+errors, eviction, invalidation, and cleanup reads. Existing Resource tests retain
+cache, cancellation, TTL/SWR, mutation, and request-isolation coverage.
+
+Indirect and overlapping transitions and real SSR/streaming/hydration qualification
+remain separate A5–A8 items. Passing state, node, or composition tests alone does
+not satisfy those integration requirements.

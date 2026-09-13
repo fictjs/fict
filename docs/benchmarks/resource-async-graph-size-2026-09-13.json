@@ -1,0 +1,66 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-09-13",
+  "baselineRevision": "d54d3595540f4207fc99dda8928816ca926d74fb",
+  "baselineEvidence": {
+    "archive": "async-composition-size-2026-09-13.json",
+    "boundary": "distributed package measurements qualified by A3"
+  },
+  "candidate": "A4 Resource integration; exact source and artifact trees below",
+  "tools": {
+    "node": "v24.16.0",
+    "sizeLimit": "12.0.0",
+    "esbuild": "0.27.0"
+  },
+  "measurement": {
+    "unit": "bytes",
+    "compression": "Brotli",
+    "minified": true,
+    "production": true,
+    "command": "pnpm exec size-limit --json",
+    "moduleResolution": "tsconfigRaw.compilerOptions={} with distributed input verification"
+  },
+  "hashAlgorithm": "sha256 of each sorted relative file path, NUL, file bytes, NUL",
+  "candidateSources": {
+    "files": 61,
+    "sha256": "05fee43927f1b65cc562f00a333bd9b78bf0504482ba564066b0c529b528c361"
+  },
+  "candidateArtifacts": {
+    "files": 164,
+    "sha256": "fb1542368ee75ba812473a6397bdd3ece13641a025060fef8f622bf8dc2625e4"
+  },
+  "results": [
+    {
+      "name": "Fict package (ESM)",
+      "baselineBytes": 23801,
+      "candidateBytes": 23801,
+      "deltaBytes": 0
+    },
+    {
+      "name": "Fict package (CJS)",
+      "baselineBytes": 43149,
+      "candidateBytes": 43209,
+      "deltaBytes": 60
+    },
+    {
+      "name": "Fict package async memo (ESM)",
+      "baselineBytes": 7692,
+      "candidateBytes": 7695,
+      "deltaBytes": 3
+    },
+    {
+      "name": "Fict package sync memo (ESM)",
+      "baselineBytes": 4780,
+      "candidateBytes": 4780,
+      "deltaBytes": 0
+    },
+    {
+      "name": "Fict package resource (ESM)",
+      "baselineBytes": null,
+      "candidateBytes": 20700,
+      "deltaBytes": null
+    }
+  ],
+  "interpretation": "Resource shares the async node protocol while preserving cache and field-notification policies. The new Resource import gate is its first isolated measurement; no pre-change Resource size or CPU-performance improvement is claimed.",
+  "verifiedSourceMapEntries": 96
+}

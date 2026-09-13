@@ -41,4 +41,12 @@ export default [
     limit: '4.9 KB',
     modifyEsbuildConfig: production,
   },
+  {
+    name: 'Fict package resource (ESM)',
+    path: 'packages/fict/dist/plus.js',
+    import: '{ resource }',
+    // Shared graph Resource: 20,700 B, measured independently from the main entry.
+    limit: '20.8 KB',
+    modifyEsbuildConfig: production,
+  },
 ]

@@ -613,6 +613,13 @@ export function setCycleProtectionOptions(options: {
 
 The following APIs are considered internal implementation details and **are not guaranteed** to be compatible across versions:
 
+The first-party Resource implementation uses `__fictCreateAsyncSource`, its
+`AsyncSource` type, and `__fictIsAsyncConsumer` from `@fictjs/runtime/internal`
+(also mirrored by `fict/internal`). These align with the accompanying runtime
+version. They are not application APIs or emitted compiler ABI promises. The
+source owns shared readiness/generation state; Resource owns transport and cache
+policy. Public async computations use `createAsyncMemo` instead.
+
 ```typescript
 // Internal reactive node types (subject to change)
 interface SignalNode<T> {

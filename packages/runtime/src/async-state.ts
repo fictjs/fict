@@ -121,7 +121,7 @@ export class AsyncState<T> {
     return this.current
   }
 
-  begin(): AsyncPending {
+  begin(retainValue = true): AsyncPending {
     if (this.current.status === 'disposed') throw new AsyncDisposedError()
     this.flight?.wake()
     const generation = this.current.generation + 1
@@ -138,7 +138,7 @@ export class AsyncState<T> {
     })
     this.flight = { generation, token, wake, yielded: false }
     this.current = Object.freeze(
-      this.current.hasValue
+      retainValue && this.current.hasValue
         ? {
             generation,
             status: 'refreshing',

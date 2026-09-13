@@ -26,6 +26,8 @@ import { createElement as __fictCreateElement } from './dom'
 export { createSignal, createSelector, __resetReactiveState } from './signal'
 export { createStore, type Store, isStoreProxy, unwrapStore } from './store'
 export { createMemo } from './memo'
+export { __fictCreateAsyncSource, type AsyncSource } from './async-source'
+export { hasAsyncReadConsumer as __fictIsAsyncConsumer } from './signal'
 export { createEffect } from './effect'
 export { Fragment } from './jsx'
 

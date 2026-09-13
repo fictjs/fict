@@ -85,7 +85,7 @@
     "security:audit:rust": "cargo audit --deny warnings && cargo audit --deny warnings --file fuzz/Cargo.lock",
     "verify:rust-workspace": "cargo fmt --all --check && cargo clippy --workspace --all-targets --all-features -- -D warnings && cargo test --workspace --all-features && pnpm guardrails:rust-crates",
     "guardrails:typecheck-config": "node scripts/check-typecheck-config.mjs",
-    "typecheck:tests": "pnpm -C packages/runtime typecheck:tests && pnpm -C packages/compiler typecheck:tests && pnpm -C packages/vite-plugin typecheck:tests && pnpm -C packages/webpack-plugin typecheck:tests && pnpm -C packages/ssr typecheck:tests",
+    "typecheck:tests": "pnpm -C packages/runtime typecheck:tests && pnpm -C packages/fict typecheck:tests && pnpm -C packages/compiler typecheck:tests && pnpm -C packages/vite-plugin typecheck:tests && pnpm -C packages/webpack-plugin typecheck:tests && pnpm -C packages/ssr typecheck:tests",
     "typecheck:strict-candidate": "node scripts/typecheck-strict-candidate.mjs --fail-on-error",
     "size": "pnpm test:size-boundaries && node scripts/verify-size-inputs.mjs && size-limit",
     "size:analyze": "size-limit --why",

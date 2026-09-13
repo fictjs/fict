@@ -8,9 +8,15 @@
  * - Handles errors gracefully
  */
 
-import { createEffect, onCleanup, createSuspenseToken } from '@fictjs/runtime'
+import { createEffect, onCleanup, untrack } from '@fictjs/runtime'
 import { createSignal, isReactive } from '@fictjs/runtime/advanced'
-import { __fictGetCurrentSSRSession, __fictIsSSRSessionActive } from '@fictjs/runtime/internal'
+import {
+  __fictGetCurrentSSRSession,
+  __fictIsSSRSessionActive,
+  __fictCreateAsyncSource,
+  __fictIsAsyncConsumer,
+  type AsyncSource,
+} from '@fictjs/runtime/internal'
 
 /**
  * The result of reading a resource.
@@ -176,28 +182,23 @@ export type ResourceStatus = 'idle' | 'pending' | 'success' | 'error'
  * @internal
  */
 interface ResourceEntry<T, Args> {
-  /** Reactive signal for the fetched data */
-  data: ReturnType<typeof createSignal<T | undefined>>
-  /** Reactive signal for loading state */
-  loading: ReturnType<typeof createSignal<boolean>>
-  /** Reactive signal for error state */
-  error: ReturnType<typeof createSignal<unknown>>
-  /** Version counter for invalidation */
+  /** Async graph state; cache policy owns its transport and lifetime. */
+  source: AsyncSource<T>
+  dataProjection?: () => T | undefined
+  loadingProjection?: () => boolean
+  errorProjection?: () => unknown
+  /** Cache invalidation is a policy input, separate from async readiness. */
   version: ReturnType<typeof createSignal<number>>
-  /** Suspense token when using suspense mode */
-  pendingToken: ReturnType<typeof createSuspenseToken> | null
+  /** SWR deliberately suppresses loading while a previous value is shown. */
+  revalidating: boolean
+  /** Compatibility facade for synchronous setup reads using legacy replay. */
+  legacyPending: { generation: number; token: PromiseLike<void> } | undefined
   /** Last used arguments for change detection */
   lastArgs: Args | undefined
   /** Last seen version for change detection */
   lastVersion: number
   /** Last reset token value for change detection */
   lastReset: unknown
-  /** Whether we have a valid cached value */
-  hasValue: boolean
-  /** Current fetch status */
-  status: ResourceStatus
-  /** Generation counter to handle race conditions */
-  generation: number
   /** Timestamp when the cached value expires */
   expiresAt: number | undefined
   /** Currently in-flight fetch promise */
@@ -414,8 +415,11 @@ export function resource<T, Args = void>(
     for (const [entryKey, entry] of cache) {
       if (cache.size <= maxEntries) break
       // Never evict entries with work in progress.
-      if (entry === protectedEntry || entry.inFlight || entry.pendingToken) continue
+      if (entry === protectedEntry || entry.inFlight) continue
       cache.delete(entryKey)
+      // Settled entries have no transport or upstream subscriptions to release.
+      // Existing readers still own their snapshot, including a cached error;
+      // removing lookup ownership must not turn that snapshot into disposed data.
     }
   }
 
@@ -428,17 +432,13 @@ export function resource<T, Args = void>(
       return state
     }
     state = {
-      data: createSignal<T | undefined>(undefined),
-      loading: createSignal<boolean>(false),
-      error: createSignal<unknown>(undefined),
+      source: __fictCreateAsyncSource<T>(),
       version: createSignal(0),
-      pendingToken: null,
+      revalidating: false,
+      legacyPending: undefined,
       lastArgs: undefined,
       lastVersion: -1,
       lastReset: undefined,
-      hasValue: false,
-      status: 'idle',
-      generation: 0,
       expiresAt: undefined,
       inFlight: undefined,
       inFlightArgs: undefined,
@@ -468,12 +468,38 @@ export function resource<T, Args = void>(
       : undefined
   }
 
+  const hasData = (entry: ResourceEntry<T, Args>) => {
+    const state = entry.source.peek()
+    return state.hasValue && state.status !== 'errored'
+  }
+
+  const legacyToken = (entry: ResourceEntry<T, Args>): PromiseLike<void> => {
+    const snapshot = entry.source.peek()
+    if (!snapshot.pending) throw new Error('[fict] Resource has no pending generation.')
+    if (entry.legacyPending?.generation === snapshot.generation) return entry.legacyPending.token
+    const pending = snapshot.pending
+    // This adapter is allocated only for legacy setup reads. The graph's token
+    // never rejects; legacy Suspense expects an error delivered to its handler.
+    const token: PromiseLike<void> = {
+      then: (resolve, reject) =>
+        pending
+          .then(() => {
+            const current = entry.source.peek()
+            if (current.generation === snapshot.generation && current.status === 'errored')
+              throw current.error
+          })
+          .then(resolve, reject),
+    }
+    entry.legacyPending = { generation: snapshot.generation, token }
+    return token
+  }
+
   const startFetch = (
     cache: Cache,
     entry: ResourceEntry<T, Args>,
     key: unknown,
     args: Args,
-    options: { isRevalidating?: boolean; createToken?: boolean } = {},
+    options: { isRevalidating?: boolean; createToken?: boolean; clearValue?: boolean } = {},
   ) => {
     const createToken = options.createToken !== false
     const isRevalidating = options.isRevalidating === true
@@ -481,27 +507,15 @@ export function resource<T, Args = void>(
     // serves these args - reuse it instead of abort/restart churn. Callers
     // that genuinely need a fresh fetch (refresh, mutate) abort explicitly
     // before calling startFetch.
-    if (entry.inFlight) {
-      if (createToken && useSuspense && !entry.hasValue && !entry.pendingToken) {
-        entry.pendingToken = createSuspenseToken()
-      }
-      return
-    }
+    if (entry.inFlight) return
     entry.controller?.abort()
     entry.inFlight = undefined
     const controller = new AbortController()
     entry.controller = controller
-    entry.status = 'pending'
-    // For stale-while-revalidate: don't show loading if we already have data to display
-    if (!isRevalidating) {
-      entry.loading(true)
-    }
-    entry.error(undefined)
-    entry.generation += 1
-    const currentGen = entry.generation
-
-    const shouldSuspend = createToken && useSuspense && !entry.hasValue
-    entry.pendingToken = shouldSuspend ? createSuspenseToken() : null
+    entry.revalidating = isRevalidating
+    const shouldSuspend = createToken && useSuspense && (!hasData(entry) || options.clearValue)
+    const currentGen = entry.source.begin(!options.clearValue)
+    entry.legacyPending = undefined
 
     let request: Promise<T>
     try {
@@ -512,36 +526,18 @@ export function resource<T, Args = void>(
 
     const fetchPromise = request
       .then(res => {
-        if (controller.signal.aborted || entry.generation !== currentGen) return
-        entry.data(res)
-        entry.hasValue = true
-        entry.status = 'success'
-        entry.loading(false)
+        if (controller.signal.aborted || entry.source.peek().generation !== currentGen) return
         markExpiry(entry)
-        if (entry.pendingToken) {
-          entry.pendingToken.resolve()
-          entry.pendingToken = null
-        }
+        entry.source.resolve(currentGen, res)
       })
       .catch(err => {
-        if (controller.signal.aborted || entry.generation !== currentGen) return
-        entry.hasValue = false
-        entry.data(undefined)
-        entry.error(err)
-        entry.status = 'error'
-        entry.loading(false)
-        if (resolvedCacheOptions.cacheErrors) {
-          markExpiry(entry)
-        } else {
-          entry.expiresAt = Date.now() - 1
-        }
-        if (entry.pendingToken) {
-          entry.pendingToken.reject(err)
-          entry.pendingToken = null
-        }
+        if (controller.signal.aborted || entry.source.peek().generation !== currentGen) return
+        if (resolvedCacheOptions.cacheErrors) markExpiry(entry)
+        else entry.expiresAt = Date.now() - 1
+        entry.source.reject(currentGen, err)
       })
       .finally(() => {
-        if (entry.generation !== currentGen || entry.inFlight !== fetchPromise) return
+        if (entry.source.peek().generation !== currentGen || entry.inFlight !== fetchPromise) return
         entry.inFlight = undefined
         entry.inFlightArgs = undefined
         if (entry.controller === controller) {
@@ -560,16 +556,11 @@ export function resource<T, Args = void>(
       onCleanup(() => {
         if (resolvedCacheOptions.mode === 'none') {
           controller.abort()
-          cache.delete(key)
+          entry.source.dispose()
+          if (cache.get(key) === entry) cache.delete(key)
         }
       })
     }
-  }
-
-  const resolvePendingToken = (entry: ResourceEntry<T, Args>) => {
-    if (!entry.pendingToken) return
-    entry.pendingToken.resolve()
-    entry.pendingToken = null
   }
 
   const invalidate = (key?: unknown) => {
@@ -577,7 +568,7 @@ export function resource<T, Args = void>(
     if (key === undefined) {
       cache.forEach(entry => {
         entry.controller?.abort()
-        resolvePendingToken(entry)
+        entry.source.dispose()
         entry.version(entry.version() + 1)
         entry.expiresAt = Date.now() - 1
       })
@@ -588,7 +579,7 @@ export function resource<T, Args = void>(
     const entry = cache.get(normalizedKey)
     if (entry) {
       entry.controller?.abort()
-      resolvePendingToken(entry)
+      entry.source.dispose()
       entry.version(entry.version() + 1)
       entry.expiresAt = Date.now() - 1
       cache.delete(normalizedKey)
@@ -600,7 +591,7 @@ export function resource<T, Args = void>(
     const hasKeyOverride = arguments.length >= 2
     const key = hasKeyOverride ? structuralArgsKey(keyOverride) : computeKey(args)
     const entry = ensureEntry(cache, key)
-    const usableData = entry.hasValue && !isExpired(entry)
+    const usableData = hasData(entry) && !isExpired(entry)
     if (!usableData) {
       entry.lastArgs = args
       entry.lastVersion = entry.version()
@@ -618,28 +609,21 @@ export function resource<T, Args = void>(
     const hasKeyOverride = !!options && Object.prototype.hasOwnProperty.call(options, 'key')
     const key = hasKeyOverride ? structuralArgsKey(options.key) : computeKey(args)
     const entry = ensureEntry(cache, key)
-    const prevValue = entry.data()
+    const previous = entry.source.peek()
+    const prevValue =
+      previous.hasValue && previous.status !== 'errored' ? previous.value : undefined
     const nextValue =
       typeof value === 'function' ? (value as (prev: T | undefined) => T)(prevValue) : value
 
     entry.controller?.abort()
     entry.inFlight = undefined
     entry.inFlightArgs = undefined
-    entry.generation += 1
-
-    entry.data(nextValue)
-    entry.hasValue = true
-    entry.status = 'success'
-    entry.loading(false)
-    entry.error(undefined)
+    const generation = entry.source.begin()
+    entry.revalidating = false
+    entry.source.resolve(generation, nextValue)
     markExpiry(entry)
     entry.lastArgs = args
     entry.lastVersion = entry.version()
-
-    if (entry.pendingToken) {
-      entry.pendingToken.resolve()
-      entry.pendingToken = null
-    }
 
     if (options?.revalidate) {
       entry.version(entry.version() + 1)
@@ -665,7 +649,8 @@ export function resource<T, Args = void>(
         // to the same key is the same request, so default-keyed resources never
         // treat it as a change. Custom-keyed resources can see different args
         // under one key; compare those structurally, not by reference.
-        const neverFetched = entry.status === 'idle' && !entry.hasValue && !entry.inFlight
+        const state = entry.source.peek()
+        const neverFetched = state.status === 'uninitialized' && !entry.inFlight
         const argsChanged = hasCustomKey
           ? structuralArgsKey(args) !== structuralArgsKey(entry.lastArgs)
           : false
@@ -675,31 +660,28 @@ export function resource<T, Args = void>(
         // For stale-while-revalidate: if we have cached data, don't treat expired as requiring immediate refetch
         // We'll handle the revalidation separately to show stale data without loading state
         const canUseStaleData =
-          resolvedCacheOptions.staleWhileRevalidate && entry.hasValue && expired
+          resolvedCacheOptions.staleWhileRevalidate && hasData(entry) && expired
         const shouldRefetch =
           neverFetched ||
           (expired && !canUseStaleData) ||
           argsChanged ||
           versionChanged ||
           resetChanged ||
-          (entry.status === 'error' && !resolvedCacheOptions.cacheErrors)
-        const shouldAttachSuspenseToken =
-          useSuspense && !!entry.inFlight && !entry.hasValue && !entry.pendingToken
+          (state.status === 'errored' && !resolvedCacheOptions.cacheErrors)
 
         entry.lastArgs = args
         entry.lastVersion = currentVersion
         entry.lastReset = resetToken
 
-        if (shouldRefetch || shouldAttachSuspenseToken) {
-          if (entry.inFlight && (argsChanged || versionChanged)) {
+        if (shouldRefetch) {
+          if (entry.inFlight && (argsChanged || versionChanged || resetChanged)) {
             entry.controller?.abort()
             entry.inFlight = undefined
           }
           if (resetChanged) {
-            entry.hasValue = false
             entry.expiresAt = Date.now() - 1
           }
-          startFetch(cache, entry, key, args as Args)
+          startFetch(cache, entry, key, args as Args, { clearValue: resetChanged })
         } else if (canUseStaleData && entry.inFlight === undefined) {
           // stale-while-revalidate: return stale data immediately, refresh in background
           // Pass isRevalidating=true to avoid showing loading state
@@ -707,23 +689,52 @@ export function resource<T, Args = void>(
         }
       })
 
+      // Commit the initial reference even when its first read happens during
+      // cleanup, where signals correctly expose stored rather than pending data.
+      untrack(() => entryRef())
+
       return {
         get data() {
           const entry = entryRef()
           if (!entry) return undefined
-          if (useSuspense && entry.pendingToken) {
-            throw entry.pendingToken.token
+          const reactiveConsumer = __fictIsAsyncConsumer()
+          entry.dataProjection ??= entry.source.derive(() => {
+            const state = entry.source.state()
+            if (
+              useSuspense &&
+              (!state.hasValue || state.status === 'errored') &&
+              (state.pending || state.status === 'errored')
+            )
+              return entry.source.read()
+            return state.hasValue && state.status !== 'errored' ? state.value : undefined
+          })
+          try {
+            return entry.dataProjection()
+          } catch (error) {
+            const state = entry.source.peek()
+            if (!reactiveConsumer) {
+              if (state.pending) throw legacyToken(entry)
+              if (state.status === 'errored') return undefined
+            }
+            throw error
           }
-          const data = entry.data()
-          return entry.hasValue ? data : undefined
         },
         get loading() {
           const entry = entryRef()
-          return entry ? entry.loading() : false
+          if (!entry) return false
+          entry.loadingProjection ??= entry.source.derive(
+            () => !!entry.source.state().pending && !entry.revalidating,
+          )
+          return entry.loadingProjection()
         },
         get error() {
           const entry = entryRef()
-          return entry ? entry.error() : undefined
+          if (!entry) return undefined
+          entry.errorProjection ??= entry.source.derive(() => {
+            const state = entry.source.state()
+            return state.status === 'errored' ? state.error : undefined
+          })
+          return entry.errorProjection()
         },
         refresh: () => {
           const entry = entryRef()

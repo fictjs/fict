@@ -22,7 +22,7 @@ not only an analysis pass, an API sketch, or a passing unrelated test suite.
 | A1   | An async graph contract specifies readiness, stale/current values, invalidation, errors, effect commit, ownership, and compatibility.                                 | Implementable state transitions and executable acceptance scenarios, not percentage scores.                                                                                                   | Complete |
 | A2   | An explicit async computation is a reactive graph node, including Promise and async iterable completion, invalidation, and cancellation.                              | Graph-level dependency/status behavior, stale-flight rejection, cancellation and disposal tests; preserve existing Promise-valued synchronous memo behavior.                                  | Complete |
 | A3   | Pending/error states compose through synchronous derived nodes and effect/render consumers with defined commit semantics.                                             | Chains, diamonds, conditional subscriptions, independent boundaries, error recovery, no unintended partial commits, and cleanup ordering.                                                     | Complete |
-| A4   | Resource uses the shared async computation protocol while retaining its data/cache policies.                                                                          | Existing resource/cache/TTL/SWR/LRU/sharing/optimistic/SSR regressions and new graph-composition coverage.                                                                                    | Pending  |
+| A4   | Resource uses the shared async computation protocol while retaining its data/cache policies.                                                                          | Existing resource/cache/TTL/SWR/LRU/sharing/optimistic/SSR regressions and new graph-composition coverage.                                                                                    | Complete |
 | A5   | Transition readiness accounts for registered downstream async work caused by updates, including indirectly triggered requests.                                        | Overlapping transitions, unrelated roots, stale completions, callback failures, disposal, and the indirect-resource regression.                                                               | Pending  |
 | A6   | Compiler-owned async declarations, types, runtime helpers, and cross-module contracts use the same graph protocol.                                                    | Native strict compilation, source maps, metadata/ABI checks, reactive input updates and lifecycle checks; explicit supported continuation boundaries.                                         | Pending  |
 | A7   | Async graph behavior works through SSR, streaming, hydration, and request isolation.                                                                                  | Real server/browser tests covering initial pending, refresh, errors, cancellation, serialization and compatible hydration.                                                                    | Pending  |
@@ -190,3 +190,23 @@ build tasks, and real distributed ESM/CJS imports. The
 records source/artifact identities and the added shared runtime cost. Its sync-import
 measurement is separate from complete-package cost. CPU and application performance
 remain to be qualified by G4/G5/A8; no historical benchmark score is relabeled.
+
+## A4: Resource on the shared async graph
+
+Each cache entry now owns one async source node using the same readiness,
+publication, and generation protocol as async memos. Resource retains transport,
+cache keys, TTL/SWR, sharing, request scoping, and mutation policy. Lazy shared
+field projections preserve independent data/loading/error equality without a
+second imperative async state machine. Reactive Suspense consumers compose
+through derived nodes and retain their owners; legacy setup reads keep replay
+compatibility. Reset tokens replace pending generations, and LRU eviction keeps
+live readers' settled snapshots intact.
+
+Validation: 12 new source/policy integration cases, all 54 Resource tests, 67
+runtime async tests, production and test typechecks, 390 native compiler/DOM/SSR
+regressions, and all 31 workspace build tasks. The new Resource test typecheck is
+included in root CI/release/precommit gates. The
+[Resource size archive](./benchmarks/resource-async-graph-size-2026-09-13.json)
+verifies source maps and records distributed artifact hashes. Its new selective
+Resource gate measures 20,700 B Brotli; main ESM and sync-memo import sizes stay
+unchanged. This is an architecture/policy qualification, not a CPU speed claim.
