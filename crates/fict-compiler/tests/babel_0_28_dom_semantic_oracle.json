@@ -13,7 +13,7 @@
       "@babel/plugin-transform-typescript": "7.28.5"
     },
     "oracleInputsSha256": "da6f9e7a18c9d2be46ca1fc6bcdb34d8a6e569d6cc5fbbe817c5f25afd01e2bb",
-    "rustCodegenCorpusSha256": "c519986cf0b378e42ce4ac4cc4607965b65f5b87340899bdd4268d1cf08643d5",
+    "rustCodegenCorpusSha256": "2ff7df2e6a60c903ab56e5cdee55a5224904e0ba23a18b94b621b48a678ae714",
     "sharedRuntimePackage": "@fictjs/runtime@0.35.0",
     "runtimeExecutionModel": "frozen-babel-and-live-rust-output-share-current-runtime"
   },
@@ -105,7 +105,11 @@
             "value": "edited"
           }
         },
-        { "accepted": false, "defaultPrevented": true, "label": "submit-event" },
+        {
+          "accepted": false,
+          "defaultPrevented": true,
+          "label": "submit-event"
+        },
         {
           "label": "submitted",
           "value": {
@@ -162,7 +166,12 @@
             "tree": [
               {
                 "attributes": [],
-                "children": [{ "type": "text", "value": "1" }],
+                "children": [
+                  {
+                    "type": "text",
+                    "value": "1"
+                  }
+                ],
                 "localName": "span",
                 "namespaceURI": "http://www.w3.org/1999/xhtml",
                 "type": "element"
@@ -193,11 +202,26 @@
               {
                 "attributes": [],
                 "children": [
-                  { "type": "text", "value": "0" },
-                  { "type": "text", "value": "0" },
-                  { "type": "text", "value": "0" },
-                  { "type": "text", "value": "0" },
-                  { "type": "text", "value": "0" }
+                  {
+                    "type": "text",
+                    "value": "0"
+                  },
+                  {
+                    "type": "text",
+                    "value": "0"
+                  },
+                  {
+                    "type": "text",
+                    "value": "0"
+                  },
+                  {
+                    "type": "text",
+                    "value": "0"
+                  },
+                  {
+                    "type": "text",
+                    "value": "0"
+                  }
                 ],
                 "localName": "span",
                 "namespaceURI": "http://www.w3.org/1999/xhtml",
@@ -229,9 +253,18 @@
               {
                 "attributes": [],
                 "children": [
-                  { "type": "text", "value": "0" },
-                  { "type": "text", "value": ":" },
-                  { "type": "text", "value": "0" }
+                  {
+                    "type": "text",
+                    "value": "0"
+                  },
+                  {
+                    "type": "text",
+                    "value": ":"
+                  },
+                  {
+                    "type": "text",
+                    "value": "0"
+                  }
                 ],
                 "localName": "span",
                 "namespaceURI": "http://www.w3.org/1999/xhtml",
@@ -263,19 +296,58 @@
               {
                 "attributes": [],
                 "children": [
-                  { "type": "text", "value": "2" },
-                  { "type": "text", "value": ":" },
-                  { "type": "text", "value": "count:1" },
-                  { "type": "text", "value": ":" },
-                  { "type": "text", "value": "1" },
-                  { "type": "text", "value": ":" },
-                  { "type": "text", "value": "1" },
-                  { "type": "text", "value": ":" },
-                  { "type": "text", "value": "1" },
-                  { "type": "text", "value": ":" },
-                  { "type": "text", "value": "14" },
-                  { "type": "text", "value": ":" },
-                  { "type": "text", "value": "1" }
+                  {
+                    "type": "text",
+                    "value": "2"
+                  },
+                  {
+                    "type": "text",
+                    "value": ":"
+                  },
+                  {
+                    "type": "text",
+                    "value": "count:1"
+                  },
+                  {
+                    "type": "text",
+                    "value": ":"
+                  },
+                  {
+                    "type": "text",
+                    "value": "1"
+                  },
+                  {
+                    "type": "text",
+                    "value": ":"
+                  },
+                  {
+                    "type": "text",
+                    "value": "1"
+                  },
+                  {
+                    "type": "text",
+                    "value": ":"
+                  },
+                  {
+                    "type": "text",
+                    "value": "1"
+                  },
+                  {
+                    "type": "text",
+                    "value": ":"
+                  },
+                  {
+                    "type": "text",
+                    "value": "14"
+                  },
+                  {
+                    "type": "text",
+                    "value": ":"
+                  },
+                  {
+                    "type": "text",
+                    "value": "1"
+                  }
                 ],
                 "localName": "span",
                 "namespaceURI": "http://www.w3.org/1999/xhtml",
@@ -312,7 +384,12 @@
             "tree": [
               {
                 "attributes": [],
-                "children": [{ "type": "text", "value": "London" }],
+                "children": [
+                  {
+                    "type": "text",
+                    "value": "London"
+                  }
+                ],
                 "localName": "div",
                 "namespaceURI": "http://www.w3.org/1999/xhtml",
                 "type": "element"
@@ -348,7 +425,12 @@
             "tree": [
               {
                 "attributes": [],
-                "children": [{ "type": "text", "value": "London" }],
+                "children": [
+                  {
+                    "type": "text",
+                    "value": "London"
+                  }
+                ],
                 "localName": "div",
                 "namespaceURI": "http://www.w3.org/1999/xhtml",
                 "type": "element"
@@ -379,9 +461,18 @@
               {
                 "attributes": [],
                 "children": [
-                  { "type": "text", "value": "user" },
-                  { "type": "text", "value": ":" },
-                  { "type": "text", "value": "Ada" }
+                  {
+                    "type": "text",
+                    "value": "user"
+                  },
+                  {
+                    "type": "text",
+                    "value": ":"
+                  },
+                  {
+                    "type": "text",
+                    "value": "Ada"
+                  }
                 ],
                 "localName": "span",
                 "namespaceURI": "http://www.w3.org/1999/xhtml",
@@ -413,11 +504,26 @@
               {
                 "attributes": [],
                 "children": [
-                  { "type": "text", "value": "user" },
-                  { "type": "text", "value": ":" },
-                  { "type": "text", "value": "Ada" },
-                  { "type": "text", "value": ":" },
-                  { "type": "text", "value": "hello" }
+                  {
+                    "type": "text",
+                    "value": "user"
+                  },
+                  {
+                    "type": "text",
+                    "value": ":"
+                  },
+                  {
+                    "type": "text",
+                    "value": "Ada"
+                  },
+                  {
+                    "type": "text",
+                    "value": ":"
+                  },
+                  {
+                    "type": "text",
+                    "value": "hello"
+                  }
                 ],
                 "localName": "span",
                 "namespaceURI": "http://www.w3.org/1999/xhtml",
@@ -449,9 +555,18 @@
               {
                 "attributes": [],
                 "children": [
-                  { "type": "text", "value": "Ada" },
-                  { "type": "text", "value": ":" },
-                  { "type": "text", "value": "nested" }
+                  {
+                    "type": "text",
+                    "value": "Ada"
+                  },
+                  {
+                    "type": "text",
+                    "value": ":"
+                  },
+                  {
+                    "type": "text",
+                    "value": "nested"
+                  }
                 ],
                 "localName": "span",
                 "namespaceURI": "http://www.w3.org/1999/xhtml",
@@ -501,14 +616,24 @@
                 "children": [
                   {
                     "attributes": [],
-                    "children": [{ "type": "text", "value": "A" }],
+                    "children": [
+                      {
+                        "type": "text",
+                        "value": "A"
+                      }
+                    ],
                     "localName": "li",
                     "namespaceURI": "http://www.w3.org/1999/xhtml",
                     "type": "element"
                   },
                   {
                     "attributes": [],
-                    "children": [{ "type": "text", "value": "B" }],
+                    "children": [
+                      {
+                        "type": "text",
+                        "value": "B"
+                      }
+                    ],
                     "localName": "li",
                     "namespaceURI": "http://www.w3.org/1999/xhtml",
                     "type": "element"
@@ -556,14 +681,24 @@
                 "children": [
                   {
                     "attributes": [],
-                    "children": [{ "type": "text", "value": "A" }],
+                    "children": [
+                      {
+                        "type": "text",
+                        "value": "A"
+                      }
+                    ],
                     "localName": "li",
                     "namespaceURI": "http://www.w3.org/1999/xhtml",
                     "type": "element"
                   },
                   {
                     "attributes": [],
-                    "children": [{ "type": "text", "value": "B" }],
+                    "children": [
+                      {
+                        "type": "text",
+                        "value": "B"
+                      }
+                    ],
                     "localName": "li",
                     "namespaceURI": "http://www.w3.org/1999/xhtml",
                     "type": "element"
@@ -598,7 +733,12 @@
             "tree": [
               {
                 "attributes": [],
-                "children": [{ "type": "text", "value": "" }],
+                "children": [
+                  {
+                    "type": "text",
+                    "value": ""
+                  }
+                ],
                 "localName": "ul",
                 "namespaceURI": "http://www.w3.org/1999/xhtml",
                 "type": "element"
@@ -641,14 +781,24 @@
                 "children": [
                   {
                     "attributes": [],
-                    "children": [{ "type": "text", "value": "A" }],
+                    "children": [
+                      {
+                        "type": "text",
+                        "value": "A"
+                      }
+                    ],
                     "localName": "li",
                     "namespaceURI": "http://www.w3.org/1999/xhtml",
                     "type": "element"
                   },
                   {
                     "attributes": [],
-                    "children": [{ "type": "text", "value": "B" }],
+                    "children": [
+                      {
+                        "type": "text",
+                        "value": "B"
+                      }
+                    ],
                     "localName": "li",
                     "namespaceURI": "http://www.w3.org/1999/xhtml",
                     "type": "element"
@@ -706,28 +856,48 @@
                 "children": [
                   {
                     "attributes": [],
-                    "children": [{ "type": "text", "value": "A" }],
+                    "children": [
+                      {
+                        "type": "text",
+                        "value": "A"
+                      }
+                    ],
                     "localName": "li",
                     "namespaceURI": "http://www.w3.org/1999/xhtml",
                     "type": "element"
                   },
                   {
                     "attributes": [],
-                    "children": [{ "type": "text", "value": "A" }],
+                    "children": [
+                      {
+                        "type": "text",
+                        "value": "A"
+                      }
+                    ],
                     "localName": "li",
                     "namespaceURI": "http://www.w3.org/1999/xhtml",
                     "type": "element"
                   },
                   {
                     "attributes": [],
-                    "children": [{ "type": "text", "value": "B" }],
+                    "children": [
+                      {
+                        "type": "text",
+                        "value": "B"
+                      }
+                    ],
                     "localName": "li",
                     "namespaceURI": "http://www.w3.org/1999/xhtml",
                     "type": "element"
                   },
                   {
                     "attributes": [],
-                    "children": [{ "type": "text", "value": "B" }],
+                    "children": [
+                      {
+                        "type": "text",
+                        "value": "B"
+                      }
+                    ],
                     "localName": "li",
                     "namespaceURI": "http://www.w3.org/1999/xhtml",
                     "type": "element"
@@ -781,14 +951,24 @@
                 "children": [
                   {
                     "attributes": [],
-                    "children": [{ "type": "text", "value": "A" }],
+                    "children": [
+                      {
+                        "type": "text",
+                        "value": "A"
+                      }
+                    ],
                     "localName": "li",
                     "namespaceURI": "http://www.w3.org/1999/xhtml",
                     "type": "element"
                   },
                   {
                     "attributes": [],
-                    "children": [{ "type": "text", "value": "B" }],
+                    "children": [
+                      {
+                        "type": "text",
+                        "value": "B"
+                      }
+                    ],
                     "localName": "li",
                     "namespaceURI": "http://www.w3.org/1999/xhtml",
                     "type": "element"
@@ -842,14 +1022,24 @@
                 "children": [
                   {
                     "attributes": [],
-                    "children": [{ "type": "text", "value": "A" }],
+                    "children": [
+                      {
+                        "type": "text",
+                        "value": "A"
+                      }
+                    ],
                     "localName": "li",
                     "namespaceURI": "http://www.w3.org/1999/xhtml",
                     "type": "element"
                   },
                   {
                     "attributes": [],
-                    "children": [{ "type": "text", "value": "B" }],
+                    "children": [
+                      {
+                        "type": "text",
+                        "value": "B"
+                      }
+                    ],
                     "localName": "li",
                     "namespaceURI": "http://www.w3.org/1999/xhtml",
                     "type": "element"
@@ -897,14 +1087,24 @@
                 "children": [
                   {
                     "attributes": [],
-                    "children": [{ "type": "text", "value": "A" }],
+                    "children": [
+                      {
+                        "type": "text",
+                        "value": "A"
+                      }
+                    ],
                     "localName": "li",
                     "namespaceURI": "http://www.w3.org/1999/xhtml",
                     "type": "element"
                   },
                   {
                     "attributes": [],
-                    "children": [{ "type": "text", "value": "B" }],
+                    "children": [
+                      {
+                        "type": "text",
+                        "value": "B"
+                      }
+                    ],
                     "localName": "li",
                     "namespaceURI": "http://www.w3.org/1999/xhtml",
                     "type": "element"
@@ -988,14 +1188,24 @@
                 "children": [
                   {
                     "attributes": [],
-                    "children": [{ "type": "text", "value": "A" }],
+                    "children": [
+                      {
+                        "type": "text",
+                        "value": "A"
+                      }
+                    ],
                     "localName": "li",
                     "namespaceURI": "http://www.w3.org/1999/xhtml",
                     "type": "element"
                   },
                   {
                     "attributes": [],
-                    "children": [{ "type": "text", "value": "B" }],
+                    "children": [
+                      {
+                        "type": "text",
+                        "value": "B"
+                      }
+                    ],
                     "localName": "li",
                     "namespaceURI": "http://www.w3.org/1999/xhtml",
                     "type": "element"
@@ -1043,14 +1253,24 @@
                 "children": [
                   {
                     "attributes": [],
-                    "children": [{ "type": "text", "value": "A" }],
+                    "children": [
+                      {
+                        "type": "text",
+                        "value": "A"
+                      }
+                    ],
                     "localName": "li",
                     "namespaceURI": "http://www.w3.org/1999/xhtml",
                     "type": "element"
                   },
                   {
                     "attributes": [],
-                    "children": [{ "type": "text", "value": "B" }],
+                    "children": [
+                      {
+                        "type": "text",
+                        "value": "B"
+                      }
+                    ],
                     "localName": "li",
                     "namespaceURI": "http://www.w3.org/1999/xhtml",
                     "type": "element"
@@ -1098,14 +1318,24 @@
                 "children": [
                   {
                     "attributes": [],
-                    "children": [{ "type": "text", "value": "A" }],
+                    "children": [
+                      {
+                        "type": "text",
+                        "value": "A"
+                      }
+                    ],
                     "localName": "li",
                     "namespaceURI": "http://www.w3.org/1999/xhtml",
                     "type": "element"
                   },
                   {
                     "attributes": [],
-                    "children": [{ "type": "text", "value": "B" }],
+                    "children": [
+                      {
+                        "type": "text",
+                        "value": "B"
+                      }
+                    ],
                     "localName": "li",
                     "namespaceURI": "http://www.w3.org/1999/xhtml",
                     "type": "element"
@@ -1247,7 +1477,12 @@
                 "children": [
                   {
                     "attributes": [["data-id", "direct"]],
-                    "children": [{ "type": "text", "value": "x" }],
+                    "children": [
+                      {
+                        "type": "text",
+                        "value": "x"
+                      }
+                    ],
                     "localName": "mi",
                     "namespaceURI": "http://www.w3.org/1998/Math/MathML",
                     "type": "element"
@@ -1369,28 +1604,48 @@
                     "children": [
                       {
                         "attributes": [["data-id", "html-static-before"]],
-                        "children": [{ "type": "text", "value": "static" }],
+                        "children": [
+                          {
+                            "type": "text",
+                            "value": "static"
+                          }
+                        ],
                         "localName": "mi",
                         "namespaceURI": "http://www.w3.org/1999/xhtml",
                         "type": "element"
                       },
                       {
                         "attributes": [["data-id", "html-direct"]],
-                        "children": [{ "type": "text", "value": "html-direct" }],
+                        "children": [
+                          {
+                            "type": "text",
+                            "value": "html-direct"
+                          }
+                        ],
                         "localName": "mi",
                         "namespaceURI": "http://www.w3.org/1999/xhtml",
                         "type": "element"
                       },
                       {
                         "attributes": [["data-id", "html-conditional"]],
-                        "children": [{ "type": "text", "value": "html-conditional" }],
+                        "children": [
+                          {
+                            "type": "text",
+                            "value": "html-conditional"
+                          }
+                        ],
                         "localName": "mi",
                         "namespaceURI": "http://www.w3.org/1999/xhtml",
                         "type": "element"
                       },
                       {
                         "attributes": [["data-id", "html-list"]],
-                        "children": [{ "type": "text", "value": "html-list" }],
+                        "children": [
+                          {
+                            "type": "text",
+                            "value": "html-list"
+                          }
+                        ],
                         "localName": "mi",
                         "namespaceURI": "http://www.w3.org/1999/xhtml",
                         "type": "element"
@@ -1405,14 +1660,24 @@
                     "children": [
                       {
                         "attributes": [["data-id", "html-static-after"]],
-                        "children": [{ "type": "text", "value": "static" }],
+                        "children": [
+                          {
+                            "type": "text",
+                            "value": "static"
+                          }
+                        ],
                         "localName": "mi",
                         "namespaceURI": "http://www.w3.org/1999/xhtml",
                         "type": "element"
                       },
                       {
                         "attributes": [["data-id", "html-after-direct"]],
-                        "children": [{ "type": "text", "value": "html-after-direct" }],
+                        "children": [
+                          {
+                            "type": "text",
+                            "value": "html-after-direct"
+                          }
+                        ],
                         "localName": "mi",
                         "namespaceURI": "http://www.w3.org/1999/xhtml",
                         "type": "element"
@@ -1427,28 +1692,48 @@
                     "children": [
                       {
                         "attributes": [["data-id", "math-static-after"]],
-                        "children": [{ "type": "text", "value": "static" }],
+                        "children": [
+                          {
+                            "type": "text",
+                            "value": "static"
+                          }
+                        ],
                         "localName": "mi",
                         "namespaceURI": "http://www.w3.org/1998/Math/MathML",
                         "type": "element"
                       },
                       {
                         "attributes": [["data-id", "math-direct"]],
-                        "children": [{ "type": "text", "value": "math-direct" }],
+                        "children": [
+                          {
+                            "type": "text",
+                            "value": "math-direct"
+                          }
+                        ],
                         "localName": "mi",
                         "namespaceURI": "http://www.w3.org/1998/Math/MathML",
                         "type": "element"
                       },
                       {
                         "attributes": [["data-id", "math-conditional"]],
-                        "children": [{ "type": "text", "value": "math-conditional" }],
+                        "children": [
+                          {
+                            "type": "text",
+                            "value": "math-conditional"
+                          }
+                        ],
                         "localName": "mi",
                         "namespaceURI": "http://www.w3.org/1998/Math/MathML",
                         "type": "element"
                       },
                       {
                         "attributes": [["data-id", "math-list"]],
-                        "children": [{ "type": "text", "value": "math-list" }],
+                        "children": [
+                          {
+                            "type": "text",
+                            "value": "math-list"
+                          }
+                        ],
                         "localName": "mi",
                         "namespaceURI": "http://www.w3.org/1998/Math/MathML",
                         "type": "element"
@@ -1494,7 +1779,12 @@
             "tree": [
               {
                 "attributes": [],
-                "children": [{ "type": "text", "value": "function () { [native code] }" }],
+                "children": [
+                  {
+                    "type": "text",
+                    "value": "function () { [native code] }"
+                  }
+                ],
                 "localName": "div",
                 "namespaceURI": "http://www.w3.org/1999/xhtml",
                 "type": "element"
@@ -1516,8 +1806,20 @@
       "babelCodeSha256": "6f90b4b523161cea488e3f4ed5664c81aa8e053a343686450760616f9ad83382",
       "babelCode": "\"use strict\";\n\nObject.defineProperty(exports, \"__esModule\", {\n  value: true\n});\nexports.mount = mount;\nexports.observe = observe;\nexports.update = update;\nvar _internal = require(\"fict/internal\");\nvar _fict = require(\"fict\");\nlet setCount = void 0;\nlet oracleRoot = void 0;\nfunction Component() {\n  const __fictCtx = (0, _internal.__fictUseContext)();\n  const count = (0, _internal.__fictUseSignal)(__fictCtx, 0, {\n    name: \"count\",\n    devToolsSource: \"/oracle/r006-fallback-conditional-return.tsx:7:14\"\n  });\n  setCount = next => {\n    count(next);\n  };\n  if (count() > 0) {\n    return (0, _internal.__fictElementNamespaceMatches)(\"div\", \"html\") ? (() => {\n      const __tmpl_1 = (0, _internal.template)(\"<div><!--fict:slot:start--><!--fict:slot:end--></div>\");\n      const __root_0 = __tmpl_1();\n      const __el_2 = (0, _internal.resolvePath)(__root_0, [0]);\n      const __end_3 = (0, _internal.getSlotEnd)(__el_2);\n      (0, _internal.insertBetween)(__el_2, __end_3, () => count(), __node => (0, _internal.createElementInNamespace)(__node, \"html\"));\n      return __root_0;\n    })() : {\n      type: \"div\",\n      props: {\n        children: (0, _internal.__fictReactive)(() => count())\n      }\n    };\n  } else {\n    return (0, _internal.__fictElementNamespaceMatches)(\"span\", \"html\") ? (() => {\n      const __tmpl_5 = (0, _internal.template)(\"<span><!--fict:slot:start--><!--fict:slot:end--></span>\");\n      const __root_4 = __tmpl_5();\n      const __el_6 = (0, _internal.resolvePath)(__root_4, [0]);\n      const __end_7 = (0, _internal.getSlotEnd)(__el_6);\n      (0, _internal.insertBetween)(__el_6, __end_7, () => count(), __node => (0, _internal.createElementInNamespace)(__node, \"html\"));\n      return __root_4;\n    })() : {\n      type: \"span\",\n      props: {\n        children: (0, _internal.__fictReactive)(() => count())\n      }\n    };\n  }\n}\nfunction update(next) {\n  setCount(next);\n}\nfunction mount(root) {\n  oracleRoot = root;\n  return (0, _fict.render)(() => ({\n    type: Component,\n    props: null\n  }), root);\n}\nfunction observe() {\n  return {\n    tag: oracleRoot.firstElementChild?.tagName.toLowerCase() ?? null,\n    text: oracleRoot.textContent\n  };\n}",
       "expected": [
-        { "label": "initial", "value": { "tag": "span", "text": "0" } },
-        { "label": "updated", "value": { "tag": "span", "text": "2" } }
+        {
+          "label": "initial",
+          "value": {
+            "tag": "span",
+            "text": "0"
+          }
+        },
+        {
+          "label": "updated",
+          "value": {
+            "tag": "span",
+            "text": "2"
+          }
+        }
       ]
     },
     {
@@ -1532,9 +1834,27 @@
       "babelCodeSha256": "4c0707177d518d710ca2390736e2a6f98c9786027611c3160f714fd15f18f336",
       "babelCode": "\"use strict\";\n\nObject.defineProperty(exports, \"__esModule\", {\n  value: true\n});\nexports.mount = mount;\nexports.observe = observe;\nexports.update = update;\nvar _internal = require(\"fict/internal\");\nvar _fict = require(\"fict\");\nlet setMode = void 0;\nlet oracleRoot = void 0;\nfunction Component() {\n  const __fictCtx = (0, _internal.__fictUseContext)();\n  const mode = (0, _internal.__fictUseSignal)(__fictCtx, 0, {\n    name: \"mode\",\n    devToolsSource: \"/oracle/r006-fallback-switch-assignment.tsx:7:13\"\n  });\n  setMode = next => {\n    mode(next);\n  };\n  const __region_0 = (0, _internal.__fictUseMemo)(__fictCtx, () => {\n    let label = \"A\";\n    switch (mode()) {\n      case 0:\n        label = \"A\";\n        break;\n      case 1:\n        label = \"B\";\n        break;\n      default:\n        label = \"D\";\n        break;\n    }\n    return {\n      label\n    };\n  }, {\n    internal: true\n  }, 1000);\n  const label = () => __region_0().label;\n  return (0, _internal.__fictElementNamespaceMatches)(\"div\", \"html\") ? (0, _internal.__fictUseMemo)(__fictCtx, () => {\n    const __tmpl_1 = (0, _internal.template)(\"<div><!--fict:slot:start--><!--fict:slot:end--></div>\");\n    const __root_0 = __tmpl_1();\n    const __el_2 = (0, _internal.resolvePath)(__root_0, [0]);\n    const __end_3 = (0, _internal.getSlotEnd)(__el_2);\n    (0, _internal.insertBetween)(__el_2, __end_3, () => label(), __node => (0, _internal.createElementInNamespace)(__node, \"html\"));\n    return __root_0;\n  }, 1001)() : {\n    type: \"div\",\n    props: {\n      children: (0, _internal.__fictReactive)(() => label())\n    }\n  };\n}\nfunction update(next) {\n  setMode(next);\n}\nfunction mount(root) {\n  oracleRoot = root;\n  return (0, _fict.render)(() => ({\n    type: Component,\n    props: null\n  }), root);\n}\nfunction observe() {\n  return {\n    tag: oracleRoot.firstElementChild?.tagName.toLowerCase() ?? null,\n    text: oracleRoot.textContent\n  };\n}",
       "expected": [
-        { "label": "initial", "value": { "tag": "div", "text": "A" } },
-        { "label": "case-one", "value": { "tag": "div", "text": "B" } },
-        { "label": "default", "value": { "tag": "div", "text": "D" } }
+        {
+          "label": "initial",
+          "value": {
+            "tag": "div",
+            "text": "A"
+          }
+        },
+        {
+          "label": "case-one",
+          "value": {
+            "tag": "div",
+            "text": "B"
+          }
+        },
+        {
+          "label": "default",
+          "value": {
+            "tag": "div",
+            "text": "D"
+          }
+        }
       ]
     },
     {
@@ -1549,8 +1869,20 @@
       "babelCodeSha256": "3b525fb9223b4088d1c246fafaf6b9fd5bf1e74dc5cc1b2f7535ccf82cf735d7",
       "babelCode": "\"use strict\";\n\nObject.defineProperty(exports, \"__esModule\", {\n  value: true\n});\nexports.mount = mount;\nexports.observe = observe;\nexports.update = update;\nvar _internal = require(\"fict/internal\");\nvar _fict = require(\"fict\");\nlet reveal = void 0;\nlet oracleRoot = void 0;\nfunction Component() {\n  const __fictCtx = (0, _internal.__fictUseContext)();\n  const show = (0, _internal.__fictUseSignal)(__fictCtx, false, {\n    name: \"show\",\n    devToolsSource: \"/oracle/r006-fallback-derived-assignment.tsx:7:13\"\n  });\n  const data = (0, _internal.__fictUseSignal)(__fictCtx, {\n    items: []\n  }, {\n    name: \"data\",\n    devToolsSource: \"/oracle/r006-fallback-derived-assignment.tsx:8:13\"\n  });\n  reveal = () => {\n    data({\n      items: [\"a\", \"b\"]\n    });\n    show(true);\n  };\n  const __region_1 = (0, _internal.__fictUseMemo)(__fictCtx, () => {\n    let heading = \"Empty\";\n    let count = 0;\n    if (show()) {\n      count = data().items.length;\n      heading = count + \" items\";\n    }\n    return {\n      heading,\n      count\n    };\n  }, {\n    internal: true\n  }, 1000);\n  const heading = () => __region_1().heading;\n  const count = () => __region_1().count;\n  return (0, _internal.__fictElementNamespaceMatches)(\"div\", \"html\") ? (0, _internal.__fictUseMemo)(__fictCtx, () => {\n    const __tmpl_1 = (0, _internal.template)(\"<div><!--fict:slot:start--><!--fict:slot:end--></div>\");\n    const __root_0 = __tmpl_1();\n    const __el_2 = (0, _internal.resolvePath)(__root_0, [0]);\n    const __end_3 = (0, _internal.getSlotEnd)(__el_2);\n    (0, _internal.insertBetween)(__el_2, __end_3, () => heading(), __node => (0, _internal.createElementInNamespace)(__node, \"html\"));\n    return __root_0;\n  }, 1001)() : {\n    type: \"div\",\n    props: {\n      children: (0, _internal.__fictReactive)(() => heading())\n    }\n  };\n}\nfunction update() {\n  reveal();\n}\nfunction mount(root) {\n  oracleRoot = root;\n  return (0, _fict.render)(() => ({\n    type: Component,\n    props: null\n  }), root);\n}\nfunction observe() {\n  return {\n    tag: oracleRoot.firstElementChild?.tagName.toLowerCase() ?? null,\n    text: oracleRoot.textContent\n  };\n}",
       "expected": [
-        { "label": "initial", "value": { "tag": "div", "text": "Empty" } },
-        { "label": "updated", "value": { "tag": "div", "text": "2 items" } }
+        {
+          "label": "initial",
+          "value": {
+            "tag": "div",
+            "text": "Empty"
+          }
+        },
+        {
+          "label": "updated",
+          "value": {
+            "tag": "div",
+            "text": "2 items"
+          }
+        }
       ]
     }
   ]

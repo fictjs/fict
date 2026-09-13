@@ -18,13 +18,17 @@ pub(super) struct SnapshotInputs<'a> {
     pub scoping: &'a Scoping,
     pub aliases: &'a StaticHookAliases,
     pub calls: &'a BTreeMap<(u32, u32), &'a CallFact>,
-    pub imports: &'a BTreeMap<BindingId, EscapeImportIdentity>,
+    pub runtime_imports: &'a runtime_callbacks::RuntimeImports,
     pub states: &'a BTreeSet<SymbolId>,
     pub immutable: &'a BTreeSet<SymbolId>,
     pub functions: &'a [HirFunction],
 }
 
 impl SnapshotFacts {
+    pub(super) fn is_primitive_snapshot(&self, symbol: SymbolId) -> bool {
+        self.primitive_bindings.contains(&symbol)
+    }
+
     pub(super) fn collect(program: &Program<'_>, inputs: SnapshotInputs<'_>) -> Self {
         let mut collector = SnapshotCollector {
             inputs,
@@ -136,17 +140,9 @@ struct SnapshotCollector<'a> {
 impl SnapshotCollector<'_> {
     fn is_untrack(&self, call: &CallExpression<'_>) -> bool {
         self.inputs
-            .calls
-            .get(&(call.span.start, call.span.end))
-            .and_then(|fact| fact.binding)
-            .and_then(|binding| self.inputs.imports.get(&binding))
-            .is_some_and(|import| {
-                import.imported == "untrack"
-                    && matches!(
-                        import.source.as_str(),
-                        "fict" | "fict/advanced" | "@fictjs/runtime" | "@fictjs/runtime/advanced"
-                    )
-            })
+            .runtime_imports
+            .host(self.inputs.scoping, self.inputs.aliases, &call.callee)
+            == Some(runtime_callbacks::RuntimeCallbackHost::Snapshot)
     }
 
     fn dependencies(&self, expression: &Expression<'_>) -> Option<PrimitiveDependencies> {

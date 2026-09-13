@@ -12,15 +12,16 @@
     "fileOverrideRatchetReductionLines": 100
   },
   "total": {
-    "reviewedLines": 185650,
-    "maxLines": 188000
+    "reviewedLines": 188358,
+    "maxLines": 190000,
+    "rationale": "Review the current source baseline including explicit snapshots and runtime host identity contracts. Host resolution is extracted from the central builder; retain the existing file ceilings and 1642 lines of total reserve."
   },
   "defaultFileMaxLines": 2000,
   "crates": {
     "fict-compiler": {
-      "reviewedLines": 30819,
-      "maxLines": 31000,
-      "rationale": "The explicit snapshot contract adds 182 lines of focused strict positive and adversarial integration tests; production compiler orchestration is unchanged. Retain 181 lines of reserve after reviewing the existing baseline."
+      "reviewedLines": 31045,
+      "maxLines": 31250,
+      "rationale": "Runtime callback contracts add 226 lines of strict identity, alias, snapshot, and lifetime integration tests after the explicit snapshot suite. Production compiler orchestration is unchanged; retain 205 lines of reserve."
     },
     "fict-compiler-napi": {
       "reviewedLines": 1389,

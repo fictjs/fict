@@ -110,6 +110,7 @@ mod memo_side_effects;
 mod native_jsx_spreads;
 mod reactive_jsx_writes;
 mod resource_declarations;
+mod runtime_callbacks;
 mod storage_origin;
 mod structured_control_flow;
 
@@ -2194,7 +2195,10 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
         static_hook_aliases
             .exclusive_json_replacer_arrays
             .clone_from(&exclusive_json_replacer_arrays);
+        let runtime_imports = runtime_callbacks::RuntimeImports::new(&self.frontend.bindings);
         let mut calls = CallCollector {
+            runtime_imports: &runtime_imports,
+            static_aliases: &static_hook_aliases,
             scoping: self.semantic.scoping(),
             stack: vec![FunctionId::new(0)],
             function_by_span: &function_by_span,
@@ -3157,25 +3161,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             callback_aliases,
         );
 
-        let imports: BTreeMap<_, _> = self
-            .frontend
-            .bindings
-            .iter()
-            .filter_map(|binding| {
-                let mapped = self.old_to_new.get(&binding.id.index()).copied()?;
-                let import = binding.import.as_ref()?;
-                let fict_hir::ImportedName::Named(imported) = &import.imported else {
-                    return None;
-                };
-                Some((
-                    mapped,
-                    EscapeImportIdentity {
-                        source: import.source.clone(),
-                        imported: imported.clone(),
-                    },
-                ))
-            })
-            .collect();
+        let runtime_imports = runtime_callbacks::RuntimeImports::new(&self.frontend.bindings);
         let exported_storage_bindings = self
             .frontend
             .module_exports
@@ -3264,7 +3250,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                 scoping: self.semantic.scoping(),
                 aliases: callback_aliases,
                 calls: &call_facts,
-                imports: &imports,
+                runtime_imports: &runtime_imports,
                 states: &reactive.state,
                 immutable: &immutable_storage_aliases,
                 functions: &self.functions,
@@ -3275,7 +3261,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             call_facts: &call_facts,
             macro_bindings: &self.macro_bindings,
             local_hook_bindings: &local_hook_bindings,
-            imports: &imports,
+            runtime_imports: &runtime_imports,
             known_arrays,
             state_symbols: &reactive.state,
             proven_receivers: &proven_receivers,
@@ -9661,6 +9647,8 @@ impl<'a> Visit<'a> for ImmediateInvocationCollector {
 }
 
 struct CallCollector<'facts, 'semantic> {
+    runtime_imports: &'facts runtime_callbacks::RuntimeImports,
+    static_aliases: &'facts StaticHookAliases,
     scoping: &'semantic Scoping,
     stack: Vec<FunctionId>,
     function_by_span: &'facts BTreeMap<(u32, u32), FunctionId>,
@@ -9811,7 +9799,20 @@ impl<'a> Visit<'a> for CallCollector<'_, '_> {
             .or(imported_hook_member_binding);
         let runtime_reactive = direct_binding
             .and_then(|binding| self.reactive_bindings.get(&binding).copied())
-            .or(namespace_reactive.map(|(_, classification)| classification));
+            .or(namespace_reactive.map(|(_, classification)| classification))
+            .or_else(|| {
+                let (source, name) = self.runtime_imports.resolve(
+                    self.scoping,
+                    self.static_aliases,
+                    &call.callee,
+                )?;
+                // Named compiler macros already have their own call kind. Only
+                // the existing namespace lowering owns the runtime `$memo` ABI.
+                if name == "$memo" {
+                    return None;
+                }
+                runtime_reactive_call_classification(source, &name)
+            });
         let reactive_kind =
             runtime_reactive.and_then(|classification| classification.reactive_kind);
         let runtime_creation_kind =
@@ -42521,12 +42522,6 @@ fn collect_callback_timings(
     timings
 }
 
-#[derive(Debug, Clone)]
-struct EscapeImportIdentity {
-    source: String,
-    imported: String,
-}
-
 #[derive(Debug)]
 enum EscapeDiagnosticKind {
     StateSnapshot,
@@ -42567,7 +42562,7 @@ struct ReactiveEscapeCollector<'facts, 'semantic, 'reactive> {
     call_facts: &'facts BTreeMap<(u32, u32), &'facts CallFact>,
     macro_bindings: &'facts BTreeMap<BindingId, FictMacroKind>,
     local_hook_bindings: &'facts BTreeSet<BindingId>,
-    imports: &'facts BTreeMap<BindingId, EscapeImportIdentity>,
+    runtime_imports: &'facts runtime_callbacks::RuntimeImports,
     known_arrays: &'facts BTreeSet<SymbolId>,
     state_symbols: &'reactive BTreeSet<SymbolId>,
     proven_receivers: &'reactive BTreeMap<SymbolId, StateReceiverKind>,
@@ -42616,6 +42611,7 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
             (self.hook_return_shapes.contains_key(&root) && self.reactive_symbols.contains(&root))
                 .then_some(root)
         }));
+        captured.retain(|symbol| !self.snapshots.is_primitive_snapshot(*symbol));
         captured
     }
 
@@ -42628,7 +42624,10 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
             .iter()
             .filter(|source| !snapshot.local_values.contains(*source))
             .filter_map(StaticAliasPath::binding_root)
-            .filter(|symbol| self.reactive_symbols.contains(symbol))
+            .filter(|symbol| {
+                self.reactive_symbols.contains(symbol)
+                    && !self.snapshots.is_primitive_snapshot(*symbol)
+            })
             .collect::<BTreeSet<_>>();
         reactive.extend(self.snapshot_callback_captures(snapshot));
         reactive
@@ -42673,6 +42672,9 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
             symbols: BTreeSet::new(),
         };
         collector.visit_expression(argument.expression);
+        collector
+            .symbols
+            .retain(|symbol| !self.snapshots.is_primitive_snapshot(*symbol));
         collector.symbols
     }
 
@@ -42687,6 +42689,9 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
             symbols: BTreeSet::new(),
         };
         collector.visit_expression(expression);
+        collector
+            .symbols
+            .retain(|symbol| !self.snapshots.is_primitive_snapshot(*symbol));
         collector.symbols
     }
 
@@ -42724,6 +42729,7 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
                 .into_iter()
                 .filter(|symbol| self.hook_return_shapes.contains_key(symbol)),
         );
+        captured.retain(|symbol| !self.snapshots.is_primitive_snapshot(*symbol));
         captured
     }
 
@@ -42879,18 +42885,16 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
         let macro_kind = binding.and_then(|binding| self.macro_bindings.get(&binding).copied());
         let store = fact.reactive_kind == Some(ReactiveCallKind::Store);
         let local_hook = binding.is_some_and(|binding| self.local_hook_bindings.contains(&binding));
-        let state_argument_import = binding
-            .and_then(|binding| self.imports.get(&binding))
-            .is_some_and(|import| {
-                matches!(
-                    import.imported.as_str(),
-                    "render"
-                        | "createEffect"
-                        | "createMemo"
-                        | "createSelector"
-                        | "createRenderEffect"
-                )
-            });
+        let runtime_host =
+            self.runtime_imports
+                .host(self.scoping, self.callback_aliases, &call.callee);
+        let state_argument_import = runtime_host.is_some_and(|host| {
+            matches!(
+                host,
+                runtime_callbacks::RuntimeCallbackHost::Render
+                    | runtime_callbacks::RuntimeCallbackHost::Computation
+            )
+        });
         let state_arguments_allowed = store
             || local_hook
             || state_argument_import
@@ -42899,7 +42903,17 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
                 macro_kind,
                 Some(FictMacroKind::Effect | FictMacroKind::Memo)
             );
-        self.emit_direct_state_warnings(arguments, state_arguments_allowed, Some(fact.owner));
+        let selector = runtime_host == Some(runtime_callbacks::RuntimeCallbackHost::Selector);
+        let snapshot_arguments = if selector {
+            arguments.get(1..).unwrap_or_default()
+        } else {
+            arguments
+        };
+        self.emit_direct_state_warnings(
+            snapshot_arguments,
+            state_arguments_allowed,
+            Some(fact.owner),
+        );
 
         if store
             || macro_kind.is_some()
@@ -42909,7 +42923,7 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
         {
             return;
         }
-        if self.is_non_escaping_callback_host(&call.callee, binding, arguments) {
+        if self.is_non_escaping_callback_host(&call.callee, arguments) {
             return;
         }
         if self.is_non_escaping_hook_accumulator(&call.callee, arguments) {
@@ -42920,6 +42934,7 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
         if !local_hook {
             for (index, argument) in arguments.iter().enumerate() {
                 if (configured && index == 0)
+                    || (selector && index == 0 && self.selector_source_is_owned(*argument))
                     || self.snapshots.permits_argument(
                         self.scoping,
                         self.callback_aliases,
@@ -42966,6 +42981,7 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
         }
         for (index, argument) in arguments.iter().enumerate() {
             if (configured && index == 0)
+                || (selector && index == 0 && self.selector_source_is_owned(*argument))
                 || self.snapshots.permits_argument(
                     self.scoping,
                     self.callback_aliases,
@@ -43804,28 +43820,22 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
     fn is_non_escaping_callback_host(
         &self,
         callee: &Expression<'_>,
-        binding: Option<BindingId>,
         arguments: &[EscapeArgument<'_, '_>],
     ) -> bool {
-        if binding
-            .and_then(|binding| self.imports.get(&binding))
-            .is_some_and(|import| {
-                matches!(
-                    import.source.as_str(),
-                    "fict" | "fict/advanced" | "@fictjs/runtime" | "@fictjs/runtime/advanced"
-                ) && matches!(
-                    import.imported.as_str(),
-                    "untrack"
-                        | "batch"
-                        | "startTransition"
-                        | "createEffect"
-                        | "createMemo"
-                        | "createRenderEffect"
-                        | "runInScope"
-                )
-            })
+        if let Some(host) = self
+            .runtime_imports
+            .host(self.scoping, self.callback_aliases, callee)
         {
-            return true;
+            use runtime_callbacks::RuntimeCallbackHost;
+            return match host {
+                RuntimeCallbackHost::Selector => self.selector_callbacks_are_owned(arguments),
+                RuntimeCallbackHost::Snapshot
+                | RuntimeCallbackHost::Managed
+                | RuntimeCallbackHost::Computation => {
+                    self.runtime_callbacks_are_synchronous(arguments)
+                }
+                RuntimeCallbackHost::Render => false,
+            };
         }
 
         let (receiver, method) = match unwrap_transparent_call_expression(callee) {

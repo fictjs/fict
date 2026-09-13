@@ -8,10 +8,11 @@ not only an analysis pass, an API sketch, or a passing unrelated test suite.
 | Item | Required result                                                                                                                                                       | Completion evidence                                                                                                                                                                           | Status   |
 | ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- |
 | S1   | Explicit snapshot semantics and diagnostic fixes agree under default strict compilation. Retained reactive closures and unsafe lifetime escapes remain diagnosed.     | Executable cookbook examples, adversarial native compiler tests, disabled/safe/full behavioral checks.                                                                                        | Complete |
-| S2   | Official selector and reactive callback APIs are recognized by binding identity and their actual tracking/lifetime contracts.                                         | Positive imports/aliases and negative shadowed, external, deferred, and reassigned-host cases.                                                                                                | Pending  |
+| S2   | Official selector and reactive callback APIs are recognized by binding identity and their actual tracking/lifetime contracts.                                         | Positive imports/aliases and negative shadowed, external, deferred, and reassigned-host cases.                                                                                                | Complete |
 | S3   | Collection, fresh-copy, and per-row signal analysis supports the optimized keyed fixture with strict guarantees.                                                      | Strict fixture compilation, precise alias/mutation regressions, same-key replacement and teardown behavior.                                                                                   | Pending  |
 | S4   | Custom compiler host environment and metadata obligations are executable and documented.                                                                              | Facade/native integration contract tests, missing metadata cases, consumer package checks.                                                                                                    | Pending  |
 | S5   | Representative application coverage measures strict boundary incidence and usable diagnostic repairs.                                                                 | Maintained corpus with source identity, diagnostics, boundary/LOC counts, migration evidence, strict production and browser gates; distinguish maintained fixtures from independent adoption. | Pending  |
+| S6   | Local build caches include the native compiler source and artifact identity used by each host.                                                                        | A changed compiler invalidates dependent build tasks; final qualification forces fresh application builds.                                                                                    | Pending  |
 | G1   | Safe implicit memos with one logical JSX consumer can be removed without erasing observable computation or ownership semantics.                                       | Native output and browser/SSR behavior across safe/full/disabled options, explicit memo, multi-consumer, coercion, errors, and cleanup controls.                                              | Pending  |
 | G2   | Reactive allocation and optimization decisions are traceable from source consumers through EmitIR to generated bindings and owners.                                   | Verified graph/decision information and final-output counters, including reasons for materialization, inlining, retention, and rejected fusion.                                               | Pending  |
 | G3   | Existing SSA simplification facts and lazy placement opportunities are either safely realized in emitted code or accurately reported as retained work.                | Semantic differential tests and final generated-code evidence; no claims based solely on unused analysis fields.                                                                              | Pending  |
@@ -58,3 +59,34 @@ read directly by a test. DOM checks verify one-time evaluation, unchanged snapsh
 values after updates, and exception propagation. Both compiler complexity and Rust
 crate/diagnostic/EmitIR guardrails pass. The Rust crate budget accounts for the 182
 new integration-test lines; the production orchestration budget is unchanged.
+
+## S2: runtime callback identities and lifetimes
+
+Official selector sources now participate in the existing strict contract.
+Named imports, immutable aliases, and ESM namespace members share the runtime
+contract. Ordinary object properties and reassigned or unrelated functions do not.
+The selector's equality callback cannot introduce independently changing reactive
+captures. Synchronous runtime hosts do not silently accept reactive async or
+generator continuations; a proven primitive snapshot captured before scheduling is
+an ordinary transferable value.
+
+The change also removes an accidental name-based exemption for external functions
+called `createMemo`, `createEffect`, `createSelector`, or `render`. Compiler macros
+keep their separate HIR call kind. DOM tests cover three optimizer profiles,
+subscription updates and disposal, and deferred snapshot consumption.
+
+Validation: 198 compiler unit tests, 9 strict integration tests, and 390 native
+compiler/DOM/SSR/source-map/optimizer tests pass. All 1,950 primary corpus inputs
+and 1,221 non-preview replay inputs were compared against their prior status,
+diagnostics, and generated-code digest. Only 3 primary and 19 replay diagnostic
+sets change: redundant R002/R005 warnings are removed from official callback
+hosts. Generated code and acceptance status remain identical, including R004
+placement errors, S002 warnings, and the two explicit non-strict warning overrides.
+The diagnostic review records those exact changes; legacy Babel source, generated
+output, and acceptance-deviation policies are preserved. The corpus references and
+diagnostic-deviation counts are updated together and pass their 32 contract tests.
+
+Both frozen replay suites pass, covering 3,172 inputs including the one Preview
+fixture, with deterministic checks twice per input. The complete `pnpm commit`
+preflight, build, corpus, bundle-size, review-regression, workspace-test, typecheck,
+format, and lint sequence passes.

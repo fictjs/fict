@@ -118,6 +118,21 @@ test('the documented explicit primitive snapshot compiles under strict guarantee
   assert.notEqual(result.code, '')
 })
 
+test('the documented selector source compiles under strict guarantees', () => {
+  const cookbook = readFileSync(path.join(root, 'docs/strict-guarantee-cookbook.md'), 'utf8')
+  const example = cookbook.match(
+    /<!-- strict-example: selector-source -->\s*```tsx\n([\s\S]*?)\n```\s*<!-- \/strict-example -->/,
+  )?.[1]
+  assert.ok(example, 'missing executable cookbook selector example')
+  const result = binding.transformSync({
+    code: example,
+    filename: '/cookbook/selector.tsx',
+    options: { strictGuarantee: true },
+  })
+  assert.deepEqual(result.diagnostics, [])
+  assert.notEqual(result.code, '')
+})
+
 test('strict snapshots preserve call timing and remain unchanged as state updates', async () => {
   for (const [name, options] of [
     ['disabled', { optimize: false }],
@@ -187,6 +202,115 @@ test('strict snapshots preserve call timing and remain unchanged as state update
         }),
       error => error === failure,
     )
+  }
+})
+
+test('strict selector import aliases track updates and dispose their owners', async () => {
+  for (const [name, imports, setup, select] of [
+    ['named', `import {createSelector} from 'fict'`, '', 'createSelector'],
+    ['alias', `import {createSelector} from 'fict'`, 'const choose = createSelector', 'choose'],
+    ['namespace', `import * as runtime from 'fict'`, '', 'runtime.createSelector'],
+    [
+      'namespace-alias',
+      `import * as runtime from 'fict'`,
+      'const choose = runtime.createSelector',
+      'choose',
+    ],
+  ]) {
+    for (const [profile, options] of [
+      ['disabled', { optimize: false }],
+      ['safe', { optimize: true, optimizeLevel: 'safe' }],
+      ['full', { optimize: true, optimizeLevel: 'full' }],
+    ]) {
+      const compiled = await compileAndImport(
+        `import { $state, render } from 'fict'
+         ${imports}
+         function Counter(props) {
+           let count = $state(1)
+           ${setup}
+           const selected = ${select}(() => { props.read(); return count })
+           return <div>
+             <span data-id="one" class={selected(1) ? 'selected' : ''}>one</span>
+             <span data-id="two" class={selected(2) ? 'selected' : ''}>two</span>
+             <button onClick={() => count = count === 1 ? 2 : 1}>select</button>
+           </div>
+         }
+         export const mount = (container, read) => render(() => <Counter read={read}/>, container)`,
+        `selector-${name}-${profile}`,
+        { options: { ...options, strictGuarantee: true, dev: false } },
+      )
+      let reads = 0
+      const container = document.createElement('div')
+      document.body.append(container)
+      const dispose = compiled.mount(container, () => reads++)
+      const button = container.querySelector('button')
+      const classes = () => [...container.querySelectorAll('span')].map(node => node.className)
+      try {
+        assert.deepEqual(classes(), ['selected', ''])
+        const initialReads = reads
+        assert.equal(initialReads, 2, 'one initial snapshot and one tracked source read')
+        button.click()
+        await flushRuntime()
+        assert.deepEqual(classes(), ['', 'selected'])
+        assert.equal(reads, initialReads + 1)
+        button.click()
+        await flushRuntime()
+        assert.deepEqual(classes(), ['selected', ''])
+        assert.equal(reads, initialReads + 2)
+        dispose()
+        button.click()
+        await flushRuntime()
+        assert.equal(reads, initialReads + 2, 'disposed owner must not rerun the selector')
+      } finally {
+        dispose()
+        container.remove()
+      }
+    }
+  }
+})
+
+test('intact untrack aliases keep primitive snapshots unchanged', async () => {
+  for (const [name, imports, setup, snapshot] of [
+    ['alias', `import {untrack} from 'fict'`, 'const sample = untrack', 'sample'],
+    ['namespace', `import * as runtime from 'fict'`, '', 'runtime.untrack'],
+    [
+      'namespace-alias',
+      `import * as runtime from 'fict'`,
+      'const sample = runtime.untrack',
+      'sample',
+    ],
+  ]) {
+    const compiled = await compileAndImport(
+      `import {$state, render} from 'fict'
+       ${imports}
+       export const deferredSnapshots = []
+       function Counter(props) {
+         let count = $state(1)
+         ${setup}
+         const captured = ${snapshot}(() => count)
+         props.observe(captured)
+         Promise.resolve().then(() => deferredSnapshots.push(captured))
+         return <button onClick={() => count++}>{captured}:{count}</button>
+       }
+       export const mount = (container, observe) => render(() => <Counter observe={observe}/>, container)`,
+      `snapshot-host-${name}`,
+      { options: { strictGuarantee: true, dev: false } },
+    )
+    const observed = []
+    const container = document.createElement('div')
+    document.body.append(container)
+    const dispose = compiled.mount(container, value => observed.push(value))
+    try {
+      assert.equal(container.textContent, '1:1')
+      container.querySelector('button').click()
+      await flushRuntime()
+      assert.equal(container.textContent, '1:2')
+      assert.deepEqual(observed, [1])
+      assert.deepEqual(compiled.deferredSnapshots, [1])
+    } finally {
+      dispose()
+      container.remove()
+    }
   }
 })
 

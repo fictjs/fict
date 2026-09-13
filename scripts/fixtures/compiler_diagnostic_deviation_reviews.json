@@ -13,10 +13,10 @@
     "rust-structured-rejection-diagnostics": 183,
     "diagnostic-severity-reclassification": 22,
     "rust-warning-addition": 57,
-    "rust-warning-removal": 44,
+    "rust-warning-removal": 46,
     "rust-warning-set-change": 7
   },
-  "deviationCount": 313,
+  "deviationCount": 315,
   "deviations": [
     {
       "id": "packages/compiler/test/alias-reactivity.test.ts:70:transform",
@@ -3768,16 +3768,6 @@
           "code": "FICT-R004",
           "severity": "error",
           "guaranteeClass": "fallback"
-        },
-        {
-          "code": "FICT-R002",
-          "severity": "warning",
-          "guaranteeClass": "fallback"
-        },
-        {
-          "code": "FICT-R005",
-          "severity": "warning",
-          "guaranteeClass": "fallback"
         }
       ],
       "policy": "rust-structured-rejection-diagnostics"
@@ -3800,6 +3790,78 @@
         }
       ],
       "policy": "rust-structured-rejection-diagnostics"
+    },
+    {
+      "id": "packages/compiler/test/spec-rules.test.ts:2120:transformWithWarnings",
+      "babelStatus": "ok",
+      "rustStatus": "ok",
+      "babelDiagnostics": [
+        {
+          "code": "FICT-R004",
+          "severity": "warning"
+        },
+        {
+          "code": "FICT-R002",
+          "severity": "warning"
+        },
+        {
+          "code": "FICT-R005",
+          "severity": "warning"
+        },
+        {
+          "code": "FICT-R006",
+          "severity": "warning"
+        }
+      ],
+      "rustDiagnostics": [
+        {
+          "code": "FICT-R006",
+          "severity": "warning",
+          "guaranteeClass": "fallback"
+        },
+        {
+          "code": "FICT-R004",
+          "severity": "warning",
+          "guaranteeClass": "fallback"
+        }
+      ],
+      "policy": "rust-warning-removal"
+    },
+    {
+      "id": "packages/compiler/test/spec-rules.test.ts:2385:transformWithWarnings",
+      "babelStatus": "ok",
+      "rustStatus": "ok",
+      "babelDiagnostics": [
+        {
+          "code": "FICT-R004",
+          "severity": "warning"
+        },
+        {
+          "code": "FICT-R002",
+          "severity": "warning"
+        },
+        {
+          "code": "FICT-R005",
+          "severity": "warning"
+        },
+        {
+          "code": "FICT-R006",
+          "severity": "warning"
+        }
+      ],
+      "rustDiagnostics": [
+        {
+          "code": "FICT-R006",
+          "severity": "warning",
+          "guaranteeClass": "fallback"
+        },
+        {
+          "code": "FICT-R004",
+          "severity": "warning",
+          "guaranteeClass": "fallback"
+        }
+      ],
+      "policy": "rust-warning-removal"
     },
     {
       "id": "packages/compiler/test/spec-rules.test.ts:2420:transform",

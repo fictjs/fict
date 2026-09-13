@@ -20,6 +20,41 @@ strict guarantee even when an integration requests opt-out.
 
 ## Common Fixes
 
+### Selector Sources And Callback Lifetimes
+
+An official `createSelector` source runs synchronously in a computation owned by
+the current root. It is a supported reactive callback, including named imports,
+renamed imports, namespace members, and intact local aliases:
+
+<!-- strict-example: selector-source -->
+
+```tsx
+import { $state, createSelector } from 'fict'
+
+export function SelectionExample() {
+  let selected = $state(1)
+  const isSelected = createSelector(() => selected)
+  return (
+    <button class={isSelected(1) ? 'selected' : ''} onClick={() => (selected = 2)}>
+      Select second
+    </button>
+  )
+}
+```
+
+<!-- /strict-example -->
+
+The equality callback must not capture additional reactive inputs. It runs when
+the source changes or a key is read, so those captures would not have an independent
+subscription. Include all changing inputs in the source and compare its arguments.
+
+Import identity does not grant ownership of an async continuation. A reactive
+capture in an `async` or generator callback remains a strict boundary, including
+callbacks passed to `untrack`, `batch`, `startTransition`, or `createEffect`. For
+detached work that needs only an initial primitive value, capture that value in a
+synchronous `untrack` before scheduling the callback. An unrelated package or a
+reassigned function with the same name does not inherit a Fict runtime contract.
+
 ### Prop Rest Or Native Spread Fallback
 
 Native element rest spreads can hide which DOM props are reactive.
