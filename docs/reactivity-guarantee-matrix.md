@@ -51,6 +51,11 @@ dev/test migration experiments may opt out only outside production.
 
 ## Notes
 
+- A synchronous callback passed directly to Fict's imported `untrack` can pass
+  proven primitive component-local state as an explicit snapshot. Proven primitive
+  snapshot results and their immutable aliases can be passed to ordinary helpers.
+  This permission does not cover mutable object identities, retained reactive
+  closures, unknown writes, or async callback continuations.
 - `strictReactivity` is narrower than `strictGuarantee`; it focuses on the `FICT-R006` control-flow fallback.
 - `strictGuarantee` blocks suppression and downgrade for covered guarantee diagnostics.
 - Set `strictGuarantee: false` only when intentionally opting out of fail-closed guarantees outside production.

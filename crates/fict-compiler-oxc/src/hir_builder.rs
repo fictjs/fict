@@ -100,6 +100,7 @@ mod builtin_effects;
 mod class_components;
 mod dangerous_html;
 mod execution_state;
+mod explicit_snapshots;
 mod function_abi;
 mod historical_aliases;
 mod inline_jsx_functions;
@@ -3234,7 +3235,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             self.semantic.scoping(),
             external_storage_roots,
             external_storage_nested_roots,
-            immutable_storage_aliases,
+            immutable_storage_aliases.clone(),
         );
         external_storage.visit_program(program);
         let (mut external_storage_roots, external_storage_nested_roots) = external_storage.finish();
@@ -3257,6 +3258,18 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
         );
         let proven_receivers =
             collect_proven_receiver_kinds(program, self.semantic.scoping(), &receiver_seeds);
+        let snapshots = explicit_snapshots::SnapshotFacts::collect(
+            program,
+            explicit_snapshots::SnapshotInputs {
+                scoping: self.semantic.scoping(),
+                aliases: callback_aliases,
+                calls: &call_facts,
+                imports: &imports,
+                states: &reactive.state,
+                immutable: &immutable_storage_aliases,
+                functions: &self.functions,
+            },
+        );
         let mut collector = ReactiveEscapeCollector {
             scoping: self.semantic.scoping(),
             call_facts: &call_facts,
@@ -3278,6 +3291,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             external_storage_nested_roots: &external_storage_nested_roots,
             component_parameter_symbols: &component_parameter_symbols,
             definitely_primitive_symbols: &definitely_primitive_symbols,
+            snapshots: &snapshots,
             diagnostics: Vec::new(),
         };
         collector.visit_program(program);
@@ -42569,6 +42583,7 @@ struct ReactiveEscapeCollector<'facts, 'semantic, 'reactive> {
     external_storage_nested_roots: &'facts BTreeSet<SymbolId>,
     component_parameter_symbols: &'facts BTreeSet<SymbolId>,
     definitely_primitive_symbols: &'facts BTreeSet<SymbolId>,
+    snapshots: &'facts explicit_snapshots::SnapshotFacts,
     diagnostics: Vec<EscapeDiagnosticFact>,
 }
 
@@ -42803,13 +42818,26 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
         })
     }
 
-    fn emit_direct_state_warnings(&mut self, arguments: &[EscapeArgument<'_, '_>], allowed: bool) {
+    fn emit_direct_state_warnings(
+        &mut self,
+        arguments: &[EscapeArgument<'_, '_>],
+        allowed: bool,
+        owner: Option<FunctionId>,
+    ) {
         if allowed {
             return;
         }
         let spans = arguments
             .iter()
             .filter(|argument| self.direct_state_symbol(**argument).is_some())
+            .filter(|argument| {
+                !self.snapshots.permits_argument(
+                    self.scoping,
+                    self.callback_aliases,
+                    owner,
+                    **argument,
+                )
+            })
             .map(|argument| argument.span)
             .collect::<Vec<_>>();
         self.diagnostics
@@ -42871,7 +42899,7 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
                 macro_kind,
                 Some(FictMacroKind::Effect | FictMacroKind::Memo)
             );
-        self.emit_direct_state_warnings(arguments, state_arguments_allowed);
+        self.emit_direct_state_warnings(arguments, state_arguments_allowed, Some(fact.owner));
 
         if store
             || macro_kind.is_some()
@@ -42892,6 +42920,12 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
         if !local_hook {
             for (index, argument) in arguments.iter().enumerate() {
                 if (configured && index == 0)
+                    || self.snapshots.permits_argument(
+                        self.scoping,
+                        self.callback_aliases,
+                        Some(fact.owner),
+                        *argument,
+                    )
                     || self.direct_state_symbol(*argument).is_some()
                     || (local_array_arguments_are_non_escaping
                         && self
@@ -42932,6 +42966,12 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
         }
         for (index, argument) in arguments.iter().enumerate() {
             if (configured && index == 0)
+                || self.snapshots.permits_argument(
+                    self.scoping,
+                    self.callback_aliases,
+                    Some(fact.owner),
+                    *argument,
+                )
                 || (local_array_arguments_are_non_escaping
                     && self
                         .callback_aliases
@@ -42968,7 +43008,7 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
     }
 
     fn analyze_invocation(&mut self, arguments: &[EscapeArgument<'_, '_>]) {
-        self.emit_direct_state_warnings(arguments, false);
+        self.emit_direct_state_warnings(arguments, false, None);
         for argument in arguments {
             if self.direct_state_symbol(*argument).is_some() {
                 continue;

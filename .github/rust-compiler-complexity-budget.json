@@ -18,8 +18,9 @@
   "defaultFileMaxLines": 2000,
   "crates": {
     "fict-compiler": {
-      "reviewedLines": 30187,
-      "maxLines": 30750
+      "reviewedLines": 30819,
+      "maxLines": 31000,
+      "rationale": "The explicit snapshot contract adds 182 lines of focused strict positive and adversarial integration tests; production compiler orchestration is unchanged. Retain 181 lines of reserve after reviewing the existing baseline."
     },
     "fict-compiler-napi": {
       "reviewedLines": 1389,

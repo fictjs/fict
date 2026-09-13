@@ -135,7 +135,10 @@ function CounterSafe() {
 
 **Fix:**
 
-- Pass explicit getter functions that read state instead of state itself
+- For a one-time primitive value from component-local state, use
+  `untrack(() => someFn(count))` or capture `untrack(() => count)` first
+- For live reads, pass a getter through a known Fict-aware API with a tracking and
+  lifetime contract; an unknown host may still report `FICT-R002` / `FICT-R005`
 - Use `$store` from `fict` for shared global state
 
 ```js
@@ -143,13 +146,18 @@ function CounterSafe() {
 let count = $state(0)
 someFn(count) // FICT-S002
 
-// Better — pass getter
-someFn(() => count)
+// Intentional primitive snapshot, inside the component that owns count:
+untrack(() => someFn(count))
 
 // Or use $store for shared global state
 import { $store } from 'fict'
 export const appState = $store({ count: 0 })
 ```
+
+The snapshot permission requires Fict's synchronous `untrack` callback and a
+provably primitive value. Retained closures, mutable objects, unknown assignments,
+and asynchronously resumed callbacks do not gain that permission. See the
+[complete strict snapshot example](./strict-guarantee-cookbook.md#black-box-function-escapes).
 
 ---
 
@@ -428,10 +436,13 @@ warningLevels: {
 Non-escaping callbacks for common synchronous iterator patterns like `map`/`filter`/`forEach` are not flagged.
 Async hosts such as `Promise.then` / `catch` / `finally` are treated as boundary crossings.
 
-**Fix:** Keep the closure local to JSX/events/synchronous iterator callbacks, pass an explicit snapshot,
-or route reactive work through a known Fict scheduling primitive such as `batch`, `untrack`, or
-`startTransition`. If an external callback host is intentionally responsible for reactivity, disable
-`strictGuarantee` only for that compilation boundary and cover the integration with tests.
+**Fix:** Keep the closure within a known JSX/event/synchronous callback ownership
+contract, or capture a primitive snapshot before creating an external callback.
+Wrapping an unknown callback host in `untrack` does not make its retained closures
+safe. APIs that must observe live values need a Fict-aware tracking and lifetime
+contract; passing a getter or using a similarly named external helper is not that
+proof. Non-production opt-out remains available for testing an intentionally
+unsupported integration boundary.
 
 ### FICT-R006: Reactive control-flow re-execution
 

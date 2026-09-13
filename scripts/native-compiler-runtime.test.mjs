@@ -103,6 +103,93 @@ async function compileAndImport(source, name, settings = {}) {
   return importCompiledModule(result.code, name)
 }
 
+test('the documented explicit primitive snapshot compiles under strict guarantees', () => {
+  const cookbook = readFileSync(path.join(root, 'docs/strict-guarantee-cookbook.md'), 'utf8')
+  const example = cookbook.match(
+    /<!-- strict-example: primitive-snapshot -->\s*```tsx\n([\s\S]*?)\n```\s*<!-- \/strict-example -->/,
+  )?.[1]
+  assert.ok(example, 'missing executable cookbook snapshot example')
+  const result = binding.transformSync({
+    code: example,
+    filename: '/cookbook/primitive-snapshot.tsx',
+    options: { strictGuarantee: true },
+  })
+  assert.deepEqual(result.diagnostics, [])
+  assert.notEqual(result.code, '')
+})
+
+test('strict snapshots preserve call timing and remain unchanged as state updates', async () => {
+  for (const [name, options] of [
+    ['disabled', { optimize: false }],
+    ['safe', { optimize: true, optimizeLevel: 'safe' }],
+    ['full', { optimize: true, optimizeLevel: 'full' }],
+  ]) {
+    const compiled = await compileAndImport(
+      `import { $state, untrack, render } from 'fict'
+       function Counter(props) {
+         let count = $state(1)
+         const formatted = untrack(() => props.format(count))
+         const captured = untrack(() => count)
+         const alias = captured
+         props.observe(alias)
+         return <div>
+           <span data-id="formatted">{formatted}</span>
+           <span data-id="captured">{captured}</span>
+           <span data-id="current">{count}</span>
+           <button onClick={() => count++}>advance</button>
+         </div>
+       }
+       export const mount = (container, props) => render(() =>
+         <Counter format={props.format} observe={props.observe} />, container)`,
+      `explicit-snapshot-${name}`,
+      { options: { ...options, strictGuarantee: true, dev: false } },
+    )
+    const events = []
+    const container = document.createElement('div')
+    document.body.append(container)
+    let dispose
+    try {
+      dispose = compiled.mount(container, {
+        format(value) {
+          events.push(['format', value])
+          return `initial ${value}`
+        },
+        observe(value) {
+          events.push(['observe', value])
+        },
+      })
+      assert.deepEqual(events, [
+        ['format', 1],
+        ['observe', 1],
+      ])
+      for (let value = 2; value <= 3; value++) {
+        container.querySelector('button').click()
+        await flushRuntime()
+        assert.equal(container.querySelector('[data-id="current"]').textContent, String(value))
+        assert.equal(container.querySelector('[data-id="formatted"]').textContent, 'initial 1')
+        assert.equal(container.querySelector('[data-id="captured"]').textContent, '1')
+        assert.equal(events.length, 2)
+      }
+    } finally {
+      dispose?.()
+      container.remove()
+    }
+    const failure = new Error(`snapshot failure ${name}`)
+    assert.throws(
+      () =>
+        compiled.mount(container, {
+          format() {
+            throw failure
+          },
+          observe() {
+            assert.fail('observe must not run after a formatter failure')
+          },
+        }),
+      error => error === failure,
+    )
+  }
+})
+
 test('tracks deep external storage through loop CFG backedges', () => {
   const cases = [
     [

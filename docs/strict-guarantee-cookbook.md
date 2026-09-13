@@ -62,19 +62,39 @@ const value = settings[userSelectedKey]
 
 ### Black-Box Function Escapes
 
-Passing reactive values to arbitrary functions is a snapshot unless the callee
-is a known Fict-aware callback host.
+Passing a reactive value to an arbitrary function does not establish a reactive
+subscription. For an intentional one-time primitive value, put the call inside
+the synchronous callback of Fict's `untrack`:
+
+<!-- strict-example: primitive-snapshot -->
 
 ```tsx
-// Before
-const result = externalFormat(count)
+import { $state, untrack } from 'fict'
+import { externalFormat } from 'external'
 
-// After: make snapshot semantics explicit.
-const result = untrack(() => externalFormat(count))
+export function SnapshotExample() {
+  let count = $state(1)
+  const result = untrack(() => externalFormat(count))
+  return <button onClick={() => count++}>{result}</button>
+}
 ```
 
-If the helper must stay reactive, wrap the reactive read in a Fict-aware API
-that calls the callback under a tracked computation.
+<!-- /strict-example -->
+
+The formatter runs once and receives the initial number. Clicking the button
+changes `count`, while `result` keeps its snapshot value. You can also capture
+`const captured = untrack(() => count)` and pass that primitive to a helper later.
+
+The compiler must prove that the component-local state and its assignments keep
+the captured value primitive. Object references, unknown writes, and accessors
+whose writes belong to other modules retain their escape checks. `untrack` does
+not clone objects, make nested mutations reactive, or transfer callback ownership.
+For example, `untrack(() => externalHost(() => count))` still passes a live
+closure and is diagnosed. An async callback is not a synchronous snapshot scope.
+
+If the helper must stay reactive, use a Fict-aware API that owns the callback's
+tracking and lifetime. Passing a getter to an unknown host can still produce
+`FICT-R002` / `FICT-R005`; a getter alone does not prove the host's contract.
 
 ### Nested State Mutation
 
