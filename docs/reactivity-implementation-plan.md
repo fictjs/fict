@@ -32,6 +32,7 @@ not only an analysis pass, an API sketch, or a passing unrelated test suite.
 | A7   | Async graph behavior works through SSR, streaming, hydration, and request isolation.                                                                                  | Real server/browser tests covering initial pending, refresh, errors, cancellation, serialization and compatible hydration.                                                                    | Complete |
 | A8   | Representative applications and documentation demonstrate the unified model and its migration boundaries.                                                             | End-to-end async application scenarios, usable examples, API/package checks and synchronous performance regression checks.                                                                    | Complete |
 | Q1a  | Normal CI executes the same complete native behavior suite as local and release qualification.                                                                        | Canonical root command, legacy domain coverage assertions and current compiler/CI contract checks.                                                                                            | Complete |
+| Q1b  | Async migration documentation preserves immutable legacy-removal approval evidence.                                                                                   | Original guidance digest retained; separate async guide and updated navigation; rollout-state and documentation checks.                                                                       | Complete |
 | Q1   | The final stack satisfies each row against the current source and artifacts.                                                                                          | Full applicable compiler/runtime/SSR/bundler/strict/browser gates, per-item commits, fresh final audit, and explicit evidence for every completion claim.                                     | Pending  |
 
 Changes must preserve observable JavaScript behavior: reference/receiver semantics,
@@ -692,3 +693,16 @@ error was fixed without changing the project's target. The complete strict
 application gate passes again. The [evidence](./testing/native-ci-suite-evidence-2026-09-14.json)
 records the before/after coverage and source hashes. These are local checks of
 the configured workflow, not a remote CI run.
+
+## Q1b: preserve approved migration evidence
+
+The A8 async migration section now lives in the separate
+[async migration guide](./async-migration-guide.md), linked from README, the
+async contract and the example. The legacy compiler migration guide is restored
+byte-for-byte to the digest approved for the 0.31.0 removal decision. No historical
+evidence, review identity, approval or integrity check is rewritten. A8's archived
+source hashes remain historical; final qualification records the current paths.
+
+The rollout-state gate and its 20 positive/adversarial tests pass with the original
+approval chain. This resolves the migration-digest failure discovered by the
+final `pnpm commit` preflight without weakening that gate.

@@ -5,7 +5,7 @@ nodes, synchronous derived consumers, render preparation, Resource readiness,
 causal transitions, compiler declarations and eager SSR/hydration. The
 [reactivity checklist](./reactivity-implementation-plan.md) records the evidence
 and remaining qualification work for each part. The
-[migration guide](./migration-guide.md#async-graph-migration) and
+[migration guide](./async-migration-guide.md) and
 [async data example](../examples/async-data) show the supported application model.
 Native continuations, async component functions and Preview ownership
 serialization retain the explicit boundaries below.

@@ -33,6 +33,6 @@ Server streaming and client hydration are exercised by
 `pnpm test:async-ssr:browser` and documented in the
 [SSR/hydration guide](../../docs/async-ssr-hydration.md).
 
-See the [migration guide](../../docs/migration-guide.md#async-graph-migration) for
+See the [migration guide](../../docs/async-migration-guide.md) for
 ordinary Promise memos, two-phase effects, metadata compatibility and unsupported
 native-await/Preview boundaries.
