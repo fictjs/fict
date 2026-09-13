@@ -9,8 +9,8 @@
     "fileOverrideRatchetReductionLines": 10
   },
   "total": {
-    "reviewedLines": 1105,
-    "maxLines": 1128
+    "reviewedLines": 1187,
+    "maxLines": 1210
   },
   "defaultFileMaxLines": 100,
   "fileOverrides": {
@@ -21,10 +21,10 @@
       "rationale": "Keeps environment-derived compiler defaults isolated from request processing."
     },
     "packages/compiler/src/module-metadata.ts": {
-      "reviewedLines": 392,
-      "maxLines": 400,
+      "reviewedLines": 415,
+      "maxLines": 423,
       "owner": "Module metadata graph host",
-      "rationale": "Owns deterministic SCC metadata convergence, cache identity, and fail-closed graph state."
+      "rationale": "Owns deterministic SCC metadata convergence, cache identity, fail-closed custom-host validation, and async value/accessor metadata kinds."
     },
     "packages/compiler/src/native-loader.ts": {
       "reviewedLines": 223,
@@ -39,10 +39,10 @@
       "rationale": "Keeps supported host and package target selection explicit and deterministic."
     },
     "packages/compiler/src/types.ts": {
-      "reviewedLines": 236,
-      "maxLines": 242,
+      "reviewedLines": 294,
+      "maxLines": 300,
       "owner": "Public compiler request protocol",
-      "rationale": "Owns the documented request limits, structured ICE shape, options, and result contracts."
+      "rationale": "Owns the documented request/result protocol, including explicit async metadata and observational native graph trace declarations; compiler passes remain native."
     }
   }
 }

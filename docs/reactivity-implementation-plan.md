@@ -34,6 +34,7 @@ not only an analysis pass, an API sketch, or a passing unrelated test suite.
 | Q1a  | Normal CI executes the same complete native behavior suite as local and release qualification.                                                                        | Canonical root command, legacy domain coverage assertions and current compiler/CI contract checks.                                                                                            | Complete |
 | Q1b  | Async migration documentation preserves immutable legacy-removal approval evidence.                                                                                   | Original guidance digest retained; separate async guide and updated navigation; rollout-state and documentation checks.                                                                       | Complete |
 | Q1c  | Source-map probes cover live component-prop wrappers in both output paths.                                                                                            | Exact JSX origin and inner state-read positions; all ten source-map integration cases.                                                                                                        | Complete |
+| Q1d  | Compiler host complexity reflects reviewed async metadata and trace declarations.                                                                                     | Exact 82-line accounting, unchanged maintenance reserves and ratchet policy, passing complexity/report tests.                                                                                 | Complete |
 | Q1   | The final stack satisfies each row against the current source and artifacts.                                                                                          | Full applicable compiler/runtime/SSR/bundler/strict/browser gates, per-item commits, fresh final audit, and explicit evidence for every completion claim.                                     | Pending  |
 
 Changes must preserve observable JavaScript behavior: reference/receiver semantics,
@@ -716,3 +717,13 @@ and VNode occurrences must map the prop object to the authored child JSX and
 its inner state read to the exact authored expression. No compiler emission or
 mapping is changed; neither the original origin check nor mapping precision is
 relaxed. All ten source-map integration tests pass with all compiler features.
+
+## Q1d: account for the expanded native host protocol
+
+The [compiler host review](./testing/compiler-host-complexity-review-2026-09-14.md)
+accounts for all 82 added effective TypeScript lines: 58 protocol declaration
+lines, 23 metadata-host validation/kind lines and one existing-policy export.
+Compiler passes and graph construction remain native. The budget update is a
+dedicated governance change, preserves the prior 23/8/6-line maintenance reserves
+and leaves every percentage, ratchet and unrelated limit unchanged. The reviewed
+complexity report and both existing reporter tests pass.
