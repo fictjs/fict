@@ -539,43 +539,47 @@ fn scalar_property_spellings_on_unproven_state_receivers_remain_aliases() {
 }
 
 #[test]
-fn treats_only_direct_builtin_state_type_arguments_as_caller_owned_receiver_proofs() {
+fn treats_direct_builtin_state_annotations_as_caller_owned_receiver_proofs() {
     for optimize in [false, true] {
-        let accepted = compile_source_with_strict(
-            r#"
-                import { $state } from 'fict'
-                function App(value: unknown) {
-                    const rows = $state<number[]>(value as number[])
-                    return rows.map(row => row + 1).join(',')
-                }
-            "#,
-            CompilerOptions {
-                optimize,
-                ..CompilerOptions::default()
-            },
-            true,
-        );
-        assert!(!accepted.has_errors(), "{:#?}", accepted.diagnostics);
-        assert!(!accepted.code.is_empty());
-        assert!(
-            accepted
-                .diagnostics
-                .iter()
-                .all(|diagnostic| diagnostic.code.as_str() != "FICT-M")
-        );
+        for declaration in [
+            "const rows = $state<number[]>(value as number[])",
+            "let rows: number[] = $state(value as number[])",
+        ] {
+            let accepted = compile_source_with_strict(
+                &format!(
+                    r#"
+                    import {{ $state }} from 'fict'
+                    function App(value: unknown) {{
+                        {declaration}
+                        return rows.map(row => row + 1).join(',')
+                    }}
+                "#
+                ),
+                CompilerOptions {
+                    optimize,
+                    ..CompilerOptions::default()
+                },
+                true,
+            );
+            assert!(
+                !accepted.has_errors(),
+                "{declaration}: {:#?}",
+                accepted.diagnostics
+            );
+            assert!(!accepted.code.is_empty());
+            assert!(
+                accepted
+                    .diagnostics
+                    .iter()
+                    .all(|diagnostic| diagnostic.code.as_str() != "FICT-M")
+            );
+        }
 
         for source in [
             r#"
                 import { $state } from 'fict'
                 function App(value: unknown) {
                     const rows = $state(value as number[])
-                    return rows.map(row => row + 1).join(',')
-                }
-            "#,
-            r#"
-                import { $state } from 'fict'
-                function App(value: unknown) {
-                    let rows: number[] = $state(value as number[])
                     return rows.map(row => row + 1).join(',')
                 }
             "#,

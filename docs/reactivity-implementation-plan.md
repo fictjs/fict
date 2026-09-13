@@ -157,6 +157,14 @@ generated code are unchanged, with six redundant array-access warnings removed
 from three diagnostic sets. The [review archive](./benchmarks/strict-collection-review-2026-09-13.json)
 records each removal; all 32 corpus-policy checks, Rust boundaries and Clippy pass.
 
+Final-stack Rust qualification found one older regression still expecting a direct
+variable array annotation to fail. Its contract now accepts both the macro type
+argument and the declaration annotation introduced by S3. An RHS assertion alone,
+a type alias, or a shadowed `Array` declaration remains rejected. The retained
+pre-G1 native addon independently confirms that acceptance boundary; the focused
+Rust contract and all 42 reactive-write tests pass. This corrects the old assertion
+without changing compilation.
+
 The [strict production fixture archive](./benchmarks/strict-runtime-fixture-2026-09-13.json)
 contains its source, compiled output, native/build provenance and served bundle
 hash. Chrome passes 15 model checks through 11,000 rows and the official keyed
