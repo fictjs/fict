@@ -23,10 +23,99 @@ must read the item reactively, for example through a keyed row component's props
 Generic VNode array rendering retains its existing replacement behavior; keyed
 DOM identity checks apply to the direct DOM list lowering.
 
-The current 0.35.0 runtime comparison is recorded below. The five-framework
-ranking in the historical sections describes the archived 0.34.0 implementation.
-Fresh five-framework qualification is tracked by G5 in the
-[implementation checklist](./reactivity-implementation-plan.md).
+The current strict 0.35.0 comparison is recorded below. The later historical
+sections retain the archived 0.34.0 implementation and its experiments. The
+[implementation checklist](./reactivity-implementation-plan.md) separates
+compiler, runtime, application and final qualification evidence.
+
+## Current strict comparison: 2026-09-14
+
+The [complete archive](./benchmarks/runtime-qualified-2026-09-14.json) records the
+0.35.0 workspace compiler/runtime at `6a716534`, strict compilation with zero
+diagnostics, the four frozen reference implementations, their exact versions and
+hashes, and all 1,450 reported CPU samples. Every entry passes the official keyed
+create/remove/swap checks. Fict also passes 15 model checks through 11,000 rows.
+
+Chrome 152.0.7977.83 runs headless on macOS arm64. Each round has 15 samples per
+case, except selection with 25. The nine CPU cases have equal weight, normalized
+to the fastest mean among these five implementations. Round B reverses both case
+and framework order, using separate invocations to avoid the harness sorting the
+requested frameworks back into their original order.
+
+| Framework                    |  Round A | Reverse-order round B | Pooled case means |
+| ---------------------------- | -------: | --------------------: | ----------------: |
+| Vue Vapor 3.6.0-alpha.2      | 1.010112 |              1.008518 |          1.008628 |
+| Solid 1.9.3                  | 1.036417 |              1.042421 |          1.038740 |
+| Svelte 5.42.1                | 1.085088 |              1.085310 |          1.084452 |
+| Fict 0.35.0                  | 1.113658 |              1.114213 |          1.113164 |
+| React 19.0.0 + Compiler beta | 1.749625 |              1.749540 |          1.748325 |
+
+The exact Fict pooled score is **1.1131642824390815**. The unrounded **≤1.10**
+target fails in both rounds and after pooling. Pooling happens at the case-mean
+level before normalization; it is not an average of the round scores. Per-round
+variation is descriptive, not a confidence interval. The harness retains all
+samples, writing durations at its standard 0.1 ms precision. No task builds,
+tests, profiling or other timing runs overlap these CPU batches; normal desktop
+and operating-system activity is not disabled.
+
+Creation remains the main gap. Script and paint are reported separately; they
+do not necessarily sum to total time because the harness also measures other
+intervals. The profile's native `(program)` samples are not a paint measurement.
+
+| Case       | Fict script (ms) | Solid script (ms) | Fict paint (ms) | Solid paint (ms) |
+| ---------- | ---------------: | ----------------: | --------------: | ---------------: |
+| Create 1k  |            9.090 |             3.593 |          26.247 |           26.193 |
+| Replace 1k |           13.853 |             7.220 |          26.863 |           26.910 |
+| Create 10k |           68.943 |            33.747 |         289.703 |          288.200 |
+| Append 1k  |            9.340 |             4.030 |          31.120 |           31.210 |
+
+The separate G4 profiles locate allocation in managed binding/effect setup,
+listener registration and keyed ownership. G4 removes a forwarding layer and
+reduces live memory, but does not establish an overall CPU speed win. Source
+selectors, per-row signals and stable captures remain explicit fixture choices.
+These results do not certify general graph fusion or infer an optimal row model.
+
+With all reference means and other cases fixed, reaching 1.10 would require a
+further 1.183% reduction in the aggregate geometric ratio. Equal 2.641% reductions
+in total time across create 1k, replace, create 10k and append would suffice
+arithmetically. That is a remaining performance budget, not a demonstrated
+optimization. Historical 0.34.0 batches cannot isolate the cost of the new async
+semantics from other changes or host variation.
+
+### Page memory
+
+The separate forced-GC memory run uses three page samples per entry/case, for
+45 samples total. Values are whole-page MiB, not JS heap-only bytes. Memory does
+not contribute to the CPU score.
+
+| Framework      |    Ready | Create 1k | Create and clear 1k |
+| -------------- | -------: | --------: | ------------------: |
+| Vue Vapor      | 0.703722 |  2.960166 |            1.007862 |
+| Solid          | 0.592668 |  2.680843 |            0.773015 |
+| Svelte 5       | 0.677943 |  2.897445 |            1.019110 |
+| Fict           | 0.924386 |  4.539746 |            1.290431 |
+| React Compiler | 1.151707 |  4.605636 |            1.953694 |
+
+Fict's 1k result agrees closely with G4's independent candidate measurement
+(4.541471 MiB). It remains higher than the Solid reference. Three samples do not
+establish a memory confidence interval or a general application footprint.
+
+### Reproduction and README consistency
+
+The archive includes a compressed snapshot of HTML, authored sources, configuration,
+lockfiles, production bundles, shared CSS and the executed harness JavaScript.
+Use the recorded js-framework-benchmark revision `c7c90491`, the captured dependency
+locks and the archived per-invocation commands. Both rounds preserve their actual
+ordering. The first round's successful measurements were recovered after the
+collector initially confused a package manifest version with the harness's
+framework version; no CPU invocation or sample was replaced.
+
+`node scripts/runtime-benchmark-report.mjs --check-readme` recomputes every sample
+mean, round score, pooled score and unrounded target check, verifies the compressed
+artifact hash, and compares the README table, versions and build revision. The
+same check runs through `pnpm test:review-regressions` in precommit, CI and release
+qualification. The archived versions are local reference builds, not a claim
+about the latest available framework releases or remote CI results.
 
 ## Strict 0.35.0 creation costs: 2026-09-14
 

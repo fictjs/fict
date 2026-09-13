@@ -521,49 +521,58 @@ return branches) and lowers them to reactive conditionals.
 
 ## Performance
 
-### js-framework-benchmark — 2026-09-13
+### js-framework-benchmark — 2026-09-14
 
-Historical comparison of the archived 0.34.0 fixture, compiler, and runtime.
-The subsequent async graph changes and current strict fixture require a new
-qualified batch; this table does not measure them. Mean total durations are milliseconds, including browser
-rendering; lower is better. Chrome 152.0.7977.83 on macOS arm64, headless, with
-identical per-case throttling. Each case has 15 samples; selection has 25.
+Current strict workspace 0.35.0 compiler and runtime, including the async graph.
+Mean total durations are milliseconds, including browser rendering; lower is
+better. Chrome 152.0.7977.83 on macOS arm64, headless, with identical per-case
+throttling. Two complete rounds provide 30 samples per case; selection has 50.
+
+<!-- runtime-benchmark:start -->
 
 | Benchmark                       | Vue Vapor |  Solid | Svelte 5 |   Fict | React Compiler |
 | :------------------------------ | --------: | -----: | -------: | -----: | -------------: |
-| Create rows (1k)                |     30.99 |  30.32 |    31.27 |  35.77 |          36.81 |
-| Replace all rows (1k)           |     35.41 |  35.01 |    36.31 |  41.47 |          45.33 |
-| Partial update (every 10th row) |     19.71 |  18.84 |    19.71 |  19.83 |          25.07 |
-| Select row                      |      6.12 |   6.76 |     9.16 |   6.27 |          13.76 |
-| Swap rows                       |     21.57 |  22.21 |    22.41 |  22.65 |         146.31 |
-| Remove row                      |     17.10 |  16.91 |    17.04 |  17.55 |          19.61 |
-| Create many rows (10k)          |    337.70 | 332.10 |   336.85 | 365.26 |         621.51 |
-| Append rows (1k to 1k)          |     36.83 |  36.72 |    36.93 |  41.53 |          43.36 |
-| Clear rows (1k)                 |     15.00 |  18.53 |    17.09 |  17.43 |          27.57 |
-| **CPU geometric mean**          |     1.012 |  1.039 |    1.082 |  1.101 |          1.745 |
+| Create rows (1k)                |     31.10 |  30.38 |    31.04 |  36.15 |          36.81 |
+| Replace all rows (1k)           |     35.33 |  34.97 |    36.10 |  41.57 |          44.43 |
+| Partial update (every 10th row) |     19.39 |  18.86 |    19.69 |  20.37 |          25.33 |
+| Select row                      |      5.86 |   6.69 |     9.17 |   6.49 |          13.90 |
+| Swap rows                       |     22.07 |  22.33 |    22.67 |  23.11 |         145.21 |
+| Remove row                      |     16.87 |  16.89 |    17.24 |  17.36 |          19.58 |
+| Create many rows (10k)          |    336.37 | 332.41 |   335.00 | 369.25 |         626.91 |
+| Append rows (1k to 1k)          |     36.69 |  36.55 |    36.77 |  41.98 |          43.83 |
+| Clear rows (1k)                 |     15.14 |  18.42 |    17.13 |  17.07 |          27.28 |
+| **CPU geometric mean**          |     1.009 |  1.039 |    1.084 |  1.113 |          1.748 |
 
 Each case is normalized to its fastest mean among these five implementations;
-the geometric mean gives equal weight to the nine CPU cases. Fict's score is
-**1.100919** to six decimals. Against the original comparison's fixed denominators it
-is **1.104012**, a **16.99%** reduction from **1.329953**.
-The strict **≤1.10** check did **not** pass under either normalization.
+the geometric mean gives equal weight to the nine CPU cases. Case means are
+pooled before normalization; the pooled score is not an average of round scores.
 
-The default fixture now uses a selector, per-row label signals, `textContent`,
-and stable row captures. Automatic compiler/runtime optimizations reduce
-template traversal, binding, allocation, and disposal costs. The compiler does
-not infer that source representation for arbitrary applications.
+Fict's pooled score is **1.113164**. Complete round scores are **1.113658** and **1.114213**.
+The strict **≤1.10** check uses unrounded values: pooled **FAIL**; rounds **FAIL / FAIL**.
 
-**Versions:** Vue Vapor 3.6.0-alpha.2 · Solid 1.9.3 · Svelte 5.42.1 · Fict 0.34.0
-(workspace implementation based on `27dbe2d9`) · React 19.0.0 with React Compiler
-`19.0.0-beta-37ed2a7-20241206`.
+**Versions:** Vue Vapor 3.6.0-alpha.2 · Solid 1.9.3 · Svelte 5 5.42.1 · Fict 0.35.0 · React 19.0.0; babel-plugin-react-compiler 19.0.0-beta-37ed2a7-20241206.
+Fict compiler/runtime revision: `6a716534`; strict compilation with zero diagnostics.
 
-The Fict build passed the browser model and official keyed checks; the reference
-bundles retain their previously checked source and hashes. These are local,
-recorded versions and workloads. See [implemented changes, validation, and
-remaining costs](./docs/runtime-benchmark.md#implemented-optimizations-2026-09-13)
-and [raw samples and exact source/bundle provenance](./docs/benchmarks/runtime-implementation-2026-09-13.json).
-See the [benchmark history](./docs/runtime-benchmark.md#framework-comparison-2026-09-12)
-for the earlier five-framework comparison and source experiments.
+<!-- runtime-benchmark:end -->
+
+Round B reverses case and framework order. Both complete rounds and all 1,450
+samples are retained. Their variation is descriptive, not a confidence interval;
+these local reference versions and workloads do not establish a universal ranking
+or isolate async overhead from the historical 0.34.0 measurements.
+
+The fixture uses an explicit selector, per-row label signals, `textContent`,
+and stable row captures. The compiler does not infer that representation for
+arbitrary applications. Creation remains the largest gap: 1k script time is
+9.09 ms for Fict versus 3.59 ms for Solid, while paint is nearly equal. The new
+binding allocation optimization reduces live page memory with mixed CPU tradeoffs.
+
+All five frozen entries pass the official keyed checks; Fict also passes 15 model
+checks through 11,000 rows. See the [current results and remaining costs](./docs/runtime-benchmark.md#current-strict-comparison-2026-09-14)
+and [all samples, frozen artifacts and provenance](./docs/benchmarks/runtime-qualified-2026-09-14.json).
+Run `node scripts/runtime-benchmark-report.mjs --check-readme` to verify this table,
+its versions and the unrounded target directly from the archived samples.
+The [benchmark history](./docs/runtime-benchmark.md#implemented-optimizations-2026-09-13)
+retains the earlier 0.34.0 results and optimization experiments.
 
 ---
 

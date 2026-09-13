@@ -20,7 +20,7 @@ not only an analysis pass, an API sketch, or a passing unrelated test suite.
 | G2   | Reactive allocation and optimization decisions are traceable from source consumers through EmitIR to generated bindings and owners.                                   | Verified graph/decision information and final-output counters, including reasons for materialization, inlining, retention, and rejected fusion.                                               | Complete |
 | G3   | Existing SSA simplification facts and lazy placement opportunities are either safely realized in emitted code or accurately reported as retained work.                | Semantic differential tests and final generated-code evidence; no claims based solely on unused analysis fields.                                                                              | Complete |
 | G4   | Creation, replacement, and append costs are profiled and reduced where measurements support safe changes.                                                             | Controlled allocation/CPU profiles, complete repeated benchmark batches, memory and disposal checks, documented rejected experiments.                                                         | Complete |
-| G5   | README performance claims correspond to the qualified strict build and identify versions, artifact hashes, normalization, uncertainty, and the unrounded 1.10 target. | Frozen source/build provenance, complete keyed/browser checks, reproducible archive and README data validation.                                                                               | Pending  |
+| G5   | README performance claims correspond to the qualified strict build and identify versions, artifact hashes, normalization, uncertainty, and the unrounded 1.10 target. | Frozen source/build provenance, complete keyed/browser checks, reproducible archive and README data validation.                                                                               | Complete |
 | A1   | An async graph contract specifies readiness, stale/current values, invalidation, errors, effect commit, ownership, and compatibility.                                 | Implementable state transitions and executable acceptance scenarios, not percentage scores.                                                                                                   | Complete |
 | A2   | An explicit async computation is a reactive graph node, including Promise and async iterable completion, invalidation, and cancellation.                              | Graph-level dependency/status behavior, stale-flight rejection, cancellation and disposal tests; preserve existing Promise-valued synchronous memo behavior.                                  | Complete |
 | A3   | Pending/error states compose through synchronous derived nodes and effect/render consumers with defined commit semantics.                                             | Chains, diamonds, conditional subscriptions, independent boundaries, error recovery, no unintended partial commits, and cleanup ordering.                                                     | Complete |
@@ -312,6 +312,30 @@ Validation: 1,548 runtime tests, four explicit-GC stress tests, 615 native compi
 DOM and SSR cases, source/test typechecks and runtime lint pass. Both frozen
 entries pass 15 browser model checks through 11,000 rows and all three official
 keyed checks. Profiles, tests, builds and CPU/memory batches run separately.
+
+## G5: current strict five-framework results
+
+README now reports the qualified 0.35.0 compiler/runtime at `6a716534`, including
+the async graph. Both complete nine-case CPU rounds retain all 1,450 reported
+samples. Round B reverses case and framework order. The pooled Fict score is
+1.1131642824390815, versus 1.1136580376192835 and 1.1142133406712187 per round.
+The unrounded 1.10 target **does not pass**. Completion of this item certifies
+accurate measurement and reporting, not achievement of that performance target.
+
+The [qualification archive](./benchmarks/runtime-qualified-2026-09-14.json)
+contains all records and commands, source/build identities, reference versions,
+and a compressed 73-file source/artifact/harness snapshot. It also contains a
+separate 45-sample page-memory batch. All five entries pass the official keyed
+checks; Fict passes 15 model checks through 11,000 rows. The first successful
+round was recovered after a collector version-label error without rerunning
+measurements or replacing samples.
+
+The README checker recomputes sample means, round and pooled scores, the exact
+target result, versions and the build reference, and verifies the frozen artifact
+hash. It runs in the shared review-regression gate. Historical 0.34.0 results stay
+in the benchmark history; neither CPU improvement nor isolated async overhead is
+inferred by comparing those separate historical batches. The current creation
+script/paint split and remaining target budget are documented explicitly.
 
 ## A1: executable async readiness contract
 
