@@ -154,6 +154,7 @@ For each `DerivedNode` (default behavior):
 
 - With optimization enabled, the compiler may inline an implicit derived memo when it has one later accessor read in the same straight-line statement list and its expression is safe to move.
 - A single intrinsic JSX text consumer also permits inlining of total scalar expressions over closed, already initialized component state. This proof follows all writes and only accepts number/boolean/nullish state values. Result strings such as `` `Count: ${count}` `` are eligible; mutable string inputs, arbitrary calls, objects, BigInt/Symbol coercions, captured owners and component prop consumers keep their materialization boundary. Generated namespace copies represent one authored consumer only when both binding identity and name agree.
+- An implicit memo with no authored or generated consumers is removed under the same total scalar proof. This removes its declaration and unused helper import; explicit memos and unproved inputs remain materialized.
 - `inlineDerivedMemos: false` keeps user-named implicit memos. Compiler-generated `__*` temporaries remain eligible outside hooks.
 - Hook return accessors and explicit `$memo` / `createMemo` calls are never removed by this pass.
 
@@ -577,7 +578,8 @@ This is a "good but not mandatory" optimization, which can be part of subsequent
 
 Implementation note: The compiler performs conservative cross-block constant propagation for
 compiler-generated temporaries by default.
-Inlining note: Single-use derived values are inlined by default (including user-named ones).
+Inlining note: Single-use derived values may be inlined with default options
+(including user-named ones), subject to the value, movement and ownership proofs above.
 Use `$memo` to keep a user-named derived value as an explicit memo.
 Hook note: Hook-like functions (explicit `useX` or inferred hooks using `$state`/`$store`)
 do not inline user-named derived values by default, to preserve accessor return shapes.

@@ -168,6 +168,7 @@ pub(super) fn decisions(
     emit: &EmitProgram,
     creations: &BTreeMap<BindingId, DerivedCreationRewrite>,
     inlined: &BTreeSet<BindingId>,
+    eliminated: &BTreeSet<BindingId>,
     jsx_reads: &JsxInlineReads,
 ) {
     let jsx: BTreeSet<_> = jsx_reads.values().map(|read| read.binding).collect();
@@ -176,7 +177,9 @@ pub(super) fn decisions(
         let Some(creation) = creations.get(&id) else {
             continue;
         };
-        let (action, reason) = if inlined.contains(&id) {
+        let (action, reason) = if eliminated.contains(&id) {
+            ("eliminate", "unused-total-scalar-derived")
+        } else if inlined.contains(&id) {
             (
                 "inline",
                 if jsx.contains(&id) {
@@ -198,7 +201,7 @@ pub(super) fn decisions(
         }) {
             ("retain", "name-inline-policy-disabled")
         } else if binding.references.is_empty() {
-            ("retain", "unused-memo-elimination-not-implemented")
+            ("retain", "unused-memo-proof-not-established")
         } else if binding.references.len() > 1 {
             ("retain", "multiple-authored-references")
         } else {

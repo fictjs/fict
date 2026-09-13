@@ -249,7 +249,16 @@ test('retention decisions distinguish policy, shared consumers, unused work and 
   )
   assert.equal(decision(shared, 'doubled').reason, 'multiple-authored-references')
   const unused = success(compile(source.replace('<span>{doubled}</span>', '<span>unused</span>')))
-  assert.equal(decision(unused, 'doubled').reason, 'unused-memo-elimination-not-implemented')
+  assert.equal(decision(unused, 'doubled').reason, 'unused-total-scalar-derived')
+  assert.equal(decision(unused, 'doubled').action, 'eliminate')
+  const unusedUnproved = success(
+    compile(
+      source
+        .replace('count=$state(1)', 'count=$state("a")')
+        .replace('<span>{doubled}</span>', '<span>unused</span>'),
+    ),
+  )
+  assert.equal(decision(unusedUnproved, 'doubled').reason, 'unused-memo-proof-not-established')
   const uncertain = success(
     compile(
       `import {$state} from 'fict'; function Child(props){return <i>{props.value}</i>} export function App(){let count=$state(1);const value=count*2; return <Child value={value}/>}`,

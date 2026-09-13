@@ -41,11 +41,17 @@ struct ReferenceSite {
 
 struct InlineTarget<'a> {
     declarator: SourceLocation,
-    reference: SourceLocation,
+    reference: Option<SourceLocation>,
     replacement: Expression<'a>,
 }
 
-/// Inline within the same straight-line owner, or at a source-proven intrinsic JSX text read.
+#[derive(Default)]
+pub(super) struct DerivedRewriteResult {
+    pub inlined: BTreeSet<BindingId>,
+    pub eliminated: BTreeSet<BindingId>,
+}
+
+/// Inline at a proved consumer, or eliminate an unused source-proven total scalar memo.
 /// Generated `__*` names remain eligible when user-name inlining is disabled, matching the
 /// Babel 0.28 optimizer contract. Generated functions alone never license moving an expression.
 pub(super) fn rewrite<'a>(
@@ -55,13 +61,15 @@ pub(super) fn rewrite<'a>(
     creations: &BTreeMap<BindingId, DerivedCreationRewrite>,
     reactive_reads: &BTreeSet<SourceLocation>,
     jsx_reads: &JsxInlineReads,
-) -> Result<BTreeSet<BindingId>, Vec<Diagnostic>> {
+    unused: &BTreeSet<BindingId>,
+) -> Result<DerivedRewriteResult, Vec<Diagnostic>> {
     let mut collector = CandidateCollector {
         allocator,
         identities,
         creations,
         reactive_reads,
         jsx_reads,
+        unused,
         definitions: BTreeMap::new(),
         references: BTreeMap::new(),
         accessor_callees: BTreeSet::new(),
@@ -74,9 +82,13 @@ pub(super) fn rewrite<'a>(
 
     let targets = collector.targets();
     if targets.is_empty() {
-        return Ok(BTreeSet::new());
+        return Ok(DerivedRewriteResult::default());
     }
     let expected: BTreeSet<_> = targets.keys().copied().collect();
+    let expected_references: BTreeSet<_> = targets
+        .iter()
+        .filter_map(|(binding, target)| target.reference.map(|_| *binding))
+        .collect();
     let mut rewriter = InlineRewriter {
         allocator,
         identities,
@@ -86,12 +98,16 @@ pub(super) fn rewrite<'a>(
         references: BTreeSet::new(),
     };
     rewriter.visit_program(program);
-    if rewriter.declarations == expected && rewriter.references == expected {
-        return Ok(expected);
+    if rewriter.declarations == expected && rewriter.references == expected_references {
+        let eliminated = expected.difference(&expected_references).copied().collect();
+        return Ok(DerivedRewriteResult {
+            inlined: expected_references,
+            eliminated,
+        });
     }
     let missing = expected
         .difference(&rewriter.declarations)
-        .chain(expected.difference(&rewriter.references))
+        .chain(expected_references.difference(&rewriter.references))
         .next()
         .copied()
         .expect("an incomplete rewrite has a missing binding");
@@ -99,7 +115,7 @@ pub(super) fn rewrite<'a>(
     Err(vec![
         emit_error(
             "FICT-OXC-EMIT-DERIVED-INLINE",
-            "derived-memo inline plan did not match its declaration and sole accessor read",
+            "derived-memo rewrite plan did not match its declaration and expected accessor reads",
             GuaranteeClass::Internal,
         )
         .with_primary_span(
@@ -115,6 +131,7 @@ struct CandidateCollector<'a, 'plan> {
     creations: &'plan BTreeMap<BindingId, DerivedCreationRewrite>,
     reactive_reads: &'plan BTreeSet<SourceLocation>,
     jsx_reads: &'plan JsxInlineReads,
+    unused: &'plan BTreeSet<BindingId>,
     definitions: BTreeMap<BindingId, Definition<'a>>,
     references: BTreeMap<BindingId, Vec<ReferenceSite>>,
     accessor_callees: BTreeSet<(BindingId, SourceLocation)>,
@@ -137,6 +154,19 @@ impl<'a> CandidateCollector<'a, '_> {
     fn targets(self) -> BTreeMap<BindingId, InlineTarget<'a>> {
         let mut targets = BTreeMap::new();
         for (binding, definition) in self.definitions {
+            if self.unused.contains(&binding)
+                && self.references.get(&binding).is_none_or(Vec::is_empty)
+            {
+                targets.insert(
+                    binding,
+                    InlineTarget {
+                        declarator: definition.declarator,
+                        reference: None,
+                        replacement: definition.replacement,
+                    },
+                );
+                continue;
+            }
             let Some(references) = self.references.get(&binding) else {
                 continue;
             };
@@ -157,7 +187,7 @@ impl<'a> CandidateCollector<'a, '_> {
                     binding,
                     InlineTarget {
                         declarator: definition.declarator,
-                        reference: reference.location,
+                        reference: Some(reference.location),
                         replacement: definition.replacement,
                     },
                 );
@@ -185,7 +215,7 @@ impl<'a> CandidateCollector<'a, '_> {
                 binding,
                 InlineTarget {
                     declarator: definition.declarator,
-                    reference: reference.location,
+                    reference: Some(reference.location),
                     replacement: definition.replacement,
                 },
             );
@@ -404,7 +434,7 @@ impl<'a> VisitMut<'a> for InlineRewriter<'a, '_> {
                 };
                 reference_binding(self.identities, self.jsx_reads, identifier).and_then(|binding| {
                     self.targets.get(&binding).and_then(|target| {
-                        (target.reference == (identifier.span.start, identifier.span.end))
+                        (target.reference == Some((identifier.span.start, identifier.span.end)))
                             .then_some((binding, &target.replacement))
                     })
                 })

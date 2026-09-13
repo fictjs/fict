@@ -202,8 +202,9 @@ const total = subtotal + tax // auto-derived
 ```
 
 The compiler builds a dependency graph and only recomputes what's needed.
-Single-use derived values, including proven scalar JSX text bindings, may be inlined as an optimization; use `$memo` to
-force an explicit memo node. See the [inlining rules](docs/derived-memo-inlining.md).
+Single-use derived values, including proven scalar JSX text bindings, may be inlined as an optimization.
+Unused implicit scalar memos can be removed under the same value proof; use `$memo` to
+force an explicit memo node. See the [inlining and elimination rules](docs/derived-memo-inlining.md).
 
 ### `$effect` — Side effects
 

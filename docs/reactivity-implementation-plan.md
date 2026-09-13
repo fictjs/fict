@@ -18,7 +18,7 @@ not only an analysis pass, an API sketch, or a passing unrelated test suite.
 | S7   | Bundle-size gates resolve distributed modules without silently following workspace source aliases.                                                                    | Actual ESM/CJS package measurements, import-specific budgets, and an executable resolution check.                                                                                             | Complete |
 | G1   | Safe implicit memos with one logical JSX consumer can be removed without erasing observable computation or ownership semantics.                                       | Native output and browser/SSR behavior across safe/full/disabled options, explicit memo, multi-consumer, coercion, errors, and cleanup controls.                                              | Complete |
 | G2   | Reactive allocation and optimization decisions are traceable from source consumers through EmitIR to generated bindings and owners.                                   | Verified graph/decision information and final-output counters, including reasons for materialization, inlining, retention, and rejected fusion.                                               | Complete |
-| G3   | Existing SSA simplification facts and lazy placement opportunities are either safely realized in emitted code or accurately reported as retained work.                | Semantic differential tests and final generated-code evidence; no claims based solely on unused analysis fields.                                                                              | Pending  |
+| G3   | Existing SSA simplification facts and lazy placement opportunities are either safely realized in emitted code or accurately reported as retained work.                | Semantic differential tests and final generated-code evidence; no claims based solely on unused analysis fields.                                                                              | Complete |
 | G4   | Creation, replacement, and append costs are profiled and reduced where measurements support safe changes.                                                             | Controlled allocation/CPU profiles, complete repeated benchmark batches, memory and disposal checks, documented rejected experiments.                                                         | Pending  |
 | G5   | README performance claims correspond to the qualified strict build and identify versions, artifact hashes, normalization, uncertainty, and the unrounded 1.10 target. | Frozen source/build provenance, complete keyed/browser checks, reproducible archive and README data validation.                                                                               | Pending  |
 | A1   | An async graph contract specifies readiness, stale/current values, invalidation, errors, effect commit, ownership, and compatibility.                                 | Implementable state transitions and executable acceptance scenarios, not percentage scores.                                                                                                   | Complete |
@@ -568,3 +568,28 @@ regressions, reproducible commands, counting definitions and the
 These are maintained fixtures, including an async-data/Webpack variant pair,
 not independent external adoption evidence or a measured false-positive rate.
 CPU and memory qualification remain G4/G5/A8.
+
+## G3: unused scalar memos and retained SSA work
+
+Implicit scalar memos with no authored or generated consumers are removed under
+G1's closed state/write and initialization proof. Other declarators, explicit
+memos and unproved calls/coercions/owners retain their behavior. The final graph
+trace distinguishes elimination from inlining and confirms helper import removal.
+
+DCE now reports the inline and trivial-Phi candidates it analyzed separately
+from the corresponding rewrite counts, which remain zero. These observations
+precede compaction and are not final remaining opportunities. General SSA plan
+rewrites, recursive derived-chain elimination and global branch-aware lazy
+placement remain retained work; HIR analysis alone does not establish a safe
+source emission rewrite. The graph trace guide explains this boundary.
+
+The new 27-case native gate passes, including mixed declarations, effect order,
+cleanup, SSR and retained controls; the preceding addon fails only nine new
+optimization/counter expectations. The complete 615-case native suite, both
+frozen corpora (3,172 inputs), Clippy/fmt and 60 Rust guardrail tests pass.
+Only three frozen outputs change, each by exactly one unused memo declaration
+and its helper import. Full diagnostics, maps, metadata, artifacts, existing
+explanations and previous core counters are unchanged. The original Babel
+capture remains intact; only the current corpus reference is rebound.
+See the [review archive](./testing/unused-scalar-memo-evidence-2026-09-14.json).
+This is semantic and emitted-code evidence, without new CPU measurements.

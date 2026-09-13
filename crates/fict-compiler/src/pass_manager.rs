@@ -190,6 +190,8 @@ pub fn run_core_passes(
     let mut constants_folded = 0_usize;
     let mut cse_replacements = 0_usize;
     let mut dead_values = 0_usize;
+    let mut dce_inline_candidates = 0_usize;
+    let mut dce_trivial_phis = 0_usize;
     let mut optimization_iterations = 0_usize;
 
     if options.optimize {
@@ -258,6 +260,11 @@ pub fn run_core_passes(
                 analyze_dce(&hir, function_id, &ssa, &dependencies, &aliases)
             })?;
             dead_values = dead_values.saturating_add(dce.dead_values.len());
+            // These analyses are not consumed by apply_dce's compaction rewrite. Keep their
+            // observed counts separate from actual rewrites and from codegen memo decisions.
+            dce_inline_candidates =
+                dce_inline_candidates.saturating_add(dce.inline_candidates.len());
+            dce_trivial_phis = dce_trivial_phis.saturating_add(dce.trivial_phis.len());
             if !dce.dead_instructions.is_empty() || !dce.dead_values.is_empty() {
                 hir = timed(&mut context, "dce-compact", || {
                     apply_dce(&hir, function_id, &dce)
@@ -363,6 +370,10 @@ pub fn run_core_passes(
     );
     context.set_counter("regions", total_regions);
     context.set_counter("cycles", total_cycles);
+    context.set_counter("dceInlineCandidatesAnalyzed", dce_inline_candidates);
+    context.set_counter("dceInlineCandidatesRewritten", 0);
+    context.set_counter("dceTrivialPhisAnalyzed", dce_trivial_phis);
+    context.set_counter("dceTrivialPhisRewritten", 0);
     context.set_counter("fixedPointIterations", fixed_point_iterations);
     context.set_counter("constantsFolded", constants_folded);
     context.set_counter("cseReplacements", cse_replacements);

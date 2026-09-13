@@ -15,7 +15,7 @@
       "@babel/plugin-transform-typescript": "7.28.5"
     },
     "rustAuditRelease": "0.35.0",
-    "rustAuditRevision": "7641add24ae3966b51b014a09503bc52aa88d207",
+    "rustAuditRevision": "8c5cd911bfc9cc7ca72c32f4a558a47d68234389",
     "auditInputSha256": "676b022516c01b525d7e2a316e5b072eae2ee1532b2bb103573543900f13b67f",
     "requestPolicySha256": "6b459d227b9b70c163861d31104547f8e1569526ae5fb78c36cb7a11f313bec8",
     "legacyTestSourceSha256": "65e6c3961af46d92d88d40d4ee0bb50901538ea15b4468dc8c79c73eef9da8bb",
@@ -25,8 +25,8 @@
     "corpusFixtures": 1950,
     "scannedLegacyTestFiles": 107,
     "legacyTestFilesWithAuditRows": 73,
-    "reviewedRevision": "7641add24ae3966b51b014a09503bc52aa88d207",
-    "reviewedCompilerBuildId": "fict-rust-p1-oxc0.139.0-m1-b7fadddadcb27d8775487221ee8b03b3bfbe0c052f70bf01a56d9a123a398d8e"
+    "reviewedRevision": "8c5cd911bfc9cc7ca72c32f4a558a47d68234389",
+    "reviewedCompilerBuildId": "fict-rust-p1-oxc0.139.0-m1-399f7f7201c93be9d0b6d38f0e148bbf920ff71138e91bad88165c901fcc40af"
   },
   "deviationPolicies": {
     "genuine-capability-expansion": "Rust accepts a Babel-rejected input and an executable oracle proves the newly supported behavior.",
@@ -24860,7 +24860,7 @@
       "expected": {
         "status": "ok",
         "diagnostics": [],
-        "codeSha256": "03c08ecee896b5862c500791168f15543fb2fd7988da1283f37356baa2bb0d5f"
+        "codeSha256": "9e8a8c8335a481bf7417478e52b0c483f4c259c207be2273e57adcefbcf5ca5f"
       },
       "deviationPolicy": null
     },
@@ -28413,7 +28413,7 @@
       "expected": {
         "status": "ok",
         "diagnostics": [],
-        "codeSha256": "b5b883baa317d88e586918fd9bb762c9e02f0517c1aa3051029ff8e3029124d1"
+        "codeSha256": "ff8024e893944b6b74a29ba72b836da954ebf32e7ef09ec7306189545c65cf11"
       },
       "deviationPolicy": null
     },
@@ -33075,7 +33075,7 @@
       "expected": {
         "status": "ok",
         "diagnostics": [],
-        "codeSha256": "3bb5d87e52167ec94da3089b1924fb6824ea4ebc9672a7d602a4ed1824d3df86"
+        "codeSha256": "403fe53553536fd7511b287fd987f810f14c96f65ddb5c352594facbf93db0f8"
       },
       "deviationPolicy": null
     },

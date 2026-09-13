@@ -1,4 +1,4 @@
-//! Prove logical JSX consumers before code generation clones them for namespace fallbacks.
+//! Prove scalar derivations and logical consumers before generated namespace copies.
 //! Only total scalar expressions over closed numeric component signals may cross a getter.
 //! This deliberately does not infer purity from result types or TypeScript annotations.
 
@@ -25,6 +25,12 @@ type Location = (u32, u32);
 type Dependencies = BTreeSet<BindingId>;
 pub(super) type JsxInlineReads = BTreeMap<Location, JsxInlineRead>;
 
+#[derive(Default)]
+pub(super) struct DerivedReadProofs {
+    pub jsx_reads: JsxInlineReads,
+    pub unused: BTreeSet<BindingId>,
+}
+
 pub(super) struct JsxInlineRead {
     pub binding: BindingId,
     pub name: String,
@@ -49,13 +55,13 @@ pub(super) fn analyze(
     identities: &SemanticIdentities,
     emit: &EmitProgram,
     creations: &BTreeMap<BindingId, DerivedCreationRewrite>,
-) -> JsxInlineReads {
+) -> DerivedReadProofs {
     if !emit.optimize
         || emit.preview
         || creations.is_empty()
         || identities.has_reserved_name("eval")
     {
-        return BTreeMap::new();
+        return DerivedReadProofs::default();
     }
     let mut states = BTreeMap::new();
     for function in &emit.functions {
@@ -81,7 +87,7 @@ pub(super) fn analyze(
         }
     }
     if states.is_empty() {
-        return BTreeMap::new();
+        return DerivedReadProofs::default();
     }
     let mut collector = ProofCollector {
         identities,
@@ -128,29 +134,48 @@ pub(super) fn analyze(
             invalid.extend(users);
         }
     }
-    let mut reads = BTreeMap::new();
+    let mut proofs = DerivedReadProofs::default();
     for (binding, definition) in collector.definitions {
-        let Some([reference]) = collector.references.get(&binding).map(Vec::as_slice) else {
+        let references = collector
+            .references
+            .get(&binding)
+            .map_or(&[][..], Vec::as_slice);
+        if references.len() > 1 {
             continue;
-        };
+        }
+        let total = definition.inputs.is_some_and(|inputs| {
+            !inputs.is_empty()
+                && inputs.is_subset(&scalars)
+                && inputs.iter().all(|binding| {
+                    collector
+                        .initialized_at
+                        .get(binding)
+                        .is_some_and(|(owner, end)| {
+                            *owner == definition.owner && *end <= definition.start
+                        })
+                })
+        });
+        if !total {
+            continue;
+        }
+        if references.is_empty() {
+            // Elide only materialized implicit memos, under the same source/value proof.
+            // A second check on the rewritten AST must still find no generated consumers.
+            if creations
+                .get(&binding)
+                .is_some_and(|creation| creation.rewrite.local.is_some())
+            {
+                proofs.unused.insert(binding);
+            }
+            continue;
+        }
+        let reference = &references[0];
         if reference.returned
             && reference.owner == definition.owner
             && definition.end <= reference.location.0
             && collector.jsx_reads.contains(&reference.location)
-            && definition.inputs.is_some_and(|inputs| {
-                !inputs.is_empty()
-                    && inputs.is_subset(&scalars)
-                    && inputs.iter().all(|binding| {
-                        collector
-                            .initialized_at
-                            .get(binding)
-                            .is_some_and(|(owner, end)| {
-                                *owner == definition.owner && *end <= definition.start
-                            })
-                    })
-            })
         {
-            reads.insert(
+            proofs.jsx_reads.insert(
                 reference.location,
                 JsxInlineRead {
                     binding,
@@ -159,7 +184,7 @@ pub(super) fn analyze(
             );
         }
     }
-    reads
+    proofs
 }
 
 struct ProofCollector<'p> {

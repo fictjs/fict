@@ -195,7 +195,7 @@ pub fn emit_program_with_trace(
             .iter()
             .map(|span| (span.start(), span.end())),
     );
-    let jsx_inline_reads =
+    let derived_read_proofs =
         jsx_derived_inline::analyze(&program, &identities, emit, &creations.derived_bindings);
     let mut reactive_graph = trace.then(|| reactive_graph::prepare(&program, &identities, emit));
     let mut rewriter = AstRewriter {
@@ -467,15 +467,16 @@ pub fn emit_program_with_trace(
         return failed_output(diagnostics);
     }
     let reactive_read_locations = reads.keys().copied().collect();
-    let inlined_derived = match derived_inline::rewrite(
+    let derived_rewrites = match derived_inline::rewrite(
         &allocator,
         &mut program,
         &identities,
         &creations.derived_bindings,
         &reactive_read_locations,
-        &jsx_inline_reads,
+        &derived_read_proofs.jsx_reads,
+        &derived_read_proofs.unused,
     ) {
-        Ok(inlined) => inlined,
+        Ok(rewrites) => rewrites,
         Err(findings) => return failed_output(findings),
     };
     if let Some(graph) = &mut reactive_graph {
@@ -483,10 +484,16 @@ pub fn emit_program_with_trace(
             graph,
             emit,
             &creations.derived_bindings,
-            &inlined_derived,
-            &jsx_inline_reads,
+            &derived_rewrites.inlined,
+            &derived_rewrites.eliminated,
+            &derived_read_proofs.jsx_reads,
         );
     }
+    let removed_derived = derived_rewrites
+        .inlined
+        .union(&derived_rewrites.eliminated)
+        .copied()
+        .collect();
     if let Some(plan) = &full_optimization {
         full_optimizer::rewrite(&allocator, &mut program, &identities, plan);
     }
@@ -646,7 +653,7 @@ pub fn emit_program_with_trace(
     }
     let used_runtime_locals = referenced_identifier_names(&program);
     let (import_source, runtime_helpers) =
-        render_runtime_imports(emit, &inlined_derived, &used_runtime_locals);
+        render_runtime_imports(emit, &removed_derived, &used_runtime_locals);
     if !import_source.is_empty() {
         let parsed_imports = Parser::new(&allocator, &import_source, SourceType::mjs()).parse();
         if !parsed_imports.diagnostics.is_empty() {

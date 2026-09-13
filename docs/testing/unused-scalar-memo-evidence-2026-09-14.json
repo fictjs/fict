@@ -1,0 +1,242 @@
+{
+  "schemaVersion": 1,
+  "item": "G3 - unused scalar memos and honest SSA rewrite counters",
+  "recordedAt": "2026-09-13T20:51:02.034Z",
+  "baselineRevision": "8c5cd911bfc9cc7ca72c32f4a558a47d68234389",
+  "baselineCompiler": {
+    "backend": "rust",
+    "nativeTarget": "aarch64-apple-darwin",
+    "oxcVersion": "0.139.0",
+    "nodeApiVersion": 10,
+    "compilerBuildId": "fict-rust-p1-oxc0.139.0-m1-8b344ead78f784b93d69d3cf9beafa7a68334b4169eb6ce6a632a38016d6c081",
+    "compilerBuildRevision": null,
+    "compilerProtocolVersion": 1,
+    "metadataSchemaVersion": 1,
+    "compilerCapabilityManifestVersion": 2,
+    "compilerCapabilityManifestDigest": "sha256:8d85c68309d486fb1ac13747f35b2236f2893df69a1fae6f80edc065cb53c361",
+    "compilerCapabilityPackageVersion": "0.35.0"
+  },
+  "compiler": {
+    "backend": "rust",
+    "nativeTarget": "aarch64-apple-darwin",
+    "oxcVersion": "0.139.0",
+    "nodeApiVersion": 10,
+    "compilerBuildId": "fict-rust-p1-oxc0.139.0-m1-399f7f7201c93be9d0b6d38f0e148bbf920ff71138e91bad88165c901fcc40af",
+    "compilerBuildRevision": null,
+    "compilerProtocolVersion": 1,
+    "metadataSchemaVersion": 1,
+    "compilerCapabilityManifestVersion": 2,
+    "compilerCapabilityManifestDigest": "sha256:8d85c68309d486fb1ac13747f35b2236f2893df69a1fae6f80edc065cb53c361",
+    "compilerCapabilityPackageVersion": "0.35.0"
+  },
+  "nativeArtifactSha256": "a67ccea5deeb21fa851cda293956eccce58cf837f58b8015d1242ad403b43974",
+  "sourceFiles": [
+    {
+      "file": "crates/fict-compiler-oxc/src/emit_codegen.rs",
+      "sha256": "4441dfcac94d947be421f621bfc78cab28f7908e0877efe7b0cb0ff09684245a"
+    },
+    {
+      "file": "crates/fict-compiler-oxc/src/emit_codegen/derived_inline.rs",
+      "sha256": "9eb83e437887d359726182c7c8c13ad6ed3019c1be8655cb707a777f6bdac458"
+    },
+    {
+      "file": "crates/fict-compiler-oxc/src/emit_codegen/jsx_derived_inline.rs",
+      "sha256": "8b627b0f6a2bddb212efc5e1cf289ee27d1a625be3690ba28ec3ad8e125433cc"
+    },
+    {
+      "file": "crates/fict-compiler-oxc/src/emit_codegen/reactive_graph.rs",
+      "sha256": "8c85938177413e1ff0f2c07810b8baddc59e7c5f50be6094c963b367b7381234"
+    },
+    {
+      "file": "crates/fict-compiler/src/pass_manager.rs",
+      "sha256": "db325d8b08532bd6a56d9416c7cfc1c4e60dc6a6f181e8616c30f352d6348e2f"
+    },
+    {
+      "file": "scripts/native-compiler-unused-memo.test.mjs",
+      "sha256": "662db96a35790a374211b957268cea7d97eb995315d771d896734d930d026108"
+    },
+    {
+      "file": "scripts/native-compiler-reactive-graph.test.mjs",
+      "sha256": "aaa7c6678300bd4ef47423f2217261dbf1c07c8cf95b1c7eca43e9343a0c9689"
+    }
+  ],
+  "review": {
+    "inputs": 3172,
+    "changedOutputs": 3,
+    "removedMemoDeclarations": 3,
+    "removedHelperImports": 3,
+    "unchanged": [
+      "acceptance and complete diagnostics",
+      "source maps, metadata, artifacts and existing explanations",
+      "all previous core counters",
+      "all source requests and legacy capture data",
+      "replay corpus"
+    ],
+    "method": "Reproduce all frozen baseline results. Compare complete results, allowing only the four new stats counters and three outputs. For each changed output, remove exactly the unused scalar memo declaration and its helper import from the baseline and require byte equality; corroborate with source references and final helper census. Manually review all three source/output pairs.",
+    "limits": "Static emitted declarations are not dynamic allocation or CPU measurements. Analysis counts are pre-compaction observations, not remaining opportunities. General SSA inline/Phi rewrites and global lazy placement remain unimplemented.",
+    "comparisonSha256": "564222c0da9485b66a0cfbba4a8bf421d2a23f82a1f995a36743f73c61ce08ad"
+  },
+  "validation": [
+    {
+      "command": "node --test scripts/native-compiler-unused-memo.test.mjs",
+      "candidate": {
+        "passed": 27,
+        "failed": 0
+      },
+      "baseline": {
+        "passed": 18,
+        "failed": 9
+      },
+      "baselineFailureScope": "Only new elimination/output expectations and new SSA counter expectations fail."
+    },
+    {
+      "command": "pnpm test:compiler:native-runtime",
+      "passed": 615,
+      "failed": 0,
+      "freshBuild": true
+    },
+    {
+      "command": "pnpm test:compiler:frozen-corpus",
+      "suites": 2,
+      "inputs": 3172,
+      "status": "passed"
+    },
+    {
+      "command": "pnpm guardrails:rust-crates",
+      "testsPassed": 60,
+      "status": "passed"
+    },
+    {
+      "command": "cargo fmt --all --check && cargo clippy --workspace --all-targets --all-features -- -D warnings",
+      "status": "passed"
+    }
+  ],
+  "corpus": {
+    "file": "crates/fict-compiler/tests/rust_frozen_codegen_corpus.json",
+    "beforeSha256": "87f562e709654cfc49757bcbcd7d0662bd6f666e5077fdb12f2e24b83aae4152",
+    "afterSha256": "6ce8ee501db4e57cec1e7736fe5880d18e068d0c9e30d189dd5198b8ee6b1bf5",
+    "changes": [
+      {
+        "id": "packages/compiler/test/optimizer-algebraic.test.ts:433:transform",
+        "beforeCodeSha256": "03c08ecee896b5862c500791168f15543fb2fd7988da1283f37356baa2bb0d5f",
+        "codeSha256": "9e8a8c8335a481bf7417478e52b0c483f4c259c207be2273e57adcefbcf5ca5f"
+      },
+      {
+        "id": "packages/compiler/test/semantic-validation.test.ts:559:transform",
+        "beforeCodeSha256": "b5b883baa317d88e586918fd9bb762c9e02f0517c1aa3051029ff8e3029124d1",
+        "codeSha256": "ff8024e893944b6b74a29ba72b836da954ebf32e7ef09ec7306189545c65cf11"
+      },
+      {
+        "id": "packages/compiler/test/spec-advanced.test.ts:171:transform",
+        "beforeCodeSha256": "3bb5d87e52167ec94da3089b1924fb6824ea4ebc9672a7d602a4ed1824d3df86",
+        "codeSha256": "403fe53553536fd7511b287fd987f810f14c96f65ddb5c352594facbf93db0f8"
+      }
+    ]
+  },
+  "oracleReference": "crates/fict-compiler/tests/babel_0_28_dom_semantic_oracle.json",
+  "graphs": [
+    {
+      "id": "packages/compiler/test/optimizer-algebraic.test.ts:433:transform",
+      "sourceSha256": "6b7383b47183647c5f072bd6876643999a47f577fc6d6781ead4adc24b0e2769",
+      "beforeCode": "import { __fictUseContext } from \"fict/internal\";\nimport { __fictUseSignal } from \"fict/internal\";\nimport { __fictUseMemo } from \"fict/internal\";\nimport { __fictReactive } from \"fict/internal\";\nimport { createElement } from \"fict/internal\";\nimport { __fictElementNamespaceMatches } from \"fict/internal\";\nimport { insert } from \"fict/internal\";\nimport { resolvePath } from \"fict/internal\";\nimport { template } from \"fict/internal\";\nconst __fict_tmpl0 = template(\"<div><!----></div>\");\nfunction Component() {\n\tconst __fictCtx = __fictUseContext();\n\tlet count = __fictUseSignal(__fictCtx, 0, { name: \"count\" });\n\tconst unused = __fictUseMemo(__fictCtx, () => count() * 2);\n\treturn __fictElementNamespaceMatches(\"div\", \"html\") ? (() => {\n\t\tconst __fict_jsx11 = __fict_tmpl0();\n\t\tconst __fict_node4 = resolvePath(__fict_jsx11, [0], true);\n\t\tinsert(__fict_jsx11, () => count() + 1, __fict_node4, createElement);\n\t\treturn __fict_jsx11;\n\t})() : {\n\t\ttype: \"div\",\n\t\tprops: { children: __fictReactive(() => count() + 1) }\n\t};\n}\n",
+      "code": "import { __fictUseContext } from \"fict/internal\";\nimport { __fictUseSignal } from \"fict/internal\";\nimport { __fictReactive } from \"fict/internal\";\nimport { createElement } from \"fict/internal\";\nimport { __fictElementNamespaceMatches } from \"fict/internal\";\nimport { insert } from \"fict/internal\";\nimport { resolvePath } from \"fict/internal\";\nimport { template } from \"fict/internal\";\nconst __fict_tmpl0 = template(\"<div><!----></div>\");\nfunction Component() {\n\tconst __fictCtx = __fictUseContext();\n\tlet count = __fictUseSignal(__fictCtx, 0, { name: \"count\" });\n\treturn __fictElementNamespaceMatches(\"div\", \"html\") ? (() => {\n\t\tconst __fict_jsx11 = __fict_tmpl0();\n\t\tconst __fict_node4 = resolvePath(__fict_jsx11, [0], true);\n\t\tinsert(__fict_jsx11, () => count() + 1, __fict_node4, createElement);\n\t\treturn __fict_jsx11;\n\t})() : {\n\t\ttype: \"div\",\n\t\tprops: { children: __fictReactive(() => count() + 1) }\n\t};\n}\n",
+      "decisions": [
+        {
+          "action": "eliminate",
+          "binding": 3,
+          "reason": "unused-total-scalar-derived"
+        }
+      ],
+      "counters": {
+        "decision.authored-reactive-creation": 1,
+        "decision.single-scalar-jsx-consumer": 1,
+        "decision.unused-total-scalar-derived": 1,
+        "emit.operation.clone-template": 1,
+        "emit.operation.create-derived": 2,
+        "emit.operation.create-reactive": 1,
+        "emit.operation.insert": 1,
+        "emit.operation.read-reactive": 3,
+        "emit.operation.resolve-element": 1,
+        "emit.operation.template": 1,
+        "emit.slots": 3,
+        "output.function-sites": 4,
+        "output.helper.elementNamespaceMatches": 1,
+        "output.helper.insert": 1,
+        "output.helper.reactiveGetter": 1,
+        "output.helper.resolvePath": 1,
+        "output.helper.template": 1,
+        "output.helper.useContext": 1,
+        "output.helper.useSignal": 1,
+        "source.bindings": 3
+      }
+    },
+    {
+      "id": "packages/compiler/test/semantic-validation.test.ts:559:transform",
+      "sourceSha256": "e783fce8dced88a0890fbf8f8403232c2f3b0aeff0b71a7a4ed6ce33f525dbd4",
+      "beforeCode": "import { __fictUseContext } from \"fict/internal\";\nimport { __fictUseSignal } from \"fict/internal\";\nimport { __fictUseMemo } from \"fict/internal\";\nimport { __fictReactive } from \"fict/internal\";\nimport { createElement } from \"fict/internal\";\nimport { __fictElementNamespaceMatches } from \"fict/internal\";\nimport { insert } from \"fict/internal\";\nimport { resolvePath } from \"fict/internal\";\nimport { template } from \"fict/internal\";\nconst __fict_tmpl0 = template(\"<button><!----></button>\");\nfunction App() {\n\tconst __fictCtx = __fictUseContext();\n\tlet count = __fictUseSignal(__fictCtx, 0, { name: \"count\" });\n\tconst doubled = __fictUseMemo(__fictCtx, () => count() * 2);\n\tfunction inner() {\n\t\tlet doubled = 1;\n\t\tdoubled = 2;\n\t\treturn doubled;\n\t}\n\treturn __fictElementNamespaceMatches(\"button\", \"html\") ? (() => {\n\t\tconst __fict_jsx10 = __fict_tmpl0();\n\t\tconst __fict_node2 = resolvePath(__fict_jsx10, [0], true);\n\t\tinsert(__fict_jsx10, () => inner(), __fict_node2, createElement);\n\t\treturn __fict_jsx10;\n\t})() : {\n\t\ttype: \"button\",\n\t\tprops: { children: __fictReactive(() => inner()) }\n\t};\n}\n",
+      "code": "import { __fictUseContext } from \"fict/internal\";\nimport { __fictUseSignal } from \"fict/internal\";\nimport { __fictReactive } from \"fict/internal\";\nimport { createElement } from \"fict/internal\";\nimport { __fictElementNamespaceMatches } from \"fict/internal\";\nimport { insert } from \"fict/internal\";\nimport { resolvePath } from \"fict/internal\";\nimport { template } from \"fict/internal\";\nconst __fict_tmpl0 = template(\"<button><!----></button>\");\nfunction App() {\n\tconst __fictCtx = __fictUseContext();\n\tlet count = __fictUseSignal(__fictCtx, 0, { name: \"count\" });\n\tfunction inner() {\n\t\tlet doubled = 1;\n\t\tdoubled = 2;\n\t\treturn doubled;\n\t}\n\treturn __fictElementNamespaceMatches(\"button\", \"html\") ? (() => {\n\t\tconst __fict_jsx10 = __fict_tmpl0();\n\t\tconst __fict_node2 = resolvePath(__fict_jsx10, [0], true);\n\t\tinsert(__fict_jsx10, () => inner(), __fict_node2, createElement);\n\t\treturn __fict_jsx10;\n\t})() : {\n\t\ttype: \"button\",\n\t\tprops: { children: __fictReactive(() => inner()) }\n\t};\n}\n",
+      "decisions": [
+        {
+          "action": "eliminate",
+          "binding": 3,
+          "reason": "unused-total-scalar-derived"
+        }
+      ],
+      "counters": {
+        "decision.authored-reactive-creation": 1,
+        "decision.unused-total-scalar-derived": 1,
+        "emit.operation.clone-template": 1,
+        "emit.operation.create-derived": 1,
+        "emit.operation.create-reactive": 1,
+        "emit.operation.insert": 1,
+        "emit.operation.read-reactive": 1,
+        "emit.operation.resolve-element": 1,
+        "emit.operation.template": 1,
+        "emit.slots": 2,
+        "output.function-sites": 5,
+        "output.helper.elementNamespaceMatches": 1,
+        "output.helper.insert": 1,
+        "output.helper.reactiveGetter": 1,
+        "output.helper.resolvePath": 1,
+        "output.helper.template": 1,
+        "output.helper.useContext": 1,
+        "output.helper.useSignal": 1,
+        "source.bindings": 2
+      }
+    },
+    {
+      "id": "packages/compiler/test/spec-advanced.test.ts:171:transform",
+      "sourceSha256": "ea117bd942ad1494ee270d39618104a28b83af79f75bcfde777caa21d95f26ef",
+      "beforeCode": "import { __fictUseContext } from \"fict/internal\";\nimport { __fictUseSignal } from \"fict/internal\";\nimport { __fictUseMemo } from \"fict/internal\";\nimport { __fictReactive } from \"fict/internal\";\nimport { createElement } from \"fict/internal\";\nimport { __fictElementNamespaceMatches } from \"fict/internal\";\nimport { insert } from \"fict/internal\";\nimport { resolvePath } from \"fict/internal\";\nimport { template } from \"fict/internal\";\nconst __fict_tmpl0 = template(\"<div><!----></div>\");\nfunction Component() {\n\tconst __fictCtx = __fictUseContext();\n\tlet count = __fictUseSignal(__fictCtx, 0, { name: \"count\" });\n\tconst doubled = __fictUseMemo(__fictCtx, () => count() * 2);\n\treturn __fictElementNamespaceMatches(\"div\", \"html\") ? (() => {\n\t\tconst __fict_jsx8 = __fict_tmpl0();\n\t\tconst __fict_node3 = resolvePath(__fict_jsx8, [0], true);\n\t\tinsert(__fict_jsx8, () => count(), __fict_node3, createElement);\n\t\treturn __fict_jsx8;\n\t})() : {\n\t\ttype: \"div\",\n\t\tprops: { children: __fictReactive(() => count()) }\n\t};\n}\n",
+      "code": "import { __fictUseContext } from \"fict/internal\";\nimport { __fictUseSignal } from \"fict/internal\";\nimport { __fictReactive } from \"fict/internal\";\nimport { createElement } from \"fict/internal\";\nimport { __fictElementNamespaceMatches } from \"fict/internal\";\nimport { insert } from \"fict/internal\";\nimport { resolvePath } from \"fict/internal\";\nimport { template } from \"fict/internal\";\nconst __fict_tmpl0 = template(\"<div><!----></div>\");\nfunction Component() {\n\tconst __fictCtx = __fictUseContext();\n\tlet count = __fictUseSignal(__fictCtx, 0, { name: \"count\" });\n\treturn __fictElementNamespaceMatches(\"div\", \"html\") ? (() => {\n\t\tconst __fict_jsx8 = __fict_tmpl0();\n\t\tconst __fict_node3 = resolvePath(__fict_jsx8, [0], true);\n\t\tinsert(__fict_jsx8, () => count(), __fict_node3, createElement);\n\t\treturn __fict_jsx8;\n\t})() : {\n\t\ttype: \"div\",\n\t\tprops: { children: __fictReactive(() => count()) }\n\t};\n}\n",
+      "decisions": [
+        {
+          "action": "eliminate",
+          "binding": 3,
+          "reason": "unused-total-scalar-derived"
+        }
+      ],
+      "counters": {
+        "decision.authored-reactive-creation": 1,
+        "decision.unused-total-scalar-derived": 1,
+        "emit.operation.clone-template": 1,
+        "emit.operation.create-derived": 1,
+        "emit.operation.create-reactive": 1,
+        "emit.operation.insert": 1,
+        "emit.operation.read-reactive": 2,
+        "emit.operation.resolve-element": 1,
+        "emit.operation.template": 1,
+        "emit.slots": 2,
+        "output.function-sites": 4,
+        "output.helper.elementNamespaceMatches": 1,
+        "output.helper.insert": 1,
+        "output.helper.reactiveGetter": 1,
+        "output.helper.resolvePath": 1,
+        "output.helper.template": 1,
+        "output.helper.useContext": 1,
+        "output.helper.useSignal": 1,
+        "source.bindings": 2
+      }
+    }
+  ]
+}
