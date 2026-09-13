@@ -486,6 +486,13 @@ export function createAsyncMemo<T>(
   options?: AsyncMemoOptions,
 ): AsyncMemo<T>
 
+// Prepare all current inputs before replacing a committed effect.
+export function createAsyncEffect<T>(
+  prepare: () => T,
+  commit: (value: T) => void | Cleanup,
+  options?: EffectOptions,
+): () => void
+
 // Mark manual low-level getter/callback intent
 export function reactive<T>(fn: () => T): () => T
 export function nonReactive<T extends (...args: unknown[]) => unknown>(fn: T): T
@@ -507,6 +514,11 @@ explicitly permits a previous success. `refresh()` starts a new evaluation;
 advanced surface. See the [async contract](./async-graph-contract.md) for generation,
 cancellation, and composition requirements and the implementation checklist for
 integration qualification.
+
+`createAsyncEffect` shares these advanced entry points. Its preparation is pure
+and synchronous; its commit runs untracked after preparation succeeds. Each
+commit owns its nested work and cleanup. Pending or failed preparations preserve
+the previous commit until a current replacement or disposal.
 
 ### 3.1 Binding Creation Helpers
 
@@ -859,34 +871,38 @@ export const $memo = createMemo
 
 ### `@fictjs/runtime/advanced` (Advanced API)
 
-| Export                               | Category   | Tier | Notes                           |
-| ------------------------------------ | ---------- | ---- | ------------------------------- |
-| `createSignal`                       | Reactivity | 3    | Cross-component escape hatch    |
-| `createSelector`                     | Reactivity | 3    | Fine-grained subscription       |
-| `createScope`                        | Scope      | 3    | Reactive scope management       |
-| `runInScope`                         | Scope      | 3    | Flag-driven scope (void)        |
-| `effectScope`                        | Scope      | 3    | Returns disposer                |
-| `createContext`                      | Context    | 3    | Also in main entry              |
-| `useContext`                         | Context    | 3    | Also in main entry              |
-| `useContextAccessor`                 | Context    | 3    | Also in main entry              |
-| `hasContext`                         | Context    | 3    | Also in main entry              |
-| `createVersionedSignal`              | Reactivity | 3    | Versioned signal                |
-| `createTextBinding`                  | Binding    | 3    | Advanced binding                |
-| `createChildBinding`                 | Binding    | 3    | Advanced binding                |
-| `createAttributeBinding`             | Binding    | 3    | Advanced binding                |
-| `createStyleBinding`                 | Binding    | 3    | Advanced binding                |
-| `createClassBinding`                 | Binding    | 3    | Advanced binding                |
-| `createShow`                         | Binding    | 3    | Advanced binding                |
-| `isReactive`                         | Utility    | 3    | Detect explicit reactive getter |
-| `reactive`                           | Utility    | 3    | Mark manual reactive getter     |
-| `nonReactive`                        | Utility    | 3    | Advanced callback marker        |
-| `unwrap`                             | Utility    | 3    | Unwrap explicit reactive value  |
-| `getDevtoolsHook`                    | Debug      | 3    | DevTools hook                   |
-| `isDevtoolsHookCompatible`           | Debug      | 3    | Protocol compatibility check    |
-| `FICT_DEVTOOLS_PROTOCOL_VERSION`     | Debug      | 3    | Runtime hook protocol version   |
-| `FICT_DEVTOOLS_MIN_PROTOCOL_VERSION` | Debug      | 3    | Minimum supported hook protocol |
-| `setCycleProtectionOptions`          | Debug      | 3    | Cycle protection config         |
-| `createRenderEffect`                 | Effect     | 3    | Render effect                   |
+| Export                                                                           | Category   | Tier | Notes                             |
+| -------------------------------------------------------------------------------- | ---------- | ---- | --------------------------------- |
+| `createSignal`                                                                   | Reactivity | 3    | Cross-component escape hatch      |
+| `createSelector`                                                                 | Reactivity | 3    | Fine-grained subscription         |
+| `createScope`                                                                    | Scope      | 3    | Reactive scope management         |
+| `runInScope`                                                                     | Scope      | 3    | Flag-driven scope (void)          |
+| `effectScope`                                                                    | Scope      | 3    | Returns disposer                  |
+| `createContext`                                                                  | Context    | 3    | Also in main entry                |
+| `useContext`                                                                     | Context    | 3    | Also in main entry                |
+| `useContextAccessor`                                                             | Context    | 3    | Also in main entry                |
+| `hasContext`                                                                     | Context    | 3    | Also in main entry                |
+| `createVersionedSignal`                                                          | Reactivity | 3    | Versioned signal                  |
+| `createTextBinding`                                                              | Binding    | 3    | Advanced binding                  |
+| `createChildBinding`                                                             | Binding    | 3    | Advanced binding                  |
+| `createAttributeBinding`                                                         | Binding    | 3    | Advanced binding                  |
+| `createStyleBinding`                                                             | Binding    | 3    | Advanced binding                  |
+| `createClassBinding`                                                             | Binding    | 3    | Advanced binding                  |
+| `createShow`                                                                     | Binding    | 3    | Advanced binding                  |
+| `isReactive`                                                                     | Utility    | 3    | Detect explicit reactive getter   |
+| `reactive`                                                                       | Utility    | 3    | Mark manual reactive getter       |
+| `nonReactive`                                                                    | Utility    | 3    | Advanced callback marker          |
+| `unwrap`                                                                         | Utility    | 3    | Unwrap explicit reactive value    |
+| `getDevtoolsHook`                                                                | Debug      | 3    | DevTools hook                     |
+| `isDevtoolsHookCompatible`                                                       | Debug      | 3    | Protocol compatibility check      |
+| `FICT_DEVTOOLS_PROTOCOL_VERSION`                                                 | Debug      | 3    | Runtime hook protocol version     |
+| `FICT_DEVTOOLS_MIN_PROTOCOL_VERSION`                                             | Debug      | 3    | Minimum supported hook protocol   |
+| `setCycleProtectionOptions`                                                      | Debug      | 3    | Cycle protection config           |
+| `createRenderEffect`                                                             | Effect     | 3    | Render effect                     |
+| `createAsyncMemo`                                                                | Reactivity | 3    | Explicit async graph computation  |
+| `createAsyncEffect`                                                              | Effect     | 3    | Prepare before replacing a commit |
+| `AsyncDisposedError`, `AsyncEmptyError`                                          | Error      | 3    | Async protocol errors             |
+| `AsyncMemo`, `AsyncMemoOptions`, `AsyncContext`, `AsyncSnapshot`, `AsyncPending` | Types      | 3    | Async computation contract        |
 
 ### `@fictjs/runtime/internal` (Compiler/Internal Use)
 

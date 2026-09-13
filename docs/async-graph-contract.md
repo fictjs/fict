@@ -105,6 +105,25 @@ property. A Suspense boundary may display fallback; stale display requires an
 explicit stale read or a defined transition policy. Independent boundaries do not
 hold unrelated ready work.
 
+For graph pending tokens, Suspense keeps the computation owner and parks the
+rendered DOM while showing a separately owned fallback. It reveals the retained
+DOM after graph consumers have processed publication; it does not re-execute
+component setup to recreate a pending producer. Mount callbacks wait for the
+first reveal. Reset and unmount dispose both the retained view and fallback.
+Legacy, unbranded Suspense tokens retain their existing replay behavior.
+
+A pending current-value read in ordinary synchronous component setup has no
+reactive continuation. It produces an explicit error instead of a cancellation
+and replay loop. Read the value in a reactive binding or in the preparation of
+`createAsyncEffect`; `state()` and an available `latest()` are nonblocking reads.
+For example, manual runtime code can create `data = createAsyncMemo(fetch)` in a
+component and use `reactive(() => data())` as its child binding. This does not
+introduce an async component return ABI or track reads after native `await`.
+
+Rejection values preserve identity through derived/effect consumers and error
+boundaries, even when the rejected value itself is a Promise or a readiness token.
+Such values must not accidentally be interpreted as new suspension requests.
+
 ## Ownership, transitions, and data policy
 
 An async node belongs to the captured root or an explicit disposer. Its producer
@@ -147,8 +166,12 @@ orders for three generations, duplicate completions, multi-yield streams, empty
 streams, failure after a yield, disposal, snapshot immutability, and ordinary
 Promise-valued memo compatibility.
 
-Later graph qualification must additionally execute source-write/completion races,
-chains, diamonds, changing conditional subscriptions, independent boundaries,
-prepare/commit cleanup, transport cancellation, indirect and overlapping
-transitions, Resource policy regressions, and real SSR/streaming/hydration cases.
-Passing the state tests alone does not satisfy those integration requirements.
+`async-memo.test.ts` covers node input invalidation, source-write/completion races,
+transport cancellation, generations, streams, and disposal. `async-composition.test.ts`
+and `async-suspense.test.ts` cover chains, diamonds, conditional subscriptions,
+consumer-owned waits, independent boundaries, prepare/commit cleanup, exact error
+identity, retained DOM, nested mounts, resets, and fallback-cleanup reentrancy.
+
+Indirect and overlapping transitions, Resource policy integration, and real
+SSR/streaming/hydration qualification remain separate A4–A8 items. Passing state,
+node, or composition tests alone does not satisfy those integration requirements.

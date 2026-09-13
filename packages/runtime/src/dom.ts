@@ -12,6 +12,7 @@
  * - List rendering: `{items.map(...)}` with efficient keyed updates
  */
 
+import { isAsyncPending } from './async-state'
 import {
   createTextBinding,
   createAttributeBinding,
@@ -83,6 +84,7 @@ import {
   __fictRegisterResumedScopeTeardown,
 } from './resume'
 import { untrack } from './scheduler'
+import { isAsyncRejection, registerAsyncRejection, withAsyncErrorScope } from './signal'
 import type { DOMElement, FictNode, FictVNode } from './types'
 
 type NamespaceContext = RenderNamespaceContext
@@ -659,6 +661,8 @@ function createElementWithContext(
     }
 
     const ctx = __fictPushContext()
+    const asyncErrorScope = ctx as { asyncFailure?: { error: unknown } | undefined }
+    let setupCompleted = false
     if (componentId !== undefined) {
       ctx.componentId = componentId
       if (parentId !== undefined) {
@@ -672,7 +676,10 @@ function createElementWithContext(
       if (renderRoot) renderRoot.renderNamespace = namespace
       let rendered: FictNode
       try {
-        rendered = runComponentRender(() => component(props))
+        rendered = withAsyncErrorScope(asyncErrorScope, () =>
+          runComponentRender(() => component(props)),
+        )
+        setupCompleted = true
       } finally {
         if (renderRoot) renderRoot.renderNamespace = previousRenderNamespace
       }
@@ -737,6 +744,17 @@ function createElementWithContext(
     } catch (err) {
       restoreHydrationClaims()
       abandonPendingHydrationRepair(hydrationRepairToken)
+      if (isAsyncRejection(err, asyncErrorScope)) {
+        registerAsyncRejection(err)
+        throw err
+      }
+      if (!setupCompleted && isAsyncPending(err)) {
+        const failure = new Error(
+          '[fict] A pending async value needs a reactive render consumer. Read it in a binding or createAsyncEffect; synchronous component setup cannot resume after a thrown read.',
+        )
+        Object.defineProperty(failure, 'cause', { value: err, configurable: true })
+        throw failure
+      }
       if (handleSuspend(err as any)) {
         return ownerDocument.createComment('fict:suspend')
       }

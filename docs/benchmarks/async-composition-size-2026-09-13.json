@@ -1,0 +1,60 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-09-13",
+  "baselineRevision": "0b580e212e7a4d151e3df95541befb4f5f819d6d",
+  "baselineEvidence": {
+    "archive": "async-node-size-2026-09-13.json",
+    "boundary": "distributed package measurements qualified by S7"
+  },
+  "candidate": "A3 async consumer composition; exact source and distributed artifact trees below",
+  "tools": {
+    "node": "v24.16.0",
+    "sizeLimit": "12.0.0",
+    "esbuild": "0.27.0"
+  },
+  "measurement": {
+    "unit": "bytes",
+    "compression": "Brotli",
+    "minified": true,
+    "production": true,
+    "command": "pnpm exec size-limit --json",
+    "moduleResolution": "tsconfigRaw.compilerOptions={} with distributed input verification"
+  },
+  "hashAlgorithm": "sha256 of each sorted relative file path, NUL, file bytes, NUL",
+  "candidateSources": {
+    "files": 60,
+    "sha256": "60134f3e1f0529d67d340916adb422b59b2da3eddae85049dc62f79686635e17"
+  },
+  "candidateArtifacts": {
+    "files": 164,
+    "sha256": "eb87df154e98a45bf8aca749f35313bfed4ecb7eb2f13e03c588e88981d36825"
+  },
+  "results": [
+    {
+      "name": "Fict package (ESM)",
+      "baselineBytes": 22135,
+      "candidateBytes": 23801,
+      "deltaBytes": 1666
+    },
+    {
+      "name": "Fict package (CJS)",
+      "baselineBytes": 40982,
+      "candidateBytes": 43149,
+      "deltaBytes": 2167
+    },
+    {
+      "name": "Fict package async memo (ESM)",
+      "baselineBytes": 6905,
+      "candidateBytes": 7692,
+      "deltaBytes": 787
+    },
+    {
+      "name": "Fict package sync memo (ESM)",
+      "baselineBytes": 4309,
+      "candidateBytes": 4780,
+      "deltaBytes": 471
+    }
+  ],
+  "interpretation": "Async readiness propagation, preparation/commit, and retained Suspense ownership add shared runtime code. Sync memo import cost remains separately measured. This artifact makes no CPU-performance claim; G4/G5/A8 qualify runtime and application performance.",
+  "verifiedSourceMapEntries": 94
+}

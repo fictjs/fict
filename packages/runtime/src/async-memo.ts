@@ -1,6 +1,7 @@
 import {
   AsyncDisposedError,
   AsyncState,
+  isAsyncPending,
   readAsyncSnapshot,
   type AsyncSnapshot,
 } from './async-state'
@@ -11,7 +12,13 @@ import {
   withRootContext,
   type RootContext,
 } from './lifecycle'
-import { createAsyncGraphNode, untrack } from './signal'
+import {
+  createAsyncGraphNode,
+  isAsyncRejection,
+  registerAsyncRead,
+  registerAsyncRejection,
+  untrack,
+} from './signal'
 
 export type AsyncContext<T> = { readonly signal: AbortSignal } & (
   | { readonly hasValue: false; readonly previous: undefined }
@@ -90,7 +97,19 @@ export function createAsyncMemo<T>(
 
   const current = (flight: AsyncFlight<T>) => active === flight && !flight.closed
 
-  const failInputs = (error: unknown): AsyncSnapshot<T> => {
+  const waitForInput = (error: unknown, generation: number, rejection = false): boolean => {
+    if (rejection || !isAsyncPending(error)) return false
+    const retry = () => {
+      const snapshot = state.snapshot
+      if (snapshot.status !== 'disposed' && snapshot.generation === generation) {
+        node.invalidate()
+      }
+    }
+    void Promise.resolve(error).then(retry, retry)
+    return true
+  }
+
+  const failInputs = (error: unknown, rejection = false): AsyncSnapshot<T> => {
     if (state.snapshot.status === 'disposed') return state.snapshot
     const token = state.begin()
     const flight = active
@@ -100,7 +119,7 @@ export function createAsyncMemo<T>(
     } catch (cleanupError) {
       error = cleanupError
     }
-    state.reject(token.generation, error)
+    if (!waitForInput(error, token.generation, rejection)) state.reject(token.generation, error)
     return state.snapshot
   }
 
@@ -193,7 +212,8 @@ export function createAsyncMemo<T>(
         state.publish(flight.generation, result as T)
       }
     } catch (error) {
-      state.reject(flight.generation, error)
+      if (!waitForInput(error, flight.generation, isAsyncRejection(error)))
+        state.reject(flight.generation, error)
       untrack(() => returnIterator(flight))
     } finally {
       evaluating = false
@@ -218,11 +238,19 @@ export function createAsyncMemo<T>(
       throw new Error('[fict] An async computation cannot read itself while producing.')
     return state.snapshot.status === 'disposed' ? state.snapshot : node.read()
   }
-  const accessor = (() => readAsyncSnapshot(readState())) as AsyncMemo<T>
+  const accessor = (() => {
+    const snapshot = readState()
+    registerAsyncRead(accessor)
+    if (snapshot.status === 'errored') registerAsyncRejection(snapshot.error)
+    return readAsyncSnapshot(snapshot)
+  }) as AsyncMemo<T>
   accessor.state = readState
   accessor.latest = () => {
     const snapshot = readState()
-    return snapshot.hasValue ? snapshot.value : readAsyncSnapshot(snapshot)
+    if (snapshot.hasValue) return snapshot.value
+    registerAsyncRead(accessor.latest)
+    if (snapshot.status === 'errored') registerAsyncRejection(snapshot.error)
+    return readAsyncSnapshot(snapshot)
   }
   accessor.refresh = () => {
     if (state.snapshot.status === 'disposed') throw new AsyncDisposedError()

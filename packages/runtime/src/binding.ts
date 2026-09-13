@@ -23,7 +23,7 @@ import {
 } from './constants'
 import { isNodeLike } from './dom-guards'
 import { assertValidDOMAttributeName } from './dom-names'
-import { createRenderEffect } from './effect'
+import { createRenderBinding, createRenderTransaction } from './effect'
 import {
   HYDRATED_TEMPLATE_NODE,
   withHydration,
@@ -49,10 +49,19 @@ import {
   type RootContext,
 } from './lifecycle'
 import { toNodeArray, removeNodes, insertNodesBefore } from './node-ops'
-import { __fictIsHydrating } from './resume'
 import { runOutsideComponentRender } from './render-phase'
+import { __fictIsHydrating } from './resume'
 import { batch } from './scheduler'
-import { computed, signal, untrack, isSignal, isComputed, isEffect, isEffectScope } from './signal'
+import {
+  computed,
+  signal,
+  untrack,
+  isSignal,
+  isComputed,
+  isEffect,
+  isEffectScope,
+  isAsyncRejection,
+} from './signal'
 import type { Cleanup, FictNode, FictVNode } from './types'
 
 const isDev =
@@ -471,9 +480,7 @@ export function createTextBinding(
 
   if (isReactive(value)) {
     // Reactive: create effect to update text when value changes
-    createRenderEffect(() => {
-      setText(text, (value as () => unknown)())
-    })
+    createRenderBinding(value as () => unknown, next => setText(text, next))
   } else {
     // Static: set once
     setText(text, value)
@@ -487,7 +494,7 @@ export function createTextBinding(
  * This is a convenience function for binding to existing DOM nodes.
  */
 export function bindText(textNode: Text, getValue: () => unknown): Cleanup {
-  return createRenderEffect(() => setText(textNode, getValue()))
+  return createRenderBinding(getValue, next => setText(textNode, next))
 }
 
 /**
@@ -495,7 +502,7 @@ export function bindText(textNode: Text, getValue: () => unknown): Cleanup {
  * Used for raw-text/RCDATA elements where parser comment slots become text.
  */
 export function bindTextContent(el: Element, getValue: () => unknown): Cleanup {
-  return createRenderEffect(() => setTextContent(el, getValue()))
+  return createRenderBinding(getValue, next => setTextContent(el, next))
 }
 
 /**
@@ -656,9 +663,7 @@ export function createAttributeBinding(
 ): void {
   if (isReactive(value)) {
     // Reactive: create effect to update attribute when value changes
-    createRenderEffect(() => {
-      setter(el, key, (value as () => unknown)())
-    })
+    createRenderBinding(value as () => unknown, next => setter(el, key, next))
   } else {
     // Static: set once
     setter(el, key, value)
@@ -669,14 +674,14 @@ export function createAttributeBinding(
  * Bind a reactive value to an element's attribute.
  */
 export function bindAttribute(el: Element, key: string, getValue: () => unknown): Cleanup {
-  return createRenderEffect(() => setAttr(el, key, getValue()))
+  return createRenderBinding(getValue, next => setAttr(el, key, next))
 }
 
 /**
  * Bind a reactive value to an explicitly boolean attribute.
  */
 export function bindBooleanAttribute(el: Element, key: string, getValue: () => unknown): Cleanup {
-  return createRenderEffect(() => setBooleanAttribute(el, key, getValue()))
+  return createRenderBinding(getValue, next => setBooleanAttribute(el, key, next))
 }
 
 /**
@@ -762,15 +767,14 @@ export function bindProperty(el: Element, key: string, getValue: () => unknown):
     // coercion (including booleans/objects) distinct from JSX text formatting,
     // and check the live DOM so an external mutation is repaired on the next run.
     let previous: unknown
-    return createRenderEffect(() => {
-      const value = getValue()
+    return createRenderBinding(getValue, value => {
       const next = value == null ? '' : value
       if (previous === value && el.textContent === next) return
       el.textContent = next as string
       previous = value
     })
   }
-  return createRenderEffect(() => setProp(el, key, getValue()))
+  return createRenderBinding(getValue, next => setProp(el, key, next))
 }
 
 function isHTMLSelect(el: Element): el is HTMLSelectElement {
@@ -851,9 +855,9 @@ export function createStyleBinding(
   value: MaybeReactive<string | Record<string, string | number> | null | undefined>,
 ): void {
   if (isReactive(value)) {
-    createRenderEffect(() => {
-      setStyle(el, (value as () => unknown)() as string | Record<string, string | number> | null)
-    })
+    createRenderBinding(value as () => string | Record<string, string | number> | null, next =>
+      setStyle(el, next),
+    )
   } else {
     setStyle(el, value)
   }
@@ -866,7 +870,7 @@ export function bindStyle(
   el: Element,
   getValue: () => string | Record<string, string | number> | null | undefined,
 ): Cleanup {
-  return createRenderEffect(() => setStyle(el, getValue()))
+  return createRenderBinding(getValue, next => setStyle(el, next))
 }
 
 /**
@@ -1001,8 +1005,8 @@ export function createClassBinding(
   value: MaybeReactive<string | Record<string, boolean> | null | undefined>,
 ): void {
   if (isReactive(value)) {
-    createRenderEffect(() =>
-      setClass(el, (value as () => string | Record<string, boolean> | null | undefined)()),
+    createRenderBinding(value as () => string | Record<string, boolean> | null | undefined, next =>
+      setClass(el, next),
     )
   } else {
     setClass(el, value)
@@ -1018,8 +1022,8 @@ export function createClassListBinding(
 ): void {
   if (isReactive(value)) {
     let prev: Record<string, boolean> = {}
-    createRenderEffect(() => {
-      prev = applyClass(el, (value as () => Record<string, boolean> | null | undefined)(), prev)
+    createRenderBinding(value as () => Record<string, boolean> | null | undefined, next => {
+      prev = applyClass(el, next, prev)
     })
   } else {
     applyClass(el, value, {})
@@ -1033,7 +1037,7 @@ export function bindClass(
   el: Element,
   getValue: () => string | Record<string, boolean> | null | undefined,
 ): Cleanup {
-  return createRenderEffect(() => setClass(el, getValue()))
+  return createRenderBinding(getValue, next => setClass(el, next))
 }
 
 /**
@@ -1263,7 +1267,7 @@ export function insert(
 
   let dispose: Cleanup
   try {
-    dispose = createRenderEffect(() => {
+    dispose = createRenderTransaction(() => {
       if (disposed || isRootDisposed(hostRoot)) return
       const parentNode = marker.parentNode as (ParentNode & Node) | null
       const root = createRootContext(hostRoot)
@@ -1379,7 +1383,7 @@ export function insert(
           release()
           return
         }
-        if (root.suspended) {
+        if (root.suspended && !root.graphSuspended) {
           initialHydrating = false
           release()
           return
@@ -1397,7 +1401,7 @@ export function insert(
         committed = true
       } catch (err) {
         initialHydrating = false
-        if (handleSuspend(err as any, root)) {
+        if (!isAsyncRejection(err) && handleSuspend(err as any, root)) {
           release()
           return
         }
@@ -1518,7 +1522,7 @@ export function insertBetween(
 
   let dispose: Cleanup
   try {
-    dispose = createRenderEffect(() => {
+    dispose = createRenderTransaction(() => {
       if (disposed || isRootDisposed(hostRoot)) return
       const parentNode = start.parentNode as (ParentNode & Node) | null
       const root = createRootContext(hostRoot)
@@ -1640,7 +1644,7 @@ export function insertBetween(
           return
         }
         ownedNodes = nodes
-        if (root.suspended) {
+        if (root.suspended && !root.graphSuspended) {
           if (initialHydrating) {
             currentNodes = collectBetween()
             ownedNodes = []
@@ -1667,7 +1671,7 @@ export function insertBetween(
           ownedNodes = []
           initialHydrating = false
         }
-        if (handleSuspend(err as any, root)) {
+        if (!isAsyncRejection(err) && handleSuspend(err as any, root)) {
           release()
           return
         }
@@ -1735,18 +1739,39 @@ export function createChildBinding(
   const hostRoot = getCurrentRoot()
   let disposed = false
   let activeRelease: Cleanup | undefined
+  let preparedRoot: RootContext | undefined
+  const releasePrepared = () => {
+    const root = preparedRoot
+    preparedRoot = undefined
+    if (root) destroyRoot(root)
+  }
+  const prepare = () => {
+    releasePrepared()
+    const root = createRootContext(hostRoot)
+    configureRootForDOMParent(
+      root,
+      (marker.parentNode as (ParentNode & Node) | null) ?? parent,
+      marker.ownerDocument ?? parent.ownerDocument ?? document,
+    )
+    preparedRoot = root
+    try {
+      return withRootContext(root, getValue)
+    } catch (error) {
+      releasePrepared()
+      throw error
+    }
+  }
 
   let dispose: Cleanup
   try {
-    dispose = createRenderEffect(() => {
-      if (disposed) return
+    dispose = createRenderBinding(prepare, value => {
+      if (disposed) {
+        releasePrepared()
+        return
+      }
       activeRelease?.()
-      const root = createRootContext(hostRoot)
-      configureRootForDOMParent(
-        root,
-        (marker.parentNode as (ParentNode & Node) | null) ?? parent,
-        marker.ownerDocument ?? parent.ownerDocument ?? document,
-      )
+      const root = preparedRoot!
+      preparedRoot = undefined
       const prev = pushRoot(root)
       let nodes: Node[] = []
       let committed = false
@@ -1762,8 +1787,6 @@ export function createChildBinding(
         }
       }
       try {
-        const value = getValue()
-
         // Skip if value is null/undefined/false
         if (value == null || value === false) {
           release()
@@ -1779,7 +1802,7 @@ export function createChildBinding(
         committed = true
         activeRelease = release
       } catch (err) {
-        if (handleSuspend(err as any, root)) {
+        if (!isAsyncRejection(err) && handleSuspend(err as any, root)) {
           release()
           return
         }
@@ -1801,9 +1824,13 @@ export function createChildBinding(
     })
   } catch (error) {
     try {
-      activeRelease?.()
+      releasePrepared()
     } finally {
-      marker.parentNode?.removeChild(marker)
+      try {
+        activeRelease?.()
+      } finally {
+        marker.parentNode?.removeChild(marker)
+      }
     }
     throw error
   }
@@ -1815,9 +1842,13 @@ export function createChildBinding(
       dispose()
     } finally {
       try {
-        activeRelease?.()
+        releasePrepared()
       } finally {
-        marker.parentNode?.removeChild(marker)
+        try {
+          activeRelease?.()
+        } finally {
+          marker.parentNode?.removeChild(marker)
+        }
       }
     }
   }
@@ -2324,9 +2355,7 @@ export function bindRef(el: Element, ref: unknown, registerCleanup = true): Clea
 
   let disposeTracking: Cleanup | undefined
   if (isReactive(ref)) {
-    disposeTracking = createRenderEffect(() => {
-      syncRef(getRef())
-    })
+    disposeTracking = createRenderBinding(getRef, syncRef)
   } else {
     syncRef(getRef())
   }
@@ -2376,9 +2405,10 @@ function createAssignedRefState(
     applyRefValue(currentRef, node)
   }
 
-  const disposeTracking = createRenderEffect(() => {
-    syncRef(resolveAssignedRefValue(valueSignal() as unknown))
-  })
+  const disposeTracking = createRenderBinding(
+    () => resolveAssignedRefValue(valueSignal() as unknown),
+    syncRef,
+  )
 
   return {
     cleanup: () => {
@@ -2466,7 +2496,7 @@ function bindAssignedChildren(
 
   let dispose: Cleanup
   try {
-    dispose = createRenderEffect(() => {
+    dispose = createRenderTransaction(() => {
       if (disposed || isRootDisposed(hostRoot)) return
       const root = createRootContext(hostRoot)
       configureRootForDOMParent(root, node, node.ownerDocument ?? document)
@@ -2563,7 +2593,7 @@ function bindAssignedChildren(
           release()
           return
         }
-        if (root.suspended) {
+        if (root.suspended && !root.graphSuspended) {
           if (initialHydrating) {
             currentNodes = collectCurrentChildren()
             ownedNodes = []
@@ -2601,7 +2631,7 @@ function bindAssignedChildren(
           ownedNodes = []
           initialHydrating = false
         }
-        if (handleSuspend(err as any, root)) {
+        if (!isAsyncRejection(err) && handleSuspend(err as any, root)) {
           release()
           return
         }
@@ -2851,10 +2881,18 @@ export function spread(
   }
 
   // Handle all other props
-  createRenderEffect(() => {
-    layer.props = resolveProps()
-    applySpreadLayers(node, spreadState)
-  })
+  createRenderBinding(
+    () => {
+      const props = resolveProps()
+      const snapshot = Object.create(null) as Record<string, unknown>
+      for (const key of Object.keys(props)) snapshot[key] = props[key]
+      return snapshot
+    },
+    next => {
+      layer.props = next
+      applySpreadLayers(node, spreadState)
+    },
+  )
 
   return spreadState.prevProps
 }
@@ -3233,7 +3271,7 @@ export function createConditional(
       output = trackBranchReads ? render() : untrack(render)
     } catch (err) {
       try {
-        if (handleSuspend(err as any, root)) {
+        if (!isAsyncRejection(err) && handleSuspend(err as any, root)) {
           return { root: null, nodes: [], handled: true }
         }
         if (handleError(err, { source: 'renderChild' }, root)) {
@@ -3260,7 +3298,7 @@ export function createConditional(
       }
     } catch (err) {
       try {
-        if (handleSuspend(err as any, root)) {
+        if (!isAsyncRejection(err) && handleSuspend(err as any, root)) {
           return { root: null, nodes: [], handled: true }
         }
         if (handleError(err, { source: 'renderChild' }, root)) {
@@ -3373,7 +3411,7 @@ export function createConditional(
       } catch (err) {
         currentNodes = collectBetween()
         try {
-          if (handleSuspend(err as any, root)) {
+          if (!isAsyncRejection(err) && handleSuspend(err as any, root)) {
             return
           }
           if (handleError(err, { source: 'renderChild' }, root)) {
@@ -3420,7 +3458,7 @@ export function createConditional(
 
   let dispose: Cleanup
   try {
-    dispose = createRenderEffect(runConditional)
+    dispose = createRenderTransaction(runConditional)
   } catch (error) {
     clearCurrentBranch()
     throw error
@@ -3470,8 +3508,8 @@ export function createShow(
   displayValue?: string,
 ): void {
   const originalDisplay = displayValue ?? el.style.display
-  createRenderEffect(() => {
-    el.style.display = condition() ? originalDisplay : 'none'
+  createRenderBinding(condition, value => {
+    el.style.display = value ? originalDisplay : 'none'
   })
 }
 
@@ -3521,11 +3559,8 @@ export function createPortal(
 
   let dispose: Cleanup
   try {
-    dispose = createRenderEffect(() => {
+    dispose = createRenderTransaction(() => {
       if (disposed) return
-      // Clean up previous
-      clearCurrentContent()
-
       // Create new content
       const root = createRootContext(parentRoot)
       configureRootForDOMParent(
@@ -3534,6 +3569,7 @@ export function createPortal(
         marker.ownerDocument ?? container.ownerDocument ?? parentRoot?.ownerDocument ?? document,
       )
       const prev = pushRoot(root)
+      deferRootRefAssignments(root)
       let nodes: Node[] = []
       let committed = false
       let released = false
@@ -3553,15 +3589,16 @@ export function createPortal(
         if (output != null && output !== false) {
           const el = untrack(() => createElementFn(output))
           nodes = toNodeArray(el, root.ownerDocument ?? markerOwnerDocument)
+          clearCurrentContent()
           if (marker.parentNode) {
             nodes = insertNodesBefore(marker.parentNode as ParentNode & Node, nodes, marker)
           }
-        }
+        } else clearCurrentContent()
         currentNodes = nodes
         currentRoot = root
         committed = true
       } catch (err) {
-        if (handleSuspend(err as any, root)) {
+        if (!isAsyncRejection(err) && handleSuspend(err as any, root)) {
           release()
           return
         }
@@ -3574,6 +3611,7 @@ export function createPortal(
       } finally {
         popRoot(prev)
         if (committed) {
+          flushDeferredRefAssignments(root)
           flushOnMount(root)
         } else {
           release()

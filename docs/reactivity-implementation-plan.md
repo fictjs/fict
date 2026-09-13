@@ -21,7 +21,7 @@ not only an analysis pass, an API sketch, or a passing unrelated test suite.
 | G5   | README performance claims correspond to the qualified strict build and identify versions, artifact hashes, normalization, uncertainty, and the unrounded 1.10 target. | Frozen source/build provenance, complete keyed/browser checks, reproducible archive and README data validation.                                                                               | Pending  |
 | A1   | An async graph contract specifies readiness, stale/current values, invalidation, errors, effect commit, ownership, and compatibility.                                 | Implementable state transitions and executable acceptance scenarios, not percentage scores.                                                                                                   | Complete |
 | A2   | An explicit async computation is a reactive graph node, including Promise and async iterable completion, invalidation, and cancellation.                              | Graph-level dependency/status behavior, stale-flight rejection, cancellation and disposal tests; preserve existing Promise-valued synchronous memo behavior.                                  | Complete |
-| A3   | Pending/error states compose through synchronous derived nodes and effect/render consumers with defined commit semantics.                                             | Chains, diamonds, conditional subscriptions, independent boundaries, error recovery, no unintended partial commits, and cleanup ordering.                                                     | Pending  |
+| A3   | Pending/error states compose through synchronous derived nodes and effect/render consumers with defined commit semantics.                                             | Chains, diamonds, conditional subscriptions, independent boundaries, error recovery, no unintended partial commits, and cleanup ordering.                                                     | Complete |
 | A4   | Resource uses the shared async computation protocol while retaining its data/cache policies.                                                                          | Existing resource/cache/TTL/SWR/LRU/sharing/optimistic/SSR regressions and new graph-composition coverage.                                                                                    | Pending  |
 | A5   | Transition readiness accounts for registered downstream async work caused by updates, including indirectly triggered requests.                                        | Overlapping transitions, unrelated roots, stale completions, callback failures, disposal, and the indirect-resource regression.                                                               | Pending  |
 | A6   | Compiler-owned async declarations, types, runtime helpers, and cross-module contracts use the same graph protocol.                                                    | Native strict compilation, source maps, metadata/ABI checks, reactive input updates and lifecycle checks; explicit supported continuation boundaries.                                         | Pending  |
@@ -162,3 +162,31 @@ ESM 22,135 B, complete CJS 40,982 B, the async memo import 6,905 B, and the sync
 import 4,309 B. Limits reflect those actual artifacts, with the earlier aliased
 measurements retained in the dated A2 archive rather than relabeled as package
 results. No runtime code or CPU performance measurement changes in this item.
+
+## A3: async consumers and render commits
+
+Synchronous memo chains retain the dependency paths required to recover from
+pending or failed async inputs. Async-to-sync-to-async chains wait on upstream
+readiness instead of treating a pending token as a rejection. Exact rejection
+identity is preserved, including `undefined`, `NaN`, Promises, and branded tokens.
+Ordinary synchronous memos retain their existing initial-error retry behavior.
+
+`createAsyncEffect(prepare, commit)` uses a single prepared effect node. Preparation
+tracks current inputs before cleanup; commit runs untracked in its own cleanup
+root. DOM value bindings use the same preparation mechanism, while structural
+views retain their explicit prepare/commit ownership. An abandoned conditional
+consumer releases its boundary wait without waiting for an irrelevant transport.
+
+Graph-aware Suspense retains owners and live DOM ranges during fallback, defers
+nested mounts, and handles resets and fallback-cleanup reentrancy. Legacy tokens
+retain replay semantics. Pending reads in synchronous component setup receive an
+explicit diagnostic directing them to a reactive binding or preparation; this does
+not introduce an async component ABI or tracking across native `await`.
+
+Validation: 29 new composition/render tests, 1,516 passing runtime tests (8 existing
+skips), 390 native compiler/DOM/SSR tests, production/test typechecks, all 31 workspace
+build tasks, and real distributed ESM/CJS imports. The
+[composition size archive](./benchmarks/async-composition-size-2026-09-13.json)
+records source/artifact identities and the added shared runtime cost. Its sync-import
+measurement is separate from complete-package cost. CPU and application performance
+remain to be qualified by G4/G5/A8; no historical benchmark score is relabeled.

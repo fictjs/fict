@@ -14,33 +14,31 @@ export default [
   {
     name: 'Fict package (ESM)',
     path: 'packages/fict/dist/index.js',
-    // Distributed production Brotli: 3d763bfd 22,033 B; 877825bf 22,135 B.
-    // Source-aliased historical values are retained in the dated size archive.
-    limit: '22.3 KB',
+    // Distributed Brotli: async composition 23,801 B; see its dated archive.
+    limit: '24 KB',
     modifyEsbuildConfig: production,
   },
   {
     name: 'Fict package (CJS)',
     path: 'packages/fict/dist/index.cjs',
-    // Distributed CJS: 3d763bfd 39,477 B; 877825bf 40,982 B. CommonJS
-    // namespace exports retain more code than the former source-aliased check.
-    limit: '41.1 KB',
+    // Distributed CJS includes advanced APIs: async composition 43,149 B.
+    limit: '43.3 KB',
     modifyEsbuildConfig: production,
   },
   {
     name: 'Fict package async memo (ESM)',
     path: 'packages/fict/dist/advanced.js',
     import: '{ createAsyncMemo }',
-    // 877825bf: 6,905 B including the graph, lifecycle, and async protocol.
-    limit: '7 KB',
+    // Async composition: 7,692 B including readiness propagation and ownership.
+    limit: '7.8 KB',
     modifyEsbuildConfig: production,
   },
   {
     name: 'Fict package sync memo (ESM)',
     path: 'packages/fict/dist/index.js',
     import: '{ createMemo }',
-    // Guard synchronous consumers independently of the new async primitive.
-    limit: '4.4 KB',
+    // Async composition: 4,780 B; keep sync entry overhead separately visible.
+    limit: '4.9 KB',
     modifyEsbuildConfig: production,
   },
 ]

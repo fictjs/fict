@@ -1,3 +1,4 @@
+import { isAsyncPending } from './async-state'
 import {
   getCurrentRoot,
   handleError,
@@ -6,8 +7,9 @@ import {
   runCleanupList,
   withEffectCleanups,
   type EffectCleanupScope,
+  type RootContext,
 } from './lifecycle'
-import { effectWithCleanup, type EffectOptions } from './signal'
+import { effectWithCleanup, isAsyncRejection, type EffectOptions } from './signal'
 import type { Cleanup } from './types'
 
 /**
@@ -18,10 +20,25 @@ export type Effect = () => void | Cleanup
 
 const noopCleanup = () => {}
 
+function handleEffectFailure(err: unknown, root: RootContext | undefined): void {
+  if (isAsyncRejection(err)) {
+    if (handleError(err, { source: 'effect' }, root)) return
+    throw err
+  }
+  if (isAsyncPending(err)) {
+    handleSuspend(err, root)
+    return
+  }
+  if (handleSuspend(err as Parameters<typeof handleSuspend>[0], root)) return
+  if (handleError(err, { source: 'effect' }, root)) return
+  throw err
+}
+
 function createManagedEffect(
   fn: Effect,
   options?: EffectOptions,
   releaseUnobserved = false,
+  prepare?: () => void,
 ): () => void {
   const cleanupScope: EffectCleanupScope = { cleanups: undefined }
   let phase: 'active' | 'disposing' | 'disposed' = 'active'
@@ -34,6 +51,19 @@ function createManagedEffect(
     if (pending) runCleanupList(pending, rootForError)
   }
 
+  const prepareRun = prepare
+    ? () => {
+        if (phase !== 'active') return false
+        try {
+          prepare()
+          return true
+        } catch (error) {
+          handleEffectFailure(error, rootForError)
+          return false
+        }
+      }
+    : undefined
+
   const run = () => {
     if (phase !== 'active') return
     // Note: cleanups are now run by signal.ts runEffect before this function is called
@@ -45,13 +75,7 @@ function createManagedEffect(
             ;(cleanupScope.cleanups ??= []).push(maybeCleanup)
           }
         } catch (err) {
-          if (handleSuspend(err as Parameters<typeof handleSuspend>[0], rootForError)) {
-            return
-          }
-          if (handleError(err, { source: 'effect' }, rootForError)) {
-            return
-          }
-          throw err
+          handleEffectFailure(err, rootForError)
         }
       })
     } finally {
@@ -82,6 +106,7 @@ function createManagedEffect(
     options,
     finishTeardown,
     releaseUnobserved ? cleanupScope : undefined,
+    prepareRun,
   )
   if (cleanupScope.released) return noopCleanup
   const teardown = () => {
@@ -107,4 +132,26 @@ export function createEffect(fn: Effect, options?: EffectOptions): () => void {
 
 export function createRenderEffect(fn: Effect, options?: EffectOptions): () => void {
   return createManagedEffect(fn, options, true)
+}
+
+/** Internal one-node binding: track the value before replacing committed work. */
+export function createRenderBinding<T>(
+  prepare: () => T,
+  commit: (value: T) => void | Cleanup,
+  options?: EffectOptions,
+): () => void {
+  let value: T
+  return createManagedEffect(
+    () => commit(value),
+    options,
+    true,
+    () => {
+      value = prepare()
+    },
+  )
+}
+
+/** Internal views which prepare their own roots/DOM before committing them. */
+export function createRenderTransaction(fn: Effect): () => void {
+  return createManagedEffect(fn, undefined, true, noopCleanup)
 }

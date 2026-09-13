@@ -50,6 +50,7 @@ export {
   // Low-level Primitives
   createRenderEffect,
   createAsyncMemo,
+  createAsyncEffect,
   AsyncDisposedError,
   AsyncEmptyError,
   type AsyncMemo,

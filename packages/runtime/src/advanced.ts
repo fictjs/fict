@@ -84,6 +84,7 @@ export {
 // ============================================================================
 
 export { createRenderEffect } from './effect'
+export { createAsyncEffect } from './async-effect'
 
 export {
   createAsyncMemo,

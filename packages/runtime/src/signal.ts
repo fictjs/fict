@@ -1,3 +1,4 @@
+import { isAsyncPending } from './async-state'
 import { beginFlushGuard, beforeEffectRunGuard, endFlushGuard } from './cycle-guard'
 import { getSafeDevtoolsHook as getDevtoolsHook } from './devtools'
 import { __fictGetCurrentComponentId } from './hooks'
@@ -73,6 +74,17 @@ export interface BaseNode {
   subsTail: Link | undefined
   /** Reactive flags (Mutable, Watching, Running, etc.) */
   flags: number
+  /** Reads which must be current before an async-dependent effect commits. */
+  asyncReads?: Set<() => unknown>
+  asyncFailure?: { error: unknown } | undefined
+  asyncSuspension?: AsyncSuspension | undefined
+}
+
+interface AsyncSuspension {
+  token: unknown
+  consumer: BaseNode | undefined
+  settled: (() => void) | undefined
+  release: () => void
 }
 
 /**
@@ -172,7 +184,9 @@ export interface ComputedNode<T = unknown> extends BaseNode {
   /** Hide this computed from DevTools (used by compiler-internal memos) */
   devToolsInternal?: boolean
   /** Boxed error from the last failed update; reads rethrow until deps change */
-  thrownError?: { error: unknown } | undefined
+  thrownError?: { error: unknown; async?: boolean; rejection?: boolean } | undefined
+  /** Stable reader used by a parent's readiness preparation. */
+  asyncReader?: () => unknown
   /** Owned async computations retain inputs while suspended consumers retry. */
   retainDependencies?: boolean
   /** Queue an activated async producer when its inputs may have changed. */
@@ -185,6 +199,8 @@ export interface ComputedNode<T = unknown> extends BaseNode {
 export interface EffectNode extends BaseNode {
   /** Effect function to execute */
   fn: () => void
+  /** Optional pure preparation which precedes cleanup and DOM/effect commit. */
+  prepare?: () => boolean
   /** First dependency link */
   deps: Link | undefined
   /** Last dependency link */
@@ -707,7 +723,17 @@ function checkDirty(firstLink: Link, sub: ReactiveNode): boolean {
     if (sub.flags & Dirty) {
       dirty = true
     } else if ((depFlags & MutableDirty) === MutableDirty) {
-      if (update(dep)) {
+      let changed: boolean
+      try {
+        changed = update(dep)
+      } catch (error) {
+        const failure = 'thrownError' in dep ? dep.thrownError : undefined
+        if (isAsyncPending(error) || failure?.async) {
+          retainAsyncFailurePath(sub, stack, checkDepth, error, failure?.rejection)
+        }
+        throw error
+      }
+      if (changed) {
         const subs = dep.subs
         if (subs !== undefined && subs.nextSub !== undefined) shallowPropagate(subs)
         dirty = true
@@ -751,7 +777,17 @@ function checkDirty(firstLink: Link, sub: ReactiveNode): boolean {
       }
 
       if (dirty) {
-        if (update(sub)) {
+        let changed: boolean
+        try {
+          changed = update(sub)
+        } catch (error) {
+          const failure = 'thrownError' in sub ? sub.thrownError : undefined
+          if (isAsyncPending(error) || failure?.async) {
+            retainAsyncFailurePath(link.sub, stack, checkDepth, error, failure?.rejection)
+          }
+          throw error
+        }
+        if (changed) {
           if (hasMultipleSubs) shallowPropagate(firstSub)
           sub = link.sub
           continue
@@ -772,10 +808,34 @@ function checkDirty(firstLink: Link, sub: ReactiveNode): boolean {
     return dirty
   }
 }
-/**
- * Shallow propagate changes without traversing deeply
- * @param firstLink - The first link to propagate from
- */
+/** Preserve a blocked path so the next async publication can invalidate it. */
+function retainAsyncFailurePath(
+  node: ReactiveNode,
+  stack: StackFrame | undefined,
+  depth: number,
+  error: unknown,
+  rejection = false,
+): void {
+  for (;;) {
+    if (rejection && ('getter' in node || 'fn' in node)) node.asyncFailure = { error }
+    if ('getter' in node && node.getter !== undefined && !node.disposed) {
+      node.thrownError = { error, async: true, rejection }
+      node.flags = Mutable
+    }
+    if (depth-- === 0) return
+    const first = node.subs
+    if (!first) return
+    if (first.nextSub) {
+      if (!stack?.value) return
+      node = stack.value.sub
+      stack = stack.prev
+    } else {
+      node = first.sub
+    }
+  }
+}
+
+/** Shallow propagate changes without traversing deeply. */
 function shallowPropagate(firstLink: Link): void {
   let link: Link | undefined = firstLink
   do {
@@ -890,6 +950,9 @@ function disposeNode(node: ReactiveNode): void {
   }
 
   node.depsTail = undefined
+  if ('asyncReads' in node) node.asyncReads?.clear()
+  if ('asyncFailure' in node) node.asyncFailure = undefined
+  if ('asyncSuspension' in node) node.asyncSuspension?.release()
   node.flags = 0
   let error: unknown
   let didThrow = false
@@ -994,6 +1057,8 @@ function updateComputed<T>(c: ComputedNode<T>): boolean {
   ++cycle
   const oldValue = c.value
   c.depsTail = undefined
+  c.asyncReads?.clear()
+  if (c.asyncFailure) c.asyncFailure = undefined
   c.flags = MutableRunning
   const prevSub = activeSub
   activeSub = c
@@ -1022,7 +1087,14 @@ function updateComputed<T>(c: ComputedNode<T>): boolean {
     purgeDeps(c)
     // Cache the error so reads keep rethrowing instead of serving the stale
     // pre-throw value; the next dependency change marks Dirty and retries.
-    c.thrownError = { error: e }
+    c.thrownError =
+      c.asyncReads?.size || isAsyncPending(e)
+        ? {
+            error: e,
+            async: true,
+            rejection: isAsyncRejection(e, c),
+          }
+        : { error: e }
     throw e
   }
 }
@@ -1055,6 +1127,24 @@ function runEffectInRoot(e: EffectNode): void {
   const flags = e.flags
   const isDisposed = () => e.disposed === true
   if (isDisposed()) return
+  if (!e.prepare && flags & (Dirty | Pending) && e.asyncReads?.size) {
+    try {
+      withAsyncErrorScope(e, () =>
+        untrack(() => {
+          for (const read of e.asyncReads!) read()
+        }),
+      )
+    } catch (error) {
+      if (!isDisposed()) e.flags = Watching
+      if (isAsyncPending(error) && !isAsyncRejection(error, e)) {
+        withAsyncErrorScope(e, () => handleSuspend(error, e.root))
+        return
+      }
+      if (handleError(error, { source: 'effect' }, e.root)) return
+      throw error
+    }
+  }
+  if (!e.prepare) e.asyncSuspension?.release()
   const runCleanup = () => {
     if (!e.runCleanup) return
     if (isDev) effectCleanupDevtools(e)
@@ -1083,11 +1173,16 @@ function runEffectInRoot(e: EffectNode): void {
     }
   }
   if (flags & Dirty) {
+    if (e.prepare && !prepareEffect(e)) return
     // Run cleanup before re-run; values are still the previous commit.
     runCleanupOrDetach()
     if (isDisposed()) return
-    ++cycle
-    e.depsTail = undefined
+    if (!e.prepare) {
+      ++cycle
+      e.depsTail = undefined
+      e.asyncReads?.clear()
+      if (e.asyncFailure) e.asyncFailure = undefined
+    }
     e.flags = WatchingRunning
     const prevSub = activeSub
     activeSub = e
@@ -1122,7 +1217,11 @@ function runEffectInRoot(e: EffectNode): void {
     try {
       isDirty = checkDirty(e.deps, e)
     } catch (err) {
-      if (handleSuspend(err as SuspenseToken, e.root)) {
+      if (
+        !isAsyncRejection(err, e) &&
+        (isAsyncPending(err) || handleSuspend(err as SuspenseToken, e.root))
+      ) {
+        if (isAsyncPending(err)) withAsyncErrorScope(e, () => handleSuspend(err, e.root))
         if (!isDisposed()) {
           e.flags = Watching
         }
@@ -1138,12 +1237,17 @@ function runEffectInRoot(e: EffectNode): void {
     }
     if (isDisposed()) return
     if (isDirty) {
+      if (e.prepare && !prepareEffect(e)) return
       // Only run cleanup if the effect will actually re-run.
       // Cleanup reads should observe previous values for this flush.
       runCleanupOrDetach()
       if (isDisposed()) return
-      ++cycle
-      e.depsTail = undefined
+      if (!e.prepare) {
+        ++cycle
+        e.depsTail = undefined
+        e.asyncReads?.clear()
+        if (e.asyncFailure) e.asyncFailure = undefined
+      }
       e.flags = WatchingRunning
       const prevSub = activeSub
       activeSub = e
@@ -1178,6 +1282,26 @@ function runEffectInRoot(e: EffectNode): void {
     }
   } else {
     e.flags = Watching
+  }
+}
+
+function prepareEffect(e: EffectNode): boolean {
+  ++cycle
+  e.depsTail = undefined
+  e.asyncReads?.clear()
+  if (e.asyncFailure) e.asyncFailure = undefined
+  e.flags = WatchingRunning
+  const previous = activeSub
+  activeSub = e
+  try {
+    const ready = e.prepare!()
+    if (ready) e.asyncSuspension?.release()
+    return ready && !e.disposed
+  } finally {
+    activeSub = previous
+    if (e.disposed) e.depsTail = undefined
+    else e.flags = Watching
+    purgeDeps(e)
   }
 }
 /**
@@ -1450,12 +1574,27 @@ function createComputedNode<T>(
 export function createAsyncGraphNode<T>(
   getter: () => T,
   onDispose: () => T,
-  onError: (error: unknown) => T,
+  onError: (error: unknown, rejection: boolean) => T,
   options?: MemoOptions<T>,
 ): { read: () => T; publish: (value: T) => void; invalidate: () => void; dispose: () => void } {
   const node = createComputedNode(getter, options)
   node.retainDependencies = true
-  const read = (computedOper as (this: ComputedNode<T>) => T).bind(node)
+  const rawRead = (computedOper as (this: ComputedNode<T>) => T).bind(node)
+  const read = () => {
+    try {
+      return rawRead()
+    } catch (error) {
+      if (node.disposed) throw error
+      const value = withRootContext(node.root, () =>
+        onError(error, node.thrownError?.rejection === true),
+      )
+      node.flags = Mutable
+      node.thrownError = undefined
+      publish(value)
+      if (activeSub) link(node, activeSub, cycle)
+      return value
+    }
+  }
   const publish = (value: T) => {
     if (node.disposed || node.value === value) return
     if (node.subs) {
@@ -1482,7 +1621,9 @@ export function createAsyncGraphNode<T>(
       try {
         untrack(read)
       } catch (error) {
-        const value = withRootContext(node.root, () => onError(error))
+        const value = withRootContext(node.root, () =>
+          onError(error, node.thrownError?.rejection === true),
+        )
         node.flags = Mutable
         node.thrownError = undefined
         publish(value)
@@ -1505,6 +1646,7 @@ export function createAsyncGraphNode<T>(
     invalidate: () => {
       if (node.disposed) return
       node.flags |= Dirty
+      node.onInvalidate?.()
       if (node.subs) {
         propagate(node.subs)
         if (!batchDepth) scheduleFlush()
@@ -1525,56 +1667,76 @@ function computedOper<T>(this: ComputedNode<T>): T {
 
   if (isComputedDisposed(this)) return readDisposedComputed(this)
 
-  const flags = this.flags
+  try {
+    const flags = this.flags
 
-  if (flags & Dirty) {
-    if (updateComputed(this)) {
-      const subs = this.subs
-      if (subs !== undefined) shallowPropagate(subs)
-    }
-  } else if (flags & Pending) {
-    if (this.deps && checkDirty(this.deps, this)) {
+    if (flags & Dirty) {
       if (updateComputed(this)) {
         const subs = this.subs
         if (subs !== undefined) shallowPropagate(subs)
       }
-    } else {
-      this.flags = flags & ~Pending
+    } else if (flags & Pending) {
+      if (this.deps && checkDirty(this.deps, this)) {
+        if (updateComputed(this)) {
+          const subs = this.subs
+          if (subs !== undefined) shallowPropagate(subs)
+        }
+      } else {
+        this.flags = flags & ~Pending
+      }
+    } else if (!flags) {
+      this.depsTail = undefined
+      this.asyncReads?.clear()
+      if (this.asyncFailure) this.asyncFailure = undefined
+      this.flags = MutableRunning
+      const prevSub = setActiveSub(this)
+      try {
+        this.value = withRootContext(this.root, () => this.getter(undefined))
+        this.hasValue = true
+        if (isDev) updateComputedDevtools(this, this.value)
+      } catch (err) {
+        // Initial evaluation failed: remove partially tracked dependencies
+        // and allow a future read to retry from a clean slate.
+        if (this.asyncReads?.size) {
+          this.flags = Mutable
+          this.thrownError = { error: err, async: true, rejection: isAsyncRejection(err, this) }
+          if (isComputedDisposed(this)) this.depsTail = undefined
+          purgeDeps(this)
+        } else {
+          this.flags = 0
+          this.depsTail = undefined
+          purgeDeps(this)
+          if (isComputedDisposed(this)) this.thrownError = { error: err }
+        }
+        throw err
+      } finally {
+        setActiveSub(prevSub)
+        if (this.flags & Running) {
+          this.flags &= ~Running
+        }
+      }
     }
-  } else if (!flags) {
-    this.depsTail = undefined
-    this.flags = MutableRunning
-    const prevSub = setActiveSub(this)
-    try {
-      this.value = withRootContext(this.root, () => this.getter(undefined))
-      this.hasValue = true
-      if (isDev) updateComputedDevtools(this, this.value)
-    } catch (err) {
-      // Initial evaluation failed: remove partially tracked dependencies
-      // and allow a future read to retry from a clean slate.
-      this.flags = 0
+
+    if (isComputedDisposed(this)) {
       this.depsTail = undefined
       purgeDeps(this)
-      if (isComputedDisposed(this)) {
-        this.thrownError = { error: err }
-      }
-      throw err
-    } finally {
-      setActiveSub(prevSub)
-      if (this.flags & Running) {
-        this.flags &= ~Running
-      }
+      return readDisposedComputed(this)
+    }
+    if (activeSub !== undefined) link(this, activeSub, cycle)
+    if (this.thrownError !== undefined) throw this.thrownError.error
+    return this.value
+  } catch (error) {
+    if (isAsyncRejection(error, this) || this.thrownError?.rejection) registerAsyncRejection(error)
+    throw error
+  } finally {
+    // Failed async reads still establish the edge needed to retry. Status reads
+    // on an async node are deliberately nonblocking; its value accessor opts in.
+    if (!isComputedDisposed(this) && !this.retainDependencies && this.asyncReads?.size) {
+      if (activeSub) link(this, activeSub, cycle)
+      this.asyncReader ??= (computedOper as (this: ComputedNode<T>) => T).bind(this)
+      registerAsyncRead(this.asyncReader)
     }
   }
-
-  if (isComputedDisposed(this)) {
-    this.depsTail = undefined
-    purgeDeps(this)
-    return readDisposedComputed(this)
-  }
-  if (activeSub !== undefined) link(this, activeSub, cycle)
-  if (this.thrownError !== undefined) throw this.thrownError.error
-  return this.value
 }
 
 function isComputedDisposed(computed: { disposed?: boolean }): boolean {
@@ -1670,6 +1832,7 @@ export function effectWithCleanup(
   options?: EffectOptions,
   onDispose?: () => void,
   releaseUnobserved?: EffectCleanupScope,
+  prepare?: () => boolean,
 ): EffectDisposer {
   const e: EffectNode = {
     fn,
@@ -1686,6 +1849,7 @@ export function effectWithCleanup(
     __id: undefined as number | undefined,
   }
   const resolvedRoot = root ?? getCurrentRoot()
+  if (prepare) e.prepare = prepare
   if (resolvedRoot) {
     e.root = resolvedRoot
   }
@@ -1700,7 +1864,9 @@ export function effectWithCleanup(
   let didThrow = false
   let thrown: unknown
   try {
-    withRootContext(e.root, e.fn)
+    withRootContext(e.root, () => {
+      if (!e.prepare || e.prepare()) e.fn()
+    })
   } catch (err) {
     didThrow = true
     thrown = err
@@ -1877,6 +2043,76 @@ export function batch<T>(fn: () => T): T {
 export function getActiveSub(): ReactiveNode | undefined {
   return activeSub
 }
+
+interface AsyncErrorTarget {
+  asyncFailure?: { error: unknown } | undefined
+}
+let asyncErrorTarget: AsyncErrorTarget | undefined
+
+/** Preserve original rejection values, including thenables, across untracked reads. */
+export function withAsyncErrorScope<T>(target: AsyncErrorTarget, fn: () => T): T {
+  const previous = asyncErrorTarget
+  asyncErrorTarget = target
+  if (target.asyncFailure) target.asyncFailure = undefined
+  try {
+    return fn()
+  } finally {
+    asyncErrorTarget = previous
+  }
+}
+
+export function registerAsyncRejection(error: unknown): void {
+  const target = (activeSub ?? asyncErrorTarget) as AsyncErrorTarget | undefined
+  if (target) target.asyncFailure = { error }
+}
+
+export function isAsyncRejection(
+  error: unknown,
+  target: AsyncErrorTarget | ReactiveNode | undefined = activeSub ?? asyncErrorTarget,
+): boolean {
+  const failure = (target as AsyncErrorTarget | undefined)?.asyncFailure
+  return failure !== undefined && Object.is(failure.error, error)
+}
+
+/** Register a current-value read, separate from nonblocking status/stale reads. */
+export function registerAsyncRead(read: () => unknown): void {
+  const sub = activeSub
+  if (sub && (('getter' in sub && sub.getter !== undefined) || 'fn' in sub)) {
+    ;(sub.asyncReads ??= new Set()).add(read)
+  }
+}
+
+/** A pending render read needs a reactive continuation to resume in place. */
+export function hasAsyncReadConsumer(): boolean {
+  const target = activeSub ?? asyncErrorTarget
+  return target !== undefined && ('fn' in target || ('getter' in target && !!target.getter))
+}
+
+/** Register a boundary wait against the consumer's current reactive lifetime. */
+export function registerAsyncSuspension(
+  token: unknown,
+  settled: () => void,
+): (() => void) | undefined {
+  const consumer = (activeSub ?? asyncErrorTarget) as BaseNode | undefined
+  if (!consumer || !hasAsyncReadConsumer()) return undefined
+  if (consumer.asyncSuspension?.token === token) return undefined
+  consumer.asyncSuspension?.release()
+  const wait: AsyncSuspension = {
+    token,
+    consumer,
+    settled,
+    release: () => {
+      const owner = wait.consumer
+      const notify = wait.settled
+      wait.consumer = undefined
+      wait.settled = undefined
+      if (owner?.asyncSuspension === wait) owner.asyncSuspension = undefined
+      notify?.()
+    },
+  }
+  consumer.asyncSuspension = wait
+  return wait.release
+}
 /**
  * Set the active subscriber
  * @param sub - The new active subscriber
@@ -1900,6 +2136,7 @@ export function getBatchDepth(): number {
  * This clears effect queues, resets batch depth, and clears pending flushes.
  */
 export function __resetReactiveState(): void {
+  asyncErrorTarget = undefined
   releaseCleanupSnapshots()
   for (const effect of highPriorityQueue) {
     if (effect) effect.queuedPriority = undefined
@@ -1927,11 +2164,14 @@ export function __resetReactiveState(): void {
  */
 export function untrack<T>(fn: () => T): T {
   const prev = activeSub
+  const previousErrorTarget = asyncErrorTarget
+  if (prev) asyncErrorTarget = prev as AsyncErrorTarget
   activeSub = undefined
   try {
     return prev === undefined ? fn() : runOutsideComponentRender(fn)
   } finally {
     activeSub = prev
+    asyncErrorTarget = previousErrorTarget
   }
 }
 /**

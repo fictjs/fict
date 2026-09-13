@@ -1,3 +1,4 @@
+import { isAsyncPending } from './async-state'
 import { enterRootGuard, exitRootGuard } from './cycle-guard'
 import { getSafeDevtoolsHook as getDevtoolsHook } from './devtools'
 import { runOutsideComponentRender } from './render-phase'
@@ -34,8 +35,16 @@ export interface RootContext {
   errorHandlers?: ErrorHandler[]
   suspenseHandlers?: SuspenseHandler[]
   suspended?: boolean
+  graphSuspended?: boolean
+  mountBoundary?: MountBoundary
   destroying?: boolean
   destroyed?: boolean
+}
+
+export interface MountBoundary {
+  parent?: MountBoundary | undefined
+  deferred: Set<RootContext>
+  shouldDefer: () => boolean
 }
 
 const SVG_NAMESPACE = 'http://www.w3.org/2000/svg'
@@ -123,7 +132,7 @@ function setRootSuspendDevtools(root: RootContext, suspended: boolean): void {
 }
 
 export function createRootContext(parent?: RootContext): RootContext {
-  const root = {
+  const root: RootContext = {
     parent,
     ownerDocument: parent?.ownerDocument,
     renderNamespace: parent?.renderNamespace,
@@ -134,6 +143,7 @@ export function createRootContext(parent?: RootContext): RootContext {
     destroyed: false,
     [ROOT_MOUNT_PHASE]: undefined as MountPhase | undefined,
   }
+  if (parent?.mountBoundary) root.mountBoundary = parent.mountBoundary
   // Undefined means pending; the mount phase lives with its root, without a
   // second WeakMap entry for every mounted row.
   registerRootDevtools(root)
@@ -190,6 +200,18 @@ export function flushOnMount(root: RootContext): void {
     if (root.onMountCallbacks) root.onMountCallbacks.length = 0
     return
   }
+  let boundary = root.mountBoundary
+  while (boundary) {
+    if (boundary.shouldDefer()) {
+      if (!boundary.deferred.has(root)) {
+        const pending = boundary.deferred
+        pending.add(root)
+        root.cleanups.push(() => pending.delete(root))
+      }
+      return
+    }
+    boundary = boundary.parent
+  }
   if (root[ROOT_MOUNT_PHASE] === 'flushing') return
   const cbs = root.onMountCallbacks
   if (!cbs || cbs.length === 0) {
@@ -210,6 +232,18 @@ export function flushOnMount(root: RootContext): void {
   } finally {
     cbs.length = 0
     if (!root.destroying && !root.destroyed) root[ROOT_MOUNT_PHASE] = 'mounted'
+  }
+}
+
+export function flushDeferredMounts(boundary: MountBoundary): void {
+  const roots = Array.from(boundary.deferred)
+  boundary.deferred.clear()
+  for (const root of roots) {
+    try {
+      flushOnMount(root)
+    } catch (error) {
+      if (!handleError(error, { source: 'render' }, root)) throw error
+    }
   }
 }
 
@@ -494,6 +528,8 @@ export function handleSuspend(
         if (handled !== false) {
           // Only set suspended = true when a handler actually handles the token
           if (originRoot) {
+            originRoot.graphSuspended =
+              isAsyncPending(token) && (!originRoot.suspended || originRoot.graphSuspended === true)
             originRoot.suspended = true
             setRootSuspendDevtools(originRoot, true)
           }

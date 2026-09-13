@@ -12,6 +12,8 @@
     "src/**/*.ts",
     "test/async-state.test.ts",
     "test/async-memo.test.ts",
+    "test/async-composition.test.ts",
+    "test/async-suspense.test.ts",
     "test/list-helpers.test.ts",
     "test/binding-edge-cases.test.ts",
     "test/runtime-abi.test.ts",
