@@ -7,12 +7,14 @@ import {
   registerAsyncRead,
   registerAsyncRejection,
 } from './signal'
+import { withTransitionContext } from './transition-scope'
 
 /** Internal async graph source for cache/query policies that own their transport. */
 export interface AsyncSource<T> {
   read(): T
   state(): AsyncSnapshot<T>
   peek(): AsyncSnapshot<T>
+  trackTransitions(): (() => void) | undefined
   /** Pure, lazily evaluated projection with ordinary equality suppression. */
   derive<U>(fn: () => U): () => U
   begin(retainValue?: boolean): number
@@ -27,7 +29,8 @@ export interface AsyncSource<T> {
  * entry shared by other readers. Policy code cancels transport on eviction.
  */
 export function __fictCreateAsyncSource<T>(): AsyncSource<T> {
-  const state = new AsyncState<T>()
+  // The cache's readers own readiness leases; transport can outlive them.
+  const state = new AsyncState<T>(false)
   const node = withRootContext(undefined, () =>
     createAsyncGraphNode(
       () => state.snapshot,
@@ -47,13 +50,14 @@ export function __fictCreateAsyncSource<T>(): AsyncSource<T> {
     return readAsyncSnapshot(snapshot)
   }
   const publish = (accepted: boolean) => {
-    if (accepted) node.publish(state.snapshot)
+    if (accepted) withTransitionContext(state.transitionContext, () => node.publish(state.snapshot))
     return accepted
   }
   return {
     read,
     state: node.read,
     peek: () => state.snapshot,
+    trackTransitions: () => state.trackTransitions(true),
     derive: fn => {
       const projection = withRootContext(undefined, () => createMemo(fn))
       // These are pure snapshot projections. A first read during cleanup must

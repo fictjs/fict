@@ -15,6 +15,7 @@
     "test/async-composition.test.ts",
     "test/async-suspense.test.ts",
     "test/async-source.test.ts",
+    "test/async-transition.test.ts",
     "test/list-helpers.test.ts",
     "test/binding-edge-cases.test.ts",
     "test/runtime-abi.test.ts",

@@ -1,0 +1,66 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-09-13",
+  "baselineRevision": "274741f456e62dce8f53adb25b57e5c51fd1a6b4",
+  "baselineEvidence": {
+    "archive": "resource-async-graph-size-2026-09-13.json",
+    "boundary": "distributed package measurements qualified by A4"
+  },
+  "candidate": "A5 causal transition readiness; exact source and artifact trees below",
+  "tools": {
+    "node": "v24.16.0",
+    "sizeLimit": "12.0.0",
+    "esbuild": "0.27.0"
+  },
+  "measurement": {
+    "unit": "bytes",
+    "compression": "Brotli",
+    "minified": true,
+    "production": true,
+    "command": "pnpm exec size-limit --json",
+    "moduleResolution": "tsconfigRaw.compilerOptions={} with distributed input verification"
+  },
+  "hashAlgorithm": "sha256 of each sorted relative file path, NUL, file bytes, NUL",
+  "candidateSources": {
+    "files": 62,
+    "sha256": "2a3f215cba20f5577be539fbb4c0e75bf8777572fc4e41715b04f30edd40fdb9"
+  },
+  "candidateArtifacts": {
+    "files": 164,
+    "sha256": "213c7c2b8a6085075df7f5d35206a42e918273b55ff111dfcd8445eb7a6ae69d"
+  },
+  "results": [
+    {
+      "name": "Fict package (ESM)",
+      "baselineBytes": 23801,
+      "candidateBytes": 24424,
+      "deltaBytes": 623
+    },
+    {
+      "name": "Fict package (CJS)",
+      "baselineBytes": 43209,
+      "candidateBytes": 44015,
+      "deltaBytes": 806
+    },
+    {
+      "name": "Fict package async memo (ESM)",
+      "baselineBytes": 7695,
+      "candidateBytes": 8369,
+      "deltaBytes": 674
+    },
+    {
+      "name": "Fict package sync memo (ESM)",
+      "baselineBytes": 4780,
+      "candidateBytes": 4920,
+      "deltaBytes": 140
+    },
+    {
+      "name": "Fict package resource (ESM)",
+      "baselineBytes": 20700,
+      "candidateBytes": 21362,
+      "deltaBytes": 662
+    }
+  ],
+  "interpretation": "Causal scopes connect queued graph execution to generation/readiness accounting. Resource readers have independent leases on shared requests. Normal sync updates allocate no causal tracking structures; this artifact measures code size and makes no CPU-performance claim.",
+  "verifiedSourceMapEntries": 98
+}

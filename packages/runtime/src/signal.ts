@@ -13,6 +13,12 @@ import {
   type RootContext,
 } from './lifecycle'
 import { runOutsideComponentRender } from './render-phase'
+import {
+  captureTransitionContext,
+  withTransitionContext,
+  type TransitionContext,
+  type TransitionScope,
+} from './transition-scope'
 import type { SuspenseToken } from './types'
 
 const isDev =
@@ -67,7 +73,7 @@ export interface StackFrame {
 /**
  * Base interface for all reactive nodes
  */
-export interface BaseNode {
+export interface BaseNode extends TransitionNode {
   /** First subscriber link */
   subs: Link | undefined
   /** Last subscriber link */
@@ -78,6 +84,22 @@ export interface BaseNode {
   asyncReads?: Set<() => unknown>
   asyncFailure?: { error: unknown } | undefined
   asyncSuspension?: AsyncSuspension | undefined
+}
+
+interface TransitionNode {
+  /** Allocated only for causally tracked transition writes/work. */
+  transitionWrite?: TransitionWrite | undefined
+  transitionWork?: TransitionWork | undefined
+}
+
+interface TransitionWrite {
+  owner: ReactiveNode
+  context: NonNullable<TransitionContext>
+}
+
+interface TransitionWork {
+  causes: Set<TransitionWrite>
+  releases: Map<TransitionScope, () => void>
 }
 
 interface AsyncSuspension {
@@ -236,7 +258,7 @@ export interface EffectScopeNode extends BaseNode {
 /**
  * Subscriber node used in trigger
  */
-export interface SubscriberNode {
+export interface SubscriberNode extends TransitionNode {
   /** First dependency link */
   deps: Link | undefined
   /** Last dependency link */
@@ -622,6 +644,7 @@ function unwatched(dep: ReactiveNode): void {
     disposeNode(dep)
   } else if ('getter' in dep && dep.getter !== undefined) {
     if (dep.retainDependencies) return
+    releaseTransitionWork(dep)
     dep.depsTail = undefined
     dep.flags = MutableDirty
     purgeDeps(dep)
@@ -702,6 +725,67 @@ function propagate(firstLink: Link): void {
       }
     }
     break
+  }
+}
+
+/**
+ * Follow the affected graph even when ordinary dirty propagation stops at an
+ * already-queued node. A write's identity lets a later urgent/transition write
+ * supersede its cause without erasing concurrent writes to different inputs.
+ * Ordinary updates never allocate this bookkeeping.
+ */
+function trackTransitionWrite(node: ReactiveNode, includeSelf = false): void {
+  const context = captureTransitionContext()
+  if (!context && !node.transitionWrite) return
+  const write = context ? { owner: node, context } : undefined
+  node.transitionWrite = write
+  if (!write) return
+  const stack: ReactiveNode[] = []
+  const visited = new Set<ReactiveNode>()
+  if (includeSelf) stack.push(node)
+  else for (let link = node.subs; link; link = link.nextSub) stack.push(link.sub)
+  while (stack.length) {
+    const sub = stack.pop()!
+    if (visited.has(sub) || ('disposed' in sub && sub.disposed)) continue
+    visited.add(sub)
+    const work = (sub.transitionWork ??= { causes: new Set(), releases: new Map() })
+    for (const old of work.causes) {
+      if (old.owner.transitionWrite !== old || ![...old.context].some(scope => scope.active))
+        work.causes.delete(old)
+    }
+    work.causes.add(write)
+    if (
+      ('fn' in sub && typeof sub.fn === 'function') ||
+      typeof (sub as ComputedNode).onInvalidate === 'function'
+    ) {
+      for (const scope of write.context) {
+        if (!work.releases.has(scope)) work.releases.set(scope, scope.retain())
+      }
+    }
+    for (let link = sub.subs; link; link = link.nextSub) stack.push(link.sub)
+  }
+}
+
+function releaseTransitionWork(node: ReactiveNode): void {
+  const work = node.transitionWork
+  if (!work) return
+  node.transitionWork = undefined
+  for (const release of work.releases.values()) release()
+}
+
+function withNodeTransitions<T>(node: ReactiveNode, fn: () => T): T {
+  const work = node.transitionWork
+  if (!work) return fn()
+  node.transitionWork = undefined
+  const context = new Set<TransitionScope>()
+  for (const cause of work.causes) {
+    if (cause.owner.transitionWrite !== cause) continue
+    for (const scope of cause.context) if (scope.active) context.add(scope)
+  }
+  try {
+    return withTransitionContext(context.size ? context : undefined, fn)
+  } finally {
+    for (const release of work.releases.values()) release()
   }
 }
 /**
@@ -950,6 +1034,8 @@ function disposeNode(node: ReactiveNode): void {
   }
 
   node.depsTail = undefined
+  releaseTransitionWork(node)
+  if (node.transitionWrite) node.transitionWrite = undefined
   if ('asyncReads' in node) node.asyncReads?.clear()
   if ('asyncFailure' in node) node.asyncFailure = undefined
   if ('asyncSuspension' in node) node.asyncSuspension?.release()
@@ -1064,7 +1150,9 @@ function updateComputed<T>(c: ComputedNode<T>): boolean {
   activeSub = c
 
   try {
-    const newValue = withRootContext(c.root, () => c.getter(oldValue))
+    const newValue = c.transitionWork
+      ? withNodeTransitions(c, () => withRootContext(c.root, () => c.getter(oldValue)))
+      : withRootContext(c.root, () => c.getter(oldValue))
     c.hasValue = true
     activeSub = prevSub
     c.flags &= ~Running
@@ -1118,9 +1206,9 @@ const SelfNotified = Recursed | Pending
  * @param e - The effect node
  */
 function runEffect(e: EffectNode): void {
-  withRootContext(e.root, () => {
-    runEffectInRoot(e)
-  })
+  if (e.transitionWork)
+    withNodeTransitions(e, () => withRootContext(e.root, () => runEffectInRoot(e)))
+  else withRootContext(e.root, () => runEffectInRoot(e))
 }
 
 function runEffectInRoot(e: EffectNode): void {
@@ -1368,6 +1456,7 @@ function flushQueues(): void {
     for (let i = 0; i < highPriorityQueue.length; i++) {
       const queued = highPriorityQueue[i]
       if (queued) {
+        releaseTransitionWork(queued)
         queued.queuedPriority = undefined
         if (queued.disposed === true) continue
         queued.flags = Watching
@@ -1376,6 +1465,7 @@ function flushQueues(): void {
     for (let i = 0; i < lowPriorityQueue.length; i++) {
       const queued = lowPriorityQueue[i]
       if (queued) {
+        releaseTransitionWork(queued)
         queued.queuedPriority = undefined
         if (queued.disposed === true) continue
         queued.flags = Watching
@@ -1487,6 +1577,7 @@ function signalOper<T>(this: SignalNode<T>, value?: T): T | void {
     if (valuesDiffer(this, prev as T, next)) {
       this.pendingValue = next
       this.flags = MutableDirty
+      trackTransitionWrite(this as SignalNode)
       if (isDev) updateSignalDevtools(this, next)
       const subs = this.subs
       if (subs !== undefined) {
@@ -1597,6 +1688,7 @@ export function createAsyncGraphNode<T>(
   }
   const publish = (value: T) => {
     if (node.disposed || node.value === value) return
+    trackTransitionWrite(node)
     if (node.subs) {
       // The value is already committed. Mark direct consumers dirty so a pull
       // does not treat this as an unchanged synchronous getter evaluation.
@@ -1619,7 +1711,7 @@ export function createAsyncGraphNode<T>(
       scheduled = false
       if (node.disposed) return
       try {
-        untrack(read)
+        withNodeTransitions(node, () => untrack(read))
       } catch (error) {
         const value = withRootContext(node.root, () =>
           onError(error, node.thrownError?.rejection === true),
@@ -1645,6 +1737,7 @@ export function createAsyncGraphNode<T>(
     publish,
     invalidate: () => {
       if (node.disposed) return
+      trackTransitionWrite(node, true)
       node.flags |= Dirty
       node.onInvalidate?.()
       if (node.subs) {
@@ -2144,10 +2237,16 @@ export function __resetReactiveState(): void {
   asyncErrorTarget = undefined
   releaseCleanupSnapshots()
   for (const effect of highPriorityQueue) {
-    if (effect) effect.queuedPriority = undefined
+    if (effect) {
+      releaseTransitionWork(effect)
+      effect.queuedPriority = undefined
+    }
   }
   for (const effect of lowPriorityQueue) {
-    if (effect) effect.queuedPriority = undefined
+    if (effect) {
+      releaseTransitionWork(effect)
+      effect.queuedPriority = undefined
+    }
   }
   highPriorityQueue.length = 0
   lowPriorityQueue.length = 0

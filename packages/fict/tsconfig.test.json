@@ -1,5 +1,10 @@
 {
   "extends": "./tsconfig.json",
-  "include": ["src", "test/resource-graph.test.ts", "../runtime/src/dev.d.ts"],
+  "include": [
+    "src",
+    "test/resource-graph.test.ts",
+    "test/resource-transition.test.ts",
+    "../runtime/src/dev.d.ts"
+  ],
   "exclude": ["node_modules", "dist"]
 }

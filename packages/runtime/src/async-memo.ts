@@ -19,6 +19,7 @@ import {
   registerAsyncRejection,
   untrack,
 } from './signal'
+import { withTransitionContext } from './transition-scope'
 
 export type AsyncContext<T> = { readonly signal: AbortSignal } & (
   | { readonly hasValue: false; readonly previous: undefined }
@@ -133,7 +134,8 @@ export function createAsyncMemo<T>(
       if (current(flight)) node.publish(failInputs(error))
       return
     }
-    if (current(flight) && change()) node.publish(state.snapshot)
+    if (current(flight) && change())
+      withTransitionContext(state.transitionContext, () => node.publish(state.snapshot))
   }
 
   const driveIterator = async (flight: AsyncFlight<T>) => {
@@ -236,7 +238,9 @@ export function createAsyncMemo<T>(
   const readState = () => {
     if (evaluating)
       throw new Error('[fict] An async computation cannot read itself while producing.')
-    return state.snapshot.status === 'disposed' ? state.snapshot : node.read()
+    const snapshot = state.snapshot.status === 'disposed' ? state.snapshot : node.read()
+    state.trackTransitions()
+    return snapshot
   }
   const accessor = (() => {
     const snapshot = readState()

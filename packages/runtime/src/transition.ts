@@ -1,5 +1,11 @@
 import { createEffect } from './effect'
+import { getCurrentRoot, registerRootCleanup, withRootContext } from './lifecycle'
 import { setTransitionContext, signal, scheduleFlush, untrack } from './signal'
+import {
+  captureTransitionContext,
+  TransitionScope,
+  withTransitionContext,
+} from './transition-scope'
 
 // ============================================================================
 // startTransition - Mark updates as low priority
@@ -38,8 +44,9 @@ export function startTransition(fn: () => void): void {
 // ============================================================================
 
 /**
- * React-style useTransition hook.
- * Returns a pending signal and a startTransition function.
+ * Returns transition readiness and a function for starting low-priority updates.
+ * Pending includes registered downstream async graph work and a returned Promise.
+ * Native await/timer continuations do not implicitly inherit the callback context.
  *
  * @returns A tuple of [isPending accessor, startTransition function]
  *
@@ -69,7 +76,16 @@ export function startTransition(fn: () => void): void {
  */
 export function useTransition(): [() => boolean, (fn: () => void | PromiseLike<unknown>) => void] {
   const pending = signal(false)
+  const owner = getCurrentRoot()
+  const scopes = new Set<TransitionScope>()
+  let disposed = false
   let pendingCount = 0
+
+  registerRootCleanup(() => {
+    disposed = true
+    for (const scope of scopes) scope.cancel()
+    scopes.clear()
+  })
 
   const beginPending = () => {
     pendingCount += 1
@@ -87,28 +103,32 @@ export function useTransition(): [() => boolean, (fn: () => void | PromiseLike<u
   }
 
   const start = (fn: () => void | PromiseLike<unknown>) => {
+    if (disposed) return
     beginPending()
-    let pendingEnded = false
-    const finishPending = () => {
-      if (pendingEnded) return
-      pendingEnded = true
+    const scope = new TransitionScope(() => {
+      scopes.delete(scope)
       endPending()
-    }
+    })
+    scopes.add(scope)
+    const context = new Set(captureTransitionContext())
+    context.add(scope)
     let result: void | PromiseLike<unknown> | undefined
     let thrown: unknown
     let didThrow = false
 
-    startTransition(() => {
-      try {
-        result = fn()
-      } catch (err) {
-        thrown = err
-        didThrow = true
-      }
-    })
+    withTransitionContext(context, () =>
+      startTransition(() => {
+        try {
+          result = withRootContext(owner ?? getCurrentRoot(), fn)
+        } catch (err) {
+          thrown = err
+          didThrow = true
+        }
+      }),
+    )
 
     if (didThrow) {
-      finishPending()
+      scope.cancel()
       throw thrown
     }
 
@@ -116,7 +136,7 @@ export function useTransition(): [() => boolean, (fn: () => void | PromiseLike<u
     try {
       isThenable = Boolean(result && typeof (result as PromiseLike<unknown>).then === 'function')
     } catch (error) {
-      finishPending()
+      scope.cancel()
       throw error
     }
 
@@ -129,10 +149,10 @@ export function useTransition(): [() => boolean, (fn: () => void | PromiseLike<u
             }
           })
           .finally(() => {
-            finishPending()
+            scope.close()
           })
       } catch (error) {
-        finishPending()
+        scope.cancel()
         throw error
       }
       return
@@ -140,9 +160,9 @@ export function useTransition(): [() => boolean, (fn: () => void | PromiseLike<u
 
     // Keep pending true for at least one microtask so UI can observe it.
     if (typeof queueMicrotask === 'function') {
-      queueMicrotask(finishPending)
+      queueMicrotask(() => scope.close())
     } else {
-      Promise.resolve().then(finishPending)
+      Promise.resolve().then(() => scope.close())
     }
   }
 

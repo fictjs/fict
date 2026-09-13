@@ -1,3 +1,9 @@
+import {
+  captureTransitionContext,
+  type TransitionContext,
+  type TransitionScope,
+} from './transition-scope'
+
 /** Shared readiness protocol for graph computations and data-policy adapters. */
 const ASYNC_PENDING = Symbol.for('fict:async-pending')
 
@@ -84,6 +90,12 @@ interface Flight {
   yielded: boolean
 }
 
+interface TransitionLease {
+  readers: number
+  generation: boolean
+  release: () => void
+}
+
 export function readAsyncSnapshot<T>(snapshot: AsyncSnapshot<T>): T {
   switch (snapshot.status) {
     case 'ready':
@@ -101,7 +113,7 @@ export function readAsyncSnapshot<T>(snapshot: AsyncSnapshot<T>): T {
 }
 
 /**
- * Contains no signals, effects, cache policy, or host callbacks. A graph node owns
+ * Contains no signals, effects, transport, or cache policy. A graph node owns
  * this state and publishes changed snapshots through its existing subscriptions.
  * Transport cancellation is separate: even a transport ignoring abort cannot
  * commit a superseded generation through this protocol.
@@ -116,9 +128,58 @@ export class AsyncState<T> {
     pending: undefined,
   })
   private flight: Flight | undefined
+  private transitions: Map<TransitionScope, TransitionLease> | undefined
+
+  constructor(private readonly trackGeneration = true) {}
 
   get snapshot(): AsyncSnapshot<T> {
     return this.current
+  }
+
+  get transitionContext(): TransitionContext {
+    return this.transitions?.size ? new Set(this.transitions.keys()) : undefined
+  }
+
+  /** Cache readers may release readiness separately from shared transport. */
+  trackTransitions(consumer = false): (() => void) | undefined {
+    const pending = this.current.pending
+    const context = captureTransitionContext()
+    if (!pending || !context) return
+    const transitions = (this.transitions ??= new Map())
+    const subscriptions: (() => void)[] = []
+    for (const scope of context) {
+      let lease = transitions.get(scope)
+      if (!lease) {
+        const release = scope.retain()
+        lease = { readers: 0, generation: false, release }
+        transitions.set(scope, lease)
+        const currentLease = lease
+        const settled = () => {
+          if (transitions.get(scope) !== currentLease) return
+          transitions.delete(scope)
+          release()
+        }
+        void pending.then(settled, settled)
+      }
+      if (consumer) {
+        lease.readers++
+        const currentLease = lease
+        subscriptions.push(() => {
+          if (transitions.get(scope) !== currentLease) return
+          if (--currentLease.readers === 0 && !currentLease.generation) {
+            transitions.delete(scope)
+            currentLease.release()
+          }
+        })
+      } else lease.generation = true
+    }
+    if (!subscriptions.length) return
+    let released = false
+    return () => {
+      if (released) return
+      released = true
+      for (const release of subscriptions) release()
+    }
   }
 
   begin(retainValue = true): AsyncPending {
@@ -137,6 +198,7 @@ export class AsyncState<T> {
       then: promise.then.bind(promise),
     })
     this.flight = { generation, token, wake, yielded: false }
+    this.transitions = undefined
     this.current = Object.freeze(
       retainValue && this.current.hasValue
         ? {
@@ -156,6 +218,7 @@ export class AsyncState<T> {
             pending: token,
           },
     )
+    if (this.trackGeneration) this.trackTransitions()
     return token
   }
 
@@ -200,6 +263,7 @@ export class AsyncState<T> {
     if (this.current.status === 'disposed') return false
     const flight = this.flight
     this.flight = undefined
+    this.transitions = undefined
     this.current = Object.freeze({
       ...this.current,
       status: 'disposed',

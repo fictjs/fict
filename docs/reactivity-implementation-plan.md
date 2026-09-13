@@ -23,7 +23,7 @@ not only an analysis pass, an API sketch, or a passing unrelated test suite.
 | A2   | An explicit async computation is a reactive graph node, including Promise and async iterable completion, invalidation, and cancellation.                              | Graph-level dependency/status behavior, stale-flight rejection, cancellation and disposal tests; preserve existing Promise-valued synchronous memo behavior.                                  | Complete |
 | A3   | Pending/error states compose through synchronous derived nodes and effect/render consumers with defined commit semantics.                                             | Chains, diamonds, conditional subscriptions, independent boundaries, error recovery, no unintended partial commits, and cleanup ordering.                                                     | Complete |
 | A4   | Resource uses the shared async computation protocol while retaining its data/cache policies.                                                                          | Existing resource/cache/TTL/SWR/LRU/sharing/optimistic/SSR regressions and new graph-composition coverage.                                                                                    | Complete |
-| A5   | Transition readiness accounts for registered downstream async work caused by updates, including indirectly triggered requests.                                        | Overlapping transitions, unrelated roots, stale completions, callback failures, disposal, and the indirect-resource regression.                                                               | Pending  |
+| A5   | Transition readiness accounts for registered downstream async work caused by updates, including indirectly triggered requests.                                        | Overlapping transitions, unrelated roots, stale completions, callback failures, disposal, and the indirect-resource regression.                                                               | Complete |
 | A6   | Compiler-owned async declarations, types, runtime helpers, and cross-module contracts use the same graph protocol.                                                    | Native strict compilation, source maps, metadata/ABI checks, reactive input updates and lifecycle checks; explicit supported continuation boundaries.                                         | Pending  |
 | A7   | Async graph behavior works through SSR, streaming, hydration, and request isolation.                                                                                  | Real server/browser tests covering initial pending, refresh, errors, cancellation, serialization and compatible hydration.                                                                    | Pending  |
 | A8   | Representative applications and documentation demonstrate the unified model and its migration boundaries.                                                             | End-to-end async application scenarios, usable examples, API/package checks and synchronous performance regression checks.                                                                    | Pending  |
@@ -210,3 +210,27 @@ included in root CI/release/precommit gates. The
 verifies source maps and records distributed artifact hashes. Its new selective
 Resource gate measures 20,700 B Brotli; main ESM and sync-memo import sizes stay
 unchanged. This is an architecture/policy qualification, not a CPU speed claim.
+
+## A5: causal transition readiness
+
+Transition scopes now follow signal writes through queued effects, activated async
+computations, and downstream publications. Write identity distinguishes an obsolete
+same-input update from simultaneous updates to different inputs. Pending includes
+registered graph generations and the callback's returned Promise; equality skips,
+replaced generations, and disposal release their accounting. Ordinary synchronous
+updates allocate no transition bookkeeping.
+
+Resource readers hold independent readiness leases on a shared request. Switching
+keys can end an obsolete view's wait while retaining useful cached transport;
+removing one reader does not release another reader's lease. Hook-owner disposal
+ends its scopes. Native await/timer continuations keep their explicit registration
+boundary, documented alongside the unchanged public signatures.
+
+Validation: 14 new runtime cases and 5 Resource cases, existing scheduler and
+Resource regressions, the full runtime suite, production/test typechecks, all 31
+workspace builds, 390 native compiler/DOM/SSR tests, and actual distributed ESM/CJS
+memo and Resource probes. The
+[causal transition size archive](./benchmarks/causal-transition-size-2026-09-13.json)
+verifies 98 source-map entries and records source/artifact identities. Complete ESM
+adds 623 B Brotli and the sync memo import adds 140 B. All five package/import
+budgets include the measured cost; no CPU-performance result is inferred.

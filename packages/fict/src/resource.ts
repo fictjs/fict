@@ -687,6 +687,8 @@ export function resource<T, Args = void>(
           // Pass isRevalidating=true to avoid showing loading state
           startFetch(cache, entry, key, args as Args, { isRevalidating: true })
         }
+        const releaseTransition = entry.source.trackTransitions()
+        if (releaseTransition) onCleanup(releaseTransition)
       })
 
       // Commit the initial reference even when its first read happens during

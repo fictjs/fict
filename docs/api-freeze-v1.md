@@ -95,6 +95,14 @@ export function useTransition(): [
 export function useDeferredValue<T>(value: () => T): () => T
 ```
 
+`useTransition` retains its tuple and callback signatures. Its pending accessor
+now includes registered async graph work caused by synchronous callback updates,
+in addition to a returned Promise. Causal scopes isolate overlapping transitions
+and unrelated work. Resource readiness leases follow readers independently from
+cache transport; hook-owner disposal ends pending scopes. Native `await` does not
+implicitly preserve this callback context. See the
+[async graph contract](./async-graph-contract.md#ownership-transitions-and-data-policy).
+
 ### 1.1.1 Deep Reactive Store
 
 ```typescript

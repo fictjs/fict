@@ -137,6 +137,27 @@ than one global pending counter, isolate overlapping transitions and unrelated
 roots. Replaced flights stop contributing to their old readiness count without
 settling a newer flight. A returned transition Promise remains supported.
 
+`useTransition` opens a causal scope for its synchronous callback. Signal writes
+carry scope identities through queued effects and activated async computations,
+including effect-to-signal writes and downstream async publication. Replacing a
+queued write to the same signal supersedes that cause; concurrent writes to
+different inputs retain both causes. Equality-suppressed computations and disposed
+queued consumers release their accounting without inventing new async work.
+
+Readiness waits for both the callback's returned Promise and causally registered
+pending generations. A stream is initially ready at its first yield; later yields
+do not keep an already-completed transition open indefinitely. Resource readers
+use reference-counted readiness leases on shared generations. Switching keys or
+disposing a reader releases its lease without cancelling transport needed by the
+cache or another reader. Destroying the hook's owner ends its scopes; a retained
+start function becomes inert after that disposal.
+
+This context follows registered graph work, not native JavaScript continuation
+storage. Arbitrary work after `await`, in detached timers, or in unrelated Promise
+callbacks does not inherit a transition merely by lexical placement. Return a
+Promise covering that work, or start an explicit transition for its later updates.
+`startTransition` continues to provide scheduling priority without a pending hook.
+
 Resource retains cache keys, TTL, SWR, LRU, deduplication, prefetch, optimistic
 mutation, and request/shared-cache choices. Those are data policies. Current
 readiness and generation acceptance use the shared async protocol. Existing
@@ -194,6 +215,9 @@ identity, cache ownership, generation resets, graph composition, field equality,
 errors, eviction, invalidation, and cleanup reads. Existing Resource tests retain
 cache, cancellation, TTL/SWR, mutation, and request-isolation coverage.
 
-Indirect and overlapping transitions and real SSR/streaming/hydration qualification
-remain separate A5–A8 items. Passing state, node, or composition tests alone does
-not satisfy those integration requirements.
+`async-transition.test.ts`, the scheduler regressions, and
+`packages/fict/test/resource-transition.test.ts` exercise indirect requests,
+overlap, queued replacement, stale generations, shared leases, disposal, first
+stream readiness, and returned-Promise composition. Compiler-owned continuations
+and real SSR/streaming/hydration qualification remain separate A6–A8 items. Passing
+state, node, or composition tests alone does not satisfy those requirements.
