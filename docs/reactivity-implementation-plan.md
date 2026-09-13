@@ -23,6 +23,7 @@ not only an analysis pass, an API sketch, or a passing unrelated test suite.
 | A1   | An async graph contract specifies readiness, stale/current values, invalidation, errors, effect commit, ownership, and compatibility.                                 | Implementable state transitions and executable acceptance scenarios, not percentage scores.                                                                                                   | Complete |
 | A2   | An explicit async computation is a reactive graph node, including Promise and async iterable completion, invalidation, and cancellation.                              | Graph-level dependency/status behavior, stale-flight rejection, cancellation and disposal tests; preserve existing Promise-valued synchronous memo behavior.                                  | Complete |
 | A3   | Pending/error states compose through synchronous derived nodes and effect/render consumers with defined commit semantics.                                             | Chains, diamonds, conditional subscriptions, independent boundaries, error recovery, no unintended partial commits, and cleanup ordering.                                                     | Complete |
+| A3b  | Keyed lists retain async subscriptions while their live owner parks DOM in Suspense.                                                                                  | Initial pending, refresh, same-key row identity, superseded results, disposal, existing list/async suites and runtime typechecks.                                                             | Complete |
 | A4   | Resource uses the shared async computation protocol while retaining its data/cache policies.                                                                          | Existing resource/cache/TTL/SWR/LRU/sharing/optimistic/SSR regressions and new graph-composition coverage.                                                                                    | Complete |
 | A5   | Transition readiness accounts for registered downstream async work caused by updates, including indirectly triggered requests.                                        | Overlapping transitions, unrelated roots, stale completions, callback failures, disposal, and the indirect-resource regression.                                                               | Complete |
 | A6   | Compiler-owned async declarations, types, runtime helpers, and cross-module contracts use the same graph protocol.                                                    | Native strict compilation, source maps, metadata/ABI checks, reactive input updates and lifecycle checks; explicit supported continuation boundaries.                                         | Complete |
@@ -407,3 +408,21 @@ Brotli to complete ESM, 1,079 B to CJS, and 723 B to the Resource import with
 shared Suspense support. Those budgets record the measured API cost. Selective
 sync and async memo imports remain unchanged at 4,923 and 8,365 B. Application
 and CPU qualification remain A8/G4/G5; no historical benchmark is relabeled.
+
+## A3b: async keyed lists in parked DOM
+
+Application qualification exposed an integration gap between keyed lists and
+Suspense. The list waited for a connected parent before every diff. After a
+pending read parked its parent, settlement returned before reading the source,
+so the effect dropped its subscriptions and the resumed boundary stayed empty
+or retained old rows.
+
+A list still waits for its initial connection. Once its effect has started, its
+live owner governs updates in a parked parent; disposal still stops subsequent
+work. The regression covers initial pending and refresh, retained row/parent
+identity, replacement and row cleanup, superseded completion, and disposal
+before the last completion. Both cases fail on the preceding runtime and pass
+with this change. The existing async/list checks pass (47 tests), as does the
+runtime suite (1544 passed; eight existing opt-in/legacy cases skipped).
+Production and test typechecks pass. This is correctness evidence, not a new
+performance measurement. See the [recorded evidence](testing/async-keyed-list-evidence-2026-09-14.json).

@@ -1,0 +1,63 @@
+{
+  "schemaVersion": 1,
+  "item": "A3b - async keyed list lifetime",
+  "recordedAt": "2026-09-13T18:03:50.850243+00:00",
+  "baselineRevision": "774397e14927f714bea49d27143b4ae4c877a94c",
+  "sourceFiles": [
+    {
+      "file": "packages/runtime/src/list-helpers.ts",
+      "bytes": 44028,
+      "sha256": "25e0d58022a7195ff7c662ada27bb045dd5966817fc329fd26f431830dc19794"
+    },
+    {
+      "file": "packages/runtime/test/async-keyed-list.test.ts",
+      "bytes": 4070,
+      "sha256": "e4a7fe51e17c0aed8d5fd7cdcfd81a026f9ed408c0047f3f32575c9836a3de0a"
+    }
+  ],
+  "baseline": {
+    "runtimeSource": "git show HEAD:packages/runtime/src/list-helpers.ts at baselineRevision",
+    "command": "pnpm --filter @fictjs/runtime exec vitest run test/async-keyed-list.test.ts",
+    "passed": 0,
+    "failed": 2,
+    "failures": ["initial pending resumes empty", "refresh retains previous rows"],
+    "logSha256": "8ce792941229cd7e38022f27e99abd28c3fd717f91691d6e5db707c0f1263d1e"
+  },
+  "validation": [
+    {
+      "command": "pnpm --filter @fictjs/runtime exec vitest run test/async-keyed-list.test.ts test/async-suspense.test.ts test/list-helpers.test.ts",
+      "exitCode": 0,
+      "passed": 47,
+      "logSha256": "aad285d9f79da84aeb76d54f198f25dbc8cc076720f472b15baa73345c08d7b8"
+    },
+    {
+      "command": "pnpm --filter @fictjs/runtime test",
+      "exitCode": 0,
+      "passed": 1544,
+      "skipped": 8,
+      "testFilesPassed": 72,
+      "testFilesSkipped": 1,
+      "logSha256": "b3a949a677e0dd1563eee04f7d9ba05db2da7037160a983d7b6041489cc134d1"
+    },
+    {
+      "command": "pnpm --filter @fictjs/runtime typecheck",
+      "exitCode": 0
+    },
+    {
+      "command": "pnpm --filter @fictjs/runtime typecheck:tests",
+      "exitCode": 0
+    }
+  ],
+  "acceptance": [
+    "initial connection remains required",
+    "initial async settlement restores rows",
+    "refresh preserves parent and surviving keyed row identity",
+    "removed rows clean up exactly once",
+    "superseded completion cannot replace the active generation",
+    "disposed lists create no rows from late completion"
+  ],
+  "limits": [
+    "Local source/runtime qualification. Application production browser checks are tracked separately by S5.",
+    "No new CPU or memory performance claim; the opt-in runtime stress suite was not run in this item."
+  ]
+}

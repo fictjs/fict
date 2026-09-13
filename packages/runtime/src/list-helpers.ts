@@ -735,7 +735,10 @@ function createFineGrainedKeyedList<T>(
     return nodes
   }
 
-  const getConnectedParent = (): (ParentNode & Node) | null => {
+  // Initial mounting waits for a usable namespace/parent. Once started, the owner
+  // can park this DOM in Suspense; keep reading its source while disconnected so
+  // settlement does not erase the list's dependencies before the boundary resumes.
+  const getUsableParent = (): (ParentNode & Node) | null => {
     const endParent = container.endMarker.parentNode
     const startParent = container.startMarker.parentNode
     if (endParent && startParent && endParent === startParent) {
@@ -743,11 +746,11 @@ function createFineGrainedKeyedList<T>(
       if (parentNode.nodeType === 11) {
         if (isShadowRoot(parentNode)) {
           const host = parentNode.host
-          if ('isConnected' in host && !host.isConnected) return null
+          if (!effectStarted && 'isConnected' in host && !host.isConnected) return null
         }
         return parentNode
       }
-      if ('isConnected' in parentNode && !parentNode.isConnected) return null
+      if (!effectStarted && 'isConnected' in parentNode && !parentNode.isConnected) return null
       return parentNode
     }
     return null
@@ -759,7 +762,7 @@ function createFineGrainedKeyedList<T>(
     const isSSR = __fictIsSSR()
     const parent = isSSR
       ? (container.startMarker.parentNode as (ParentNode & Node) | null)
-      : getConnectedParent()
+      : getUsableParent()
     if (!parent) return
     batch(() => {
       const oldBlocks = container.blocks
@@ -1229,7 +1232,7 @@ function createFineGrainedKeyedList<T>(
     const isSSR = __fictIsSSR()
     const parent = isSSR
       ? (container.startMarker.parentNode as (ParentNode & Node) | null)
-      : getConnectedParent()
+      : getUsableParent()
     if (!parent) return false
     const start = () => {
       effectDispose = createRenderEffect(performDiff)
@@ -1255,7 +1258,7 @@ function createFineGrainedKeyedList<T>(
       root && root.nodeType === 11 && isShadowRoot(root as Node) ? (root as ShadowRoot) : null
     connectObserver = new MutationObserver(() => {
       if (disposed) return
-      if (getConnectedParent()) {
+      if (getUsableParent()) {
         disconnectObserver()
         if (ensureEffectStarted()) {
           flush()
