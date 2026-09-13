@@ -14,7 +14,12 @@ export const CORPUS_APPLICATIONS = [
   },
   { id: 'todos', category: 'application', tier: 'Core', files: ['main.tsx'] },
   { id: 'forms', category: 'application', tier: 'Core', files: ['main.tsx'] },
-  { id: 'async-data', category: 'application', tier: 'Core', files: ['main.tsx'] },
+  {
+    id: 'async-data',
+    category: 'application',
+    tier: 'Core',
+    files: ['main.tsx', 'GraphPanel.tsx'],
+  },
   { id: 'real-apps', category: 'application', tier: 'Core', files: ['main.tsx'] },
   {
     id: 'ssr-basic',

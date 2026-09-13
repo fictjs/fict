@@ -30,7 +30,7 @@ not only an analysis pass, an API sketch, or a passing unrelated test suite.
 | A5   | Transition readiness accounts for registered downstream async work caused by updates, including indirectly triggered requests.                                        | Overlapping transitions, unrelated roots, stale completions, callback failures, disposal, and the indirect-resource regression.                                                               | Complete |
 | A6   | Compiler-owned async declarations, types, runtime helpers, and cross-module contracts use the same graph protocol.                                                    | Native strict compilation, source maps, metadata/ABI checks, reactive input updates and lifecycle checks; explicit supported continuation boundaries.                                         | Complete |
 | A7   | Async graph behavior works through SSR, streaming, hydration, and request isolation.                                                                                  | Real server/browser tests covering initial pending, refresh, errors, cancellation, serialization and compatible hydration.                                                                    | Complete |
-| A8   | Representative applications and documentation demonstrate the unified model and its migration boundaries.                                                             | End-to-end async application scenarios, usable examples, API/package checks and synchronous performance regression checks.                                                                    | Pending  |
+| A8   | Representative applications and documentation demonstrate the unified model and its migration boundaries.                                                             | End-to-end async application scenarios, usable examples, API/package checks and synchronous performance regression checks.                                                                    | Complete |
 | Q1   | The final stack satisfies each row against the current source and artifacts.                                                                                          | Full applicable compiler/runtime/SSR/bundler/strict/browser gates, per-item commits, fresh final audit, and explicit evidence for every completion claim.                                     | Pending  |
 
 Changes must preserve observable JavaScript behavior: reference/receiver semantics,
@@ -647,3 +647,30 @@ explanations and previous core counters are unchanged. The original Babel
 capture remains intact; only the current corpus reference is rebound.
 See the [review archive](./testing/unused-scalar-memo-evidence-2026-09-14.json).
 This is semantic and emitted-code evidence, without new CPU measurements.
+
+## A8: executable application and migration model
+
+The async-data example now places an owned `$async` computation beside its
+Resource panels. A plain derivation feeds JSX, transitions account for input
+changes, Suspense retains the note's DOM identity through refresh, and explicit
+error/reset and hide/remount controls exercise recovery and cancellation.
+README's async example uses the same model and executes successfully through
+six native optimizer/DOM profiles, including SSR failure and request disposal.
+The migration guide distinguishes current/stale reads, preparation/commit,
+Resource cache policy, metadata compatibility and native-await/Preview boundaries.
+
+The [application evidence](./testing/async-application-evidence-2026-09-14.json)
+preserves the complete fresh strict corpus, source/tool/package hashes and logs.
+All 11 build phases, five small-app flows, four real-app/SSR cases and streaming
+smoke pass. Chromium 145.0.7632.6 verifies refresh identity, overlapping requests,
+error recovery and disposal. The 13 application files contain two explicit
+snapshots; the new panel adds none. Seven diagnostics are advisory, with no
+fallback or unsupported diagnostics. This is maintained repository coverage,
+not independent external adoption.
+
+Distributed ESM/CJS package probes verify shared root/advanced graph behavior,
+derivations, causal transitions, stale rejection, cancellation, cleanup and public
+async declarations. They run in the existing runtime package gate. G4/G5 provide
+separate current synchronous CPU/allocation/memory qualification: the five-framework
+score is 1.113164 and the 1.10 target remains unmet. No zero-cost async or universal
+optimal-graph claim is made from those results.

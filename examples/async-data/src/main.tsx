@@ -1,6 +1,7 @@
 import { $state, render, Suspense, ErrorBoundary } from 'fict'
 import { resource } from 'fict/plus'
 import { reactive } from 'fict/advanced'
+import { GraphPanel } from './GraphPanel'
 
 // Simulated API types
 interface User {
@@ -226,6 +227,8 @@ function AsyncDataApp() {
           )}
         </div>
       </div>
+
+      <GraphPanel />
 
       {/* Info Section */}
       <div style={styles.infoSection}>

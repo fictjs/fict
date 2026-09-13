@@ -221,6 +221,45 @@ try {
       ).toBeEnabled()
       await expect(page.getByText('Alice Johnson', { exact: true })).toBeVisible()
       await expect(page.locator('h4')).toHaveText(['Building Scalable Apps'])
+      if (id === 'async-data') {
+        await expect(page.locator('#graph-value')).toHaveText('Current result: Result 1')
+        const note = page.locator('#graph-note')
+        await note.fill('Keep this note')
+        const initialNote = await note.elementHandle()
+        await page.locator('#graph-next').click()
+        await expect(page.locator('#graph-transition')).toHaveText('Updating result…')
+        await expect(page.locator('#graph-loading')).toBeVisible()
+        await expect(page.locator('#graph-value')).toHaveText('Current result: Result 2')
+        await expect(note).toHaveValue('Keep this note')
+        assert.equal(
+          await initialNote.evaluate(node => node === document.querySelector('#graph-note')),
+          true,
+        )
+        await expect(page.locator('#graph-transition')).toHaveText('Transition idle')
+
+        await page.locator('#graph-next').click()
+        await page.waitForTimeout(50)
+        await page.locator('#graph-next').click()
+        await expect(page.locator('#graph-value')).toHaveText('Current result: Result 4')
+        await expect(note).toHaveValue('Keep this note')
+        await page.locator('#graph-fail').click()
+        await expect(page.locator('#graph-error')).toContainText('The example request failed')
+        await expect(page.locator('#graph-transition')).toHaveText('Transition idle')
+        await page.locator('#graph-recover').click()
+        await expect(page.locator('#graph-error')).toHaveCount(0)
+        await expect(page.locator('#graph-value')).toHaveText('Current result: Result 4')
+
+        await page.locator('#graph-next').click()
+        await expect(page.locator('#graph-loading')).toBeVisible()
+        await page.locator('#graph-toggle').click()
+        await expect(page.locator('#graph-content')).toHaveCount(0)
+        await page.waitForTimeout(800)
+        await expect(page.locator('#graph-content')).toHaveCount(0)
+        await page.locator('#graph-toggle').click()
+        await expect(page.locator('#graph-value')).toHaveText('Current result: Result 1')
+        await expect(page.locator('#graph-note')).toHaveValue('')
+        await expect(page.locator('h4')).toHaveText(['Building Scalable Apps'])
+      }
     })
   }
   report.status = 'passed'

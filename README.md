@@ -306,28 +306,38 @@ No `<For>` or `v-for` — just `.map()`.
 ### Async data fetching
 
 ```tsx
-function UserProfile({ userId }: { userId: string }) {
-  let user = $state<User | null>(null)
-  let loading = $state(true)
+import { $async, $state, ErrorBoundary, Suspense } from 'fict'
 
-  $effect(() => {
-    const controller = new AbortController()
-    loading = true
+async function fetchUserName(id: number, signal: AbortSignal) {
+  const response = await fetch(`/api/user/${id}`, { signal })
+  if (!response.ok) throw new Error(`Request failed: ${response.status}`)
+  const user = (await response.json()) as { name: string }
+  return user.name
+}
 
-    fetch(`/api/user/${userId}`, { signal: controller.signal })
-      .then(res => res.json())
-      .then(data => {
-        user = data
-        loading = false
-      })
-
-    return () => controller.abort() // cleanup on userId change
-  })
-
-  if (loading) return <Spinner />
-  return <div>{user?.name}</div>
+function UserProfile() {
+  let userId = $state(1)
+  const name = $async(context => fetchUserName(userId, context.signal))
+  return (
+    <section>
+      <button onClick={() => userId++}>Next user</button>
+      <ErrorBoundary resetKeys={userId} fallback={error => <p>{String(error)}</p>}>
+        <Suspense fallback={<p>Loading…</p>}>
+          <p>{name}</p>
+        </Suspense>
+      </ErrorBoundary>
+    </section>
+  )
 }
 ```
+
+`$async` exposes the resolved value of an owned async graph node. Inputs are
+captured synchronously; replacement and disposal abort obsolete work. Readiness
+propagates through derived values and bindings to Suspense and ErrorBoundary.
+Use `resource` from `fict/plus` when you also need shared requests or cache policy.
+Ordinary Promise-valued memos keep their existing behavior, and native `await`
+does not preserve reactive tracking. See the [async declaration guide](docs/async-declarations.md)
+and the runnable [async data example](examples/async-data).
 
 ### Props stay reactive
 
@@ -585,6 +595,7 @@ retains the earlier 0.34.0 results and optimization experiments.
 - [x] Compiler with HIR/SSA
 - [x] Stable `$state` / `$effect` semantics
 - [x] Automatic derived value inference
+- [x] Explicit `$async` declarations and owned async graph composition
 - [x] `$store` in `fict`, `resource`/`lazy` in `fict/plus`
 - [x] `startTransition`, `useTransition`, `useDeferredValue` in `fict`
 - [x] Vite plugin
@@ -604,28 +615,31 @@ retains the earlier 0.34.0 results and optimization experiments.
 
 ## Documentation
 
-| Doc                                                               | Description                            |
-| :---------------------------------------------------------------- | :------------------------------------- |
-| [Architecture](./docs/architecture.md)                            | How the compiler and runtime work      |
-| [API Reference](./docs/api-reference.md)                          | Complete API documentation             |
-| [Compiler Spec](./docs/compiler-spec.md)                          | Formal semantics                       |
-| [Reactive Graph Trace](./docs/reactive-graph-trace.md)            | Source plans and final helper calls    |
-| [Migration Guide](./docs/migration-guide.md)                      | React/Vue/Svelte/Solid migration       |
-| [Strict Guarantee Cookbook](./docs/strict-guarantee-cookbook.md)  | Fail-closed diagnostic rewrites        |
-| [Store API](./docs/store-api.md)                                  | `$state` vs `$store` ownership         |
-| [Release Policy](./docs/release-policy.md)                        | SemVer and changelog standards         |
-| [Scope Contract](./SCOPE.md)                                      | Core/Satellite/Preview/Internal tiers  |
-| [Preview Policy](./docs/PREVIEW.md)                               | Preview surface + degradation contract |
-| [ESLint Rules](./docs/eslint-rules.md)                            | Linting configuration                  |
-| [Diagnostic Codes](./docs/diagnostic-codes.md)                    | Compiler warnings reference            |
-| [Config Profiles](./docs/config-profiles.md)                      | Recommended dev/CI/prod settings       |
-| [Compiler Maintenance](./docs/compiler-maintenance.md)            | Compiler complexity guardrails         |
-| [Cycle Protection](./docs/cycle-protection.md)                    | Dev-mode infinite loop detection       |
-| [SSR SEO Guide](./docs/ssr-seo.md)                                | SEO best practices for SSR pages       |
-| [SSR Performance](./docs/ssr-performance.md)                      | Snapshot size & render-mode tuning     |
-| [SSR Deployment](./docs/ssr-deployment.md)                        | Vercel/Cloudflare/edge deployment      |
-| [Security Boundaries](./docs/architecture/security-boundaries.md) | HTML/snapshot/CSP/isolation review     |
-| [DevTools](./packages/devtools/README.md)                         | Vite plugin usage & auto-injection     |
+| Doc                                                               | Description                             |
+| :---------------------------------------------------------------- | :-------------------------------------- |
+| [Architecture](./docs/architecture.md)                            | How the compiler and runtime work       |
+| [API Reference](./docs/api-reference.md)                          | Complete API documentation              |
+| [Compiler Spec](./docs/compiler-spec.md)                          | Formal semantics                        |
+| [Reactive Graph Trace](./docs/reactive-graph-trace.md)            | Source plans and final helper calls     |
+| [Async Declarations](./docs/async-declarations.md)                | Owned resolved values and continuations |
+| [Async Graph Contract](./docs/async-graph-contract.md)            | Readiness, stale values and cleanup     |
+| [Async SSR and Hydration](./docs/async-ssr-hydration.md)          | Request ownership and client handoff    |
+| [Migration Guide](./docs/migration-guide.md)                      | React/Vue/Svelte/Solid migration        |
+| [Strict Guarantee Cookbook](./docs/strict-guarantee-cookbook.md)  | Fail-closed diagnostic rewrites         |
+| [Store API](./docs/store-api.md)                                  | `$state` vs `$store` ownership          |
+| [Release Policy](./docs/release-policy.md)                        | SemVer and changelog standards          |
+| [Scope Contract](./SCOPE.md)                                      | Core/Satellite/Preview/Internal tiers   |
+| [Preview Policy](./docs/PREVIEW.md)                               | Preview surface + degradation contract  |
+| [ESLint Rules](./docs/eslint-rules.md)                            | Linting configuration                   |
+| [Diagnostic Codes](./docs/diagnostic-codes.md)                    | Compiler warnings reference             |
+| [Config Profiles](./docs/config-profiles.md)                      | Recommended dev/CI/prod settings        |
+| [Compiler Maintenance](./docs/compiler-maintenance.md)            | Compiler complexity guardrails          |
+| [Cycle Protection](./docs/cycle-protection.md)                    | Dev-mode infinite loop detection        |
+| [SSR SEO Guide](./docs/ssr-seo.md)                                | SEO best practices for SSR pages        |
+| [SSR Performance](./docs/ssr-performance.md)                      | Snapshot size & render-mode tuning      |
+| [SSR Deployment](./docs/ssr-deployment.md)                        | Vercel/Cloudflare/edge deployment       |
+| [Security Boundaries](./docs/architecture/security-boundaries.md) | HTML/snapshot/CSP/isolation review      |
+| [DevTools](./packages/devtools/README.md)                         | Vite plugin usage & auto-injection      |
 
 <details>
 <summary><strong>🔍 Linting & diagnostics</strong></summary>
@@ -645,7 +659,7 @@ Key rules: nested component definitions (FICT-C003), missing list keys (FICT-J00
 - For strict CI gates, enable compiler `strictReactivity: true` to escalate the `FICT-R006` control-flow fallback diagnostic to a build error.
 - `strictGuarantee` is enabled by default for fail-closed guarantees.
 - Production compilation (`NODE_ENV=production`) force-enables `strictGuarantee` even when an integration opts out.
-- Set `strictGuarantee: false` only for non-production migration or benchmark builds.
+- Use `strictGuarantee: false` only for non-production migration inventory. The maintained benchmark requires strict compilation.
 - CI can force strict mode with `FICT_STRICT_GUARANTEE=1` during build steps.
 - Guarantee boundary reference: `docs/reactivity-guarantee-matrix.md`.
 - `pnpm test:strict-applications` runs the maintained production build/browser corpus. See [application coverage, boundary counts and migration evidence](./docs/testing/strict-application-corpus.md).

@@ -1,10 +1,14 @@
 # Async graph contract
 
-This contract defines the explicit async computation model. Implementation and
-qualification are tracked separately in
-[the reactivity checklist](./reactivity-implementation-plan.md). The readiness
-state protocol and the explicit computed node are implemented. Publishing the
-contract does not certify the later composition, compiler, or SSR work.
+This contract defines the implemented explicit async computation model: owned
+nodes, synchronous derived consumers, render preparation, Resource readiness,
+causal transitions, compiler declarations and eager SSR/hydration. The
+[reactivity checklist](./reactivity-implementation-plan.md) records the evidence
+and remaining qualification work for each part. The
+[migration guide](./migration-guide.md#async-graph-migration) and
+[async data example](../examples/async-data) show the supported application model.
+Native continuations, async component functions and Preview ownership
+serialization retain the explicit boundaries below.
 
 ## Compatibility and entry points
 
@@ -34,7 +38,7 @@ diagnostic until a separate render ABI supports them.
 `AsyncState` in `packages/runtime/src/async-state.ts` implements the state
 transitions without allocating separate data, loading, error, or version signals.
 A graph computation owns one state instance and publishes its immutable snapshots
-through graph subscriptions. Resource cache policy can use the same protocol.
+through graph subscriptions. Resource cache entries use the same protocol.
 `hasValue` distinguishes a successful `undefined` from no successful value;
 `status: 'errored'` distinguishes rejection with `undefined` from no error.
 

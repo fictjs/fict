@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import assert from 'node:assert/strict'
 import { createRequire } from 'node:module'
 import { spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
@@ -43,7 +44,16 @@ const exportChecks = [
   ['.', ['render', 'createEffect', 'useContextAccessor']],
   ['./internal', ['insertBetween', 'hydrateComponent', '__fictRunWithSSRSession']],
   ['./internal/list', ['createKeyedList', 'toNodeArray']],
-  ['./advanced', ['createRenderEffect', 'createContext', 'useContextAccessor']],
+  [
+    './advanced',
+    [
+      'createRenderEffect',
+      'createContext',
+      'useContextAccessor',
+      'createAsyncMemo',
+      'createAsyncEffect',
+    ],
+  ],
   ['./experimental/loader', ['installResumableLoader', 'waitForPendingHandlers']],
   ['./jsx-runtime', ['jsx', 'jsxs', 'Fragment']],
   ['./jsx-dev-runtime', ['jsxDEV', 'Fragment']],
@@ -172,6 +182,77 @@ const fragmentEntries = [
   ['CJS jsx-runtime', cjsEntries.get('./jsx-runtime')],
   ['CJS jsx-dev-runtime', cjsEntries.get('./jsx-dev-runtime')],
 ]
+
+// Exercise the distributed graph across public root/advanced entry points.
+// Source tests alone cannot establish that bundling preserves shared ownership.
+for (const [label, root, advanced] of [
+  ['ESM', esmEntries.get('.'), esmEntries.get('./advanced')],
+  ['CJS', cjsEntries.get('.'), cjsEntries.get('./advanced')],
+]) {
+  const requests = []
+  const commits = []
+  const cleanups = []
+  const owner = root.createRoot(() => {
+    const input = advanced.createSignal(0)
+    const value = advanced.createAsyncMemo(context => {
+      const id = input()
+      if (id === 0) return 0
+      return new Promise(resolve => requests.push({ id, signal: context.signal, resolve }))
+    })
+    const doubled = root.createMemo(() => value() * 2)
+    const [pending, start] = root.useTransition()
+    advanced.createAsyncEffect(input, current => {
+      commits.push(current)
+      return () => cleanups.push(current)
+    })
+    assert.equal(doubled(), 0)
+    return { input, value, doubled, pending, start }
+  })
+  const settle = () => new Promise(resolve => setImmediate(resolve))
+  const { input, value, doubled, pending, start } = owner.value
+  try {
+    start(() => input(1))
+    await settle()
+    assert.equal(pending(), true, `${label}: transition follows the activated async node`)
+    assert.equal(value.state().status, 'refreshing')
+    assert.equal(value.latest(), 0)
+    const token = value.state().pending
+    assert.throws(doubled, error => error === token)
+    start(() => input(2))
+    await settle()
+    assert.deepEqual(
+      requests.map(request => request.id),
+      [1, 2],
+    )
+    assert.equal(requests[0].signal.aborted, true)
+    requests[0].resolve(99)
+    await settle()
+    assert.equal(
+      value.latest(),
+      0,
+      `${label}: a stale publication cannot replace the current value`,
+    )
+    assert.equal(pending(), true)
+    requests[1].resolve(3)
+    await settle()
+    assert.equal(value(), 3)
+    assert.equal(doubled(), 6)
+    assert.equal(pending(), false)
+    assert.deepEqual(commits, [0, 1, 2])
+    assert.deepEqual(cleanups, [0, 1])
+    owner.dispose()
+    assert.deepEqual(cleanups, [0, 1, 2])
+    assert.equal(requests[1].signal.aborted, true)
+    assert.throws(value, advanced.AsyncDisposedError)
+    input(4)
+    await settle()
+    assert.equal(requests.length, 2)
+    assert.deepEqual(commits, [0, 1, 2])
+  } finally {
+    owner.dispose()
+  }
+}
+
 const canonicalFragment = esmEntries.get('.')?.Fragment
 for (const [label, entry] of fragmentEntries) {
   if (entry?.Fragment !== canonicalFragment) {
@@ -188,6 +269,24 @@ try {
     `import { Fragment as RootFragment } from '../dist/index.js'
 import { Fragment as JsxFragment, jsx } from '../dist/jsx-runtime.js'
 import { Fragment as DevFragment, jsxDEV } from '../dist/jsx-dev-runtime.js'
+import { createAsyncMemo, createAsyncEffect, type AsyncMemo } from '../dist/advanced.js'
+
+const asyncValue: AsyncMemo<number> = createAsyncMemo(context => {
+  const signal: AbortSignal = context.signal
+  const previous: number | undefined = context.previous
+  void [signal, previous]
+  return Promise.resolve(1)
+})
+const snapshot = asyncValue.state()
+if (snapshot.status === 'ready') {
+  const resolved: number = snapshot.value
+  void resolved
+}
+const disposeAsyncEffect: () => void = createAsyncEffect(asyncValue, value => {
+  const resolved: number = value
+  return () => { void resolved }
+})
+void disposeAsyncEffect
 
 const rootFromJsx: typeof RootFragment = JsxFragment
 const rootFromDev: typeof RootFragment = DevFragment
@@ -218,7 +317,7 @@ void [rootFromJsx, rootFromDev, jsxFromRoot, devFromRoot]
   )
   if (typecheck.status !== 0) {
     const output = [typecheck.stdout, typecheck.stderr].filter(Boolean).join('\n').trim()
-    fail(`Runtime Fragment declarations are incompatible across entries:\n${output}`)
+    fail(`Runtime public declarations are incompatible across entries:\n${output}`)
   }
 } finally {
   rmSync(typeSmokeDir, { recursive: true, force: true })

@@ -5,7 +5,7 @@ application corpus with production strict guarantees. CI and the release gate
 invoke the same command. `node scripts/strict-application-corpus.mjs --build-only`
 is a partial diagnostic run; its report explicitly says the browser was not run.
 
-The [2026-09-14 archive](./strict-application-corpus-2026-09-14.json) records eight
+The initial [S5 archive from 2026-09-14](./strict-application-corpus-2026-09-14.json) records eight
 maintained application fixtures, one library publisher, and a separate keyed
 benchmark compile fixture. The Webpack example is an async-data variant. This is
 repository application evidence, not eight independent external migrations.
@@ -42,6 +42,22 @@ shadowed identifiers and unrelated functions do not count. Dynamic containers an
 inferred wrappers are outside this metric. These numbers describe authored API
 incidence, not runtime allocations, all possible unknown calls, a false-positive
 rate, or the effort required to migrate an independent application.
+
+## Async application extension
+
+The subsequent [A8 evidence](./async-application-evidence-2026-09-14.json) adds the
+owned async result panel to the Vite async-data application. It covers an ordinary
+derived value, causal transition pending, retained input-node identity and local
+edits across refresh, overlapping requests, error/reset behavior, and disposal
+during pending work. The Resource panels keep their independent ownership; the
+Webpack variant retains its separate Resource coverage.
+
+That captured corpus contains 13 application source files, 2,782 lexical code
+lines and 1,863 function-body lines. The same two explicit snapshots now amount
+to 0.719 per thousand lexical lines or 1.074 per thousand function-body lines.
+The new panel adds one `$async` declaration and one `useTransition` call, with no
+new `untrack`. Seven advisory `FICT-X003` diagnostics remain; none are fallback
+or unsupported. The initial S5 archive and its counts above remain unchanged.
 
 ## Repairs exercised by the corpus
 
