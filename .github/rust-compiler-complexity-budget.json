@@ -12,24 +12,25 @@
     "fileOverrideRatchetReductionLines": 100
   },
   "total": {
-    "reviewedLines": 188358,
-    "maxLines": 190000,
-    "rationale": "Review the current source baseline including explicit snapshots and runtime host identity contracts. Host resolution is extracted from the central builder; retain the existing file ceilings and 1642 lines of total reserve."
+    "reviewedLines": 189299,
+    "maxLines": 190500,
+    "rationale": "Explicit async compilation adds source/accessor contracts, generation ownership, metadata and EmitIR validation. Shared analysis lives in focused HIR/reactivity modules; alias planning is extracted from lowering and repeated verifier matches are consolidated. Existing file ceilings remain unchanged; retain 1201 lines of total reserve."
   },
   "defaultFileMaxLines": 2000,
   "crates": {
     "fict-compiler": {
-      "reviewedLines": 31045,
-      "maxLines": 31250,
-      "rationale": "Runtime callback contracts add 226 lines of strict identity, alias, snapshot, and lifetime integration tests after the explicit snapshot suite. Production compiler orchestration is unchanged; retain 205 lines of reserve."
+      "reviewedLines": 31196,
+      "maxLines": 31400,
+      "rationale": "Async metadata uses the same derived-getter plan as emission, including snapshots, callable resolved values and selected accessor wrappers."
     },
     "fict-compiler-napi": {
       "reviewedLines": 1389,
       "maxLines": 1500
     },
     "fict-compiler-oxc": {
-      "reviewedLines": 119406,
-      "maxLines": 121000
+      "reviewedLines": 121179,
+      "maxLines": 121500,
+      "rationale": "Explicit async macro placement, runtime-generation ownership, primitive snapshot capture and source-call rewriting. The central builder file ceiling is unchanged."
     },
     "fict-compiler-preview": {
       "reviewedLines": 2333,
@@ -40,20 +41,23 @@
       "maxLines": 750
     },
     "fict-emit": {
-      "reviewedLines": 11303,
-      "maxLines": 11500
+      "reviewedLines": 11505,
+      "maxLines": 11700,
+      "rationale": "Async helpers and accessor aliases are verified in EmitIR; alias planning is extracted and repeated kind checks are shared without raising file ceilings."
     },
     "fict-hir": {
-      "reviewedLines": 6768,
-      "maxLines": 6900
+      "reviewedLines": 6997,
+      "maxLines": 7150,
+      "rationale": "Explicit async source/accessor distinctions and an iterative immutable-alias query, including conditional and logical selections."
     },
     "fict-metadata": {
       "reviewedLines": 562,
       "maxLines": 600
     },
     "fict-reactivity": {
-      "reviewedLines": 13286,
-      "maxLines": 13400
+      "reviewedLines": 13398,
+      "maxLines": 13550,
+      "rationale": "Track async-dependent implicit values separately from explicit manual accessors to preserve JavaScript function-call semantics."
     }
   },
   "fileOverrides": {

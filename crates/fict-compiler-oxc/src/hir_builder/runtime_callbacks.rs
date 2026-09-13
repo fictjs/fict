@@ -76,6 +76,7 @@ impl RuntimeImports {
             return None;
         }
         match name.as_str() {
+            "createAsyncMemo" => Some(RuntimeCallbackHost::AsyncComputation),
             "createSelector" => Some(RuntimeCallbackHost::Selector),
             "render" => Some(RuntimeCallbackHost::Render),
             "untrack" => Some(RuntimeCallbackHost::Snapshot),
@@ -93,6 +94,7 @@ pub(super) enum RuntimeCallbackHost {
     Snapshot,
     Managed,
     Computation,
+    AsyncComputation,
     Render,
     Selector,
 }

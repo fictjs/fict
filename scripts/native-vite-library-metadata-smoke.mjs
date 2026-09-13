@@ -70,10 +70,16 @@ try {
     writeFile(
       path.join(libraryRoot, 'src', 'index.ts'),
       `
-        import { $state } from 'fict'
+        import { $state, $async } from 'fict'
+        import { createAsyncMemo } from 'fict/advanced'
         export function useCounter() {
           const count = $state(1)
           return { count }
+        }
+        export function useAsyncPair() {
+          const value = $async(() => Promise.resolve('ready'))
+          const request = createAsyncMemo(() => 7)
+          return { value, request }
         }
       `,
     ),
@@ -112,6 +118,10 @@ try {
   const metadata = JSON.parse(await readFile(metadataPath, 'utf8'))
   assert.equal(metadata.version, 1)
   assert.equal(metadata.hooks?.useCounter?.objectProps?.count, 'signal')
+  assert.deepEqual(metadata.hooks?.useAsyncPair?.objectProps, {
+    value: 'async',
+    request: 'asyncAccessor',
+  })
 
   const packed = parsePackEntry(
     (
@@ -137,10 +147,11 @@ try {
   await writeFile(
     path.join(consumerRoot, 'src', 'main.ts'),
     `
-      import { useCounter } from 'fict-native-hook-lib'
+      import { useCounter, useAsyncPair } from 'fict-native-hook-lib'
       export function App() {
         const api = useCounter()
-        return api.count
+        const pending = useAsyncPair()
+        return [api.count, pending.value, pending.request(), pending.request.state().status]
       }
     `,
   )
@@ -171,6 +182,10 @@ try {
   })
   const consumerCode = outputCode(consumerBuild)
   assert.match(consumerCode, /api\.count\(\)/)
+  assert.match(consumerCode, /pending\.value\(\)/)
+  assert.match(consumerCode, /pending\.request\(\)/)
+  assert.match(consumerCode, /pending\.request\.state\(\)/)
+  assert.doesNotMatch(consumerCode, /pending\.request\(\)\.state/)
 
   process.stdout.write(
     `${JSON.stringify({

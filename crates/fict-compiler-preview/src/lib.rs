@@ -40,6 +40,31 @@ pub fn attach_preview_plan(
     emit: &mut EmitProgram,
     options: &PreviewOptions,
 ) -> Result<Vec<Diagnostic>, DiagnosticBundle> {
+    // Async readiness, cancellation and generation ownership are not serializable
+    // by the unfrozen resumable ABI. Eager Core output uses the graph normally.
+    if let Some(slot) = emit
+        .functions
+        .iter()
+        .flat_map(|function| &function.slots)
+        .find(|slot| {
+            matches!(
+                slot.kind,
+                ReactiveSlotKind::Async | ReactiveSlotKind::AsyncAccessor
+            )
+        })
+    {
+        let mut diagnostic = preview_error(
+            "FICT-PREVIEW-ASYNC",
+            "resumable serialization does not support async graph slots",
+        )
+        .with_help(
+            "disable Preview resumability and use eager event handlers with the async graph",
+        );
+        if let Some(span) = slot.origin.primary_span {
+            diagnostic = diagnostic.with_primary_span(span);
+        }
+        return Err(DiagnosticBundle::new(vec![diagnostic]));
+    }
     let mut diagnostics = Vec::new();
     let mut advisories = Vec::new();
     let mut reserved: BTreeSet<String> = emit.module.reserved_names.iter().cloned().collect();

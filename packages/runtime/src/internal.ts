@@ -26,6 +26,7 @@ import { createElement as __fictCreateElement } from './dom'
 export { createSignal, createSelector, __resetReactiveState } from './signal'
 export { createStore, type Store, isStoreProxy, unwrapStore } from './store'
 export { createMemo } from './memo'
+export { createAsyncMemo } from './async-memo'
 export { __fictCreateAsyncSource, type AsyncSource } from './async-source'
 export { hasAsyncReadConsumer as __fictIsAsyncConsumer } from './signal'
 export { createEffect } from './effect'
@@ -41,6 +42,7 @@ export {
   __fictPopContext,
   __fictUseSignal,
   __fictUseMemo,
+  __fictUseAsyncMemo,
   __fictUseEffect,
   __fictRender,
   __fictResetContext,

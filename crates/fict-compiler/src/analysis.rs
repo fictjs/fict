@@ -544,6 +544,18 @@ fn analyze_function(
                             region_id: None,
                         },
                     ),
+                    Some(FictMacroKind::Async) => push_marker(
+                        &mut markers,
+                        line,
+                        TraceMarker {
+                            kind: TraceMarkerKind::Reactive,
+                            label:
+                                "Async generation restarts when synchronously tracked inputs change"
+                                    .to_owned(),
+                            deps: None,
+                            region_id: None,
+                        },
+                    ),
                     Some(FictMacroKind::Memo) => push_marker(
                         &mut markers,
                         line,
@@ -658,6 +670,9 @@ const fn tooling_function_setup_label(kind: FunctionKind) -> &'static str {
         FunctionKind::Component => "Component setup runs on mount",
         FunctionKind::Hook => "Hook body runs when called",
         FunctionKind::ReactiveScope => "Reactive scope callback runs when invoked",
+        FunctionKind::RuntimeScope => {
+            "Runtime-owned computation runs within its generation lifetime"
+        }
     }
 }
 

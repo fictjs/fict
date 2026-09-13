@@ -24,7 +24,7 @@ not only an analysis pass, an API sketch, or a passing unrelated test suite.
 | A3   | Pending/error states compose through synchronous derived nodes and effect/render consumers with defined commit semantics.                                             | Chains, diamonds, conditional subscriptions, independent boundaries, error recovery, no unintended partial commits, and cleanup ordering.                                                     | Complete |
 | A4   | Resource uses the shared async computation protocol while retaining its data/cache policies.                                                                          | Existing resource/cache/TTL/SWR/LRU/sharing/optimistic/SSR regressions and new graph-composition coverage.                                                                                    | Complete |
 | A5   | Transition readiness accounts for registered downstream async work caused by updates, including indirectly triggered requests.                                        | Overlapping transitions, unrelated roots, stale completions, callback failures, disposal, and the indirect-resource regression.                                                               | Complete |
-| A6   | Compiler-owned async declarations, types, runtime helpers, and cross-module contracts use the same graph protocol.                                                    | Native strict compilation, source maps, metadata/ABI checks, reactive input updates and lifecycle checks; explicit supported continuation boundaries.                                         | Pending  |
+| A6   | Compiler-owned async declarations, types, runtime helpers, and cross-module contracts use the same graph protocol.                                                    | Native strict compilation, source maps, metadata/ABI checks, reactive input updates and lifecycle checks; explicit supported continuation boundaries.                                         | Complete |
 | A7   | Async graph behavior works through SSR, streaming, hydration, and request isolation.                                                                                  | Real server/browser tests covering initial pending, refresh, errors, cancellation, serialization and compatible hydration.                                                                    | Pending  |
 | A8   | Representative applications and documentation demonstrate the unified model and its migration boundaries.                                                             | End-to-end async application scenarios, usable examples, API/package checks and synchronous performance regression checks.                                                                    | Pending  |
 | Q1   | The final stack satisfies each row against the current source and artifacts.                                                                                          | Full applicable compiler/runtime/SSR/bundler/strict/browser gates, per-item commits, fresh final audit, and explicit evidence for every completion claim.                                     | Pending  |
@@ -234,3 +234,36 @@ memo and Resource probes. The
 verifies 98 source-map entries and records source/artifact identities. Complete ESM
 adds 623 B Brotli and the sync memo import adds 140 B. All five package/import
 budgets include the measured cost; no CPU-performance result is inferred.
+
+## A6: explicit compiler async declarations
+
+`const value = $async(producer)` in `fict` and `fict/slim` lowers to the A2 async
+node and exposes its resolved value, including callable values. The compiler,
+types, runtime helper ABI and metadata agree on `async` value getters versus
+`asyncAccessor` manual objects. Direct immutable accessor aliases retain identity;
+conditional selections retain their actual generated getter layer. Ordinary
+module declarations remain snapshots. The same derived-getter plan informs
+metadata and emission, preventing disagreement across package boundaries.
+
+Producer generations create nested synchronous computations in their runtime
+owner instead of component hook slots. Strict diagnostics reject unsupported
+native continuations, mutable/retained escapes, writes, nested async dependency
+construction and Preview serialization. These are explicit supported boundaries,
+not automatic tracking across native `await`. The
+[declaration guide](./async-declarations.md) includes an executable example.
+
+Validation: 48 async native cases and 438 complete native compiler/DOM/SSR/oracle
+regressions pass against the release addon. They cover disabled/safe/full
+optimization, template/VNode output, real ESM metadata consumers, CommonJS,
+source maps, generation cleanup, callable values, receiver preservation and
+alias selections. A 48-layer shared-branch regression prevents exponential
+metadata traversal while retaining conflicting-branch checks. Type inference,
+runtime ABI, closed metadata validation and the real Vite build/pack/install
+consumer pass. All 31 workspace build tasks execute successfully; diagnostic,
+crate-boundary, source-complexity and EmitIR guards pass.
+
+The [size archive](./benchmarks/compiler-async-declarations-size-2026-09-13.json)
+verifies 98 source-map entries and source/artifact identities. Distributed CJS
+adds 47 B Brotli and the sync memo import adds 3 B; all five existing budgets
+pass unchanged. SSR streaming/hydration qualification remains A7, and CPU
+performance remains G4/G5/A8.

@@ -748,6 +748,13 @@ fn source_explain_events(hir: &HirFile) -> Vec<CompilerExplainEvent> {
                             code: None,
                             span: Some(span),
                         }),
+                        (Some(FictMacroKind::Async), _) | (None, Some(ReactiveCallKind::AsyncMemo)) => Some(CompilerExplainEvent {
+                            kind: CompilerExplainEventKind::SourceAsync,
+                            message: "preserves an explicit async computation and its readiness/lifetime protocol".to_owned(),
+                            name: Some(if call.macro_kind.is_some() { "$async" } else { "createAsyncMemo" }.to_owned()),
+                            code: None,
+                            span: Some(span),
+                        }),
                         (None, Some(ReactiveCallKind::Memo)) => Some(CompilerExplainEvent {
                             kind: CompilerExplainEventKind::SourceMemo,
                             message: "classifies createMemo as a derived memo".to_owned(),
@@ -788,6 +795,7 @@ fn source_event_sort_key(event: &CompilerExplainEvent) -> (u32, u32, u8, Option<
         CompilerExplainEventKind::SourceSignal => 0,
         CompilerExplainEventKind::SourceEffect => 1,
         CompilerExplainEventKind::SourceMemo => 2,
+        CompilerExplainEventKind::SourceAsync => 7,
         CompilerExplainEventKind::SourceJsx => 3,
         CompilerExplainEventKind::SourceControlFlow => 4,
         CompilerExplainEventKind::RuntimeHelper => 5,

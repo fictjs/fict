@@ -88,6 +88,21 @@ pub fn verify_emit_program(
                     "reactive slots must be dense with canonical control paths",
                 ));
             }
+            if let crate::ReactiveSlotStorage::Alias { initializer } = slot.storage {
+                let valid = slot.kind == crate::ReactiveSlotKind::AsyncAccessor
+                    && hir_function.blocks.iter().flat_map(|block| &block.instructions).any(|instruction| {
+                        matches!(instruction.kind, fict_hir::HirInstructionKind::Declare { local, initializer: Some(value), .. }
+                            if value == initializer && hir_function.locals[local.as_usize()].binding == slot.binding
+                            && hir_function.locals[local.as_usize()].declaration_kind == fict_hir::DeclarationKind::Const)
+                    })
+                    && fict_hir::async_value_kind(hir, function.source, initializer, Some(&program.local_hook_returns)) == Some(fict_hir::ImportedReactiveKind::AsyncAccessor);
+                if !valid {
+                    diagnostics.push(emit_error(
+                        "FICT-EMIT-ASYNC-ALIAS",
+                        "async accessor alias must retain a proven immutable identity",
+                    ));
+                }
+            }
             if let crate::ReactiveSlotStorage::Captured { owner } = slot.storage {
                 let capture_valid = owner != function.source
                     && slot.binding.is_some()
@@ -99,6 +114,7 @@ pub fn verify_emit_program(
                                 matches!(
                                     candidate.storage,
                                     crate::ReactiveSlotStorage::Owned
+                                        | crate::ReactiveSlotStorage::Alias { .. }
                                         | crate::ReactiveSlotStorage::HookReturn { .. }
                                 ) && candidate.binding == slot.binding
                                     && candidate.kind == slot.kind
@@ -156,19 +172,9 @@ pub fn verify_emit_program(
                         .and_then(|import| import.reactive_members.get(member as usize))
                         .map(|member| member.kind),
                 };
-                let kind_matches = matches!(
-                    (imported_kind, slot.kind),
-                    (
-                        Some(fict_hir::ImportedReactiveKind::Signal),
-                        crate::ReactiveSlotKind::Signal
-                    ) | (
-                        Some(fict_hir::ImportedReactiveKind::Memo),
-                        crate::ReactiveSlotKind::Memo
-                    ) | (
-                        Some(fict_hir::ImportedReactiveKind::Store),
-                        crate::ReactiveSlotKind::Store
-                    )
-                );
+                let kind_matches = accessor_kind_matches(imported_kind, slot.kind)
+                    || (imported_kind == Some(fict_hir::ImportedReactiveKind::Store)
+                        && slot.kind == crate::ReactiveSlotKind::Store);
                 let local_exists = slot.binding.is_some_and(|binding| {
                     hir_function
                         .locals
@@ -210,16 +216,7 @@ pub fn verify_emit_program(
                     }),
                 };
                 let call_matches = source_call.is_some() && shape.is_some();
-                let kind_matches = matches!(
-                    (reactive_kind, slot.kind),
-                    (
-                        Some(fict_hir::ImportedReactiveKind::Signal),
-                        crate::ReactiveSlotKind::Signal
-                    ) | (
-                        Some(fict_hir::ImportedReactiveKind::Memo),
-                        crate::ReactiveSlotKind::Memo
-                    )
-                );
+                let kind_matches = accessor_kind_matches(reactive_kind, slot.kind);
                 let binding_matches = slot.binding.is_none_or(|binding| {
                     hir_function.locals.iter().any(|local| {
                         local.binding == Some(binding)
@@ -818,7 +815,10 @@ fn verify_module_plan(hir: &HirFile, program: &EmitProgram, diagnostics: &mut Di
 fn is_scoped_helper(helper: RuntimeHelper) -> bool {
     matches!(
         helper,
-        RuntimeHelper::UseSignal | RuntimeHelper::UseMemo | RuntimeHelper::UseEffect
+        RuntimeHelper::UseSignal
+            | RuntimeHelper::UseMemo
+            | RuntimeHelper::UseAsyncMemo
+            | RuntimeHelper::UseEffect
     )
 }
 fn verify_operations(
@@ -1411,18 +1411,8 @@ fn verify_reactive_read(
             let resolved_property = source_place
                 .and_then(|place| place.projections.first())
                 .and_then(|projection| shape?.resolve_property(projection));
-            let kind_matches = slot.is_some_and(|slot| {
-                matches!(
-                    (property.kind, slot.kind),
-                    (
-                        fict_hir::ImportedReactiveKind::Signal,
-                        crate::ReactiveSlotKind::Signal
-                    ) | (
-                        fict_hir::ImportedReactiveKind::Memo,
-                        crate::ReactiveSlotKind::Memo
-                    )
-                )
-            });
+            let kind_matches =
+                slot.is_some_and(|slot| accessor_kind_matches(Some(property.kind), slot.kind));
             (
                 source_place.is_some_and(|place| place.projections == projections)
                     && !projections.is_empty()
@@ -1435,6 +1425,7 @@ fn verify_reactive_read(
         }
         Some(crate::ReactiveSlotStorage::Imported { member: None })
         | Some(crate::ReactiveSlotStorage::Owned)
+        | Some(crate::ReactiveSlotStorage::Alias { .. })
         | Some(crate::ReactiveSlotStorage::Captured { .. }) => (
             source_place.is_some_and(|place| place.projections == projections)
                 && usize::from(accessor_depth) <= projections.len(),
@@ -1480,18 +1471,8 @@ fn verify_reactive_read(
                 None => shape.and_then(|shape| shape.direct_accessor),
                 Some(property) => Some(property.kind),
             };
-            let kind_matches = slot.is_some_and(|slot| {
-                matches!(
-                    (reactive_kind, slot.kind),
-                    (
-                        Some(fict_hir::ImportedReactiveKind::Signal),
-                        crate::ReactiveSlotKind::Signal
-                    ) | (
-                        Some(fict_hir::ImportedReactiveKind::Memo),
-                        crate::ReactiveSlotKind::Memo
-                    )
-                )
-            });
+            let kind_matches =
+                slot.is_some_and(|slot| accessor_kind_matches(reactive_kind, slot.kind));
             match property {
                 None => {
                     let direct_call = source_result == call
@@ -1559,10 +1540,17 @@ fn verify_helper_semantics(
                         crate::ReactiveSlotKind::Memo => {
                             matches!(helper, RuntimeHelper::Memo | RuntimeHelper::UseMemo)
                         }
+                        crate::ReactiveSlotKind::Async => {
+                            matches!(
+                                helper,
+                                RuntimeHelper::AsyncMemo | RuntimeHelper::UseAsyncMemo
+                            )
+                        }
                         crate::ReactiveSlotKind::Selector => {
                             *helper == RuntimeHelper::CreateSelector
                         }
                         crate::ReactiveSlotKind::Effect
+                        | crate::ReactiveSlotKind::AsyncAccessor
                         | crate::ReactiveSlotKind::Context
                         | crate::ReactiveSlotKind::Store
                         | crate::ReactiveSlotKind::Resource => false,
@@ -1875,6 +1863,7 @@ fn verify_runtime_reactive_site(
         .flatten();
     let expected = match source_kind {
         Some(fict_hir::ReactiveCallKind::Memo) => crate::ReactiveSlotKind::Memo,
+        Some(fict_hir::ReactiveCallKind::AsyncMemo) => crate::ReactiveSlotKind::AsyncAccessor,
         Some(fict_hir::ReactiveCallKind::Store) => crate::ReactiveSlotKind::Store,
         Some(fict_hir::ReactiveCallKind::Resource) => crate::ReactiveSlotKind::Resource,
         Some(fict_hir::ReactiveCallKind::Selector) => crate::ReactiveSlotKind::Selector,
@@ -1965,4 +1954,19 @@ fn emit_error(code: &'static str, message: impl Into<String>) -> Diagnostic {
         message,
     )
     .with_guarantee_class(GuaranteeClass::Internal)
+}
+
+fn accessor_kind_matches(
+    source: Option<fict_hir::ImportedReactiveKind>,
+    slot: crate::ReactiveSlotKind,
+) -> bool {
+    use crate::ReactiveSlotKind as Slot;
+    use fict_hir::ImportedReactiveKind as Source;
+    matches!(
+        (source, slot),
+        (Some(Source::Signal), Slot::Signal)
+            | (Some(Source::Memo), Slot::Memo)
+            | (Some(Source::Async), Slot::Async)
+            | (Some(Source::AsyncAccessor), Slot::AsyncAccessor)
+    )
 }

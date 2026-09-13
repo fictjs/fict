@@ -1231,6 +1231,9 @@ fn callback_disposition(
                 (Some(FictMacroKind::Effect), _, 0) => CallbackDisposition::Effect,
                 (Some(FictMacroKind::Memo), _, 0) => CallbackDisposition::Memo,
                 (_, Some(ReactiveCallKind::Memo), 0) => CallbackDisposition::Memo,
+                (Some(FictMacroKind::Async), _, 0) | (_, Some(ReactiveCallKind::AsyncMemo), 0) => {
+                    CallbackDisposition::Reactive(fict_hir::ReactiveScopeKind::AsyncCallback)
+                }
                 (_, Some(ReactiveCallKind::Resource), _) => CallbackDisposition::Resource,
                 (_, Some(ReactiveCallKind::Selector), _) => CallbackDisposition::Selector,
                 _ => CallbackDisposition::EscapesUnknown,

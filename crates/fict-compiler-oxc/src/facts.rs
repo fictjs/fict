@@ -124,6 +124,10 @@ pub enum ReactiveValueKind {
     Signal,
     /// Memo/accessor value.
     Memo,
+    /// Resolved value of an explicit async node.
+    Async,
+    /// Manual async accessor including its readiness methods.
+    AsyncAccessor,
     /// Store value.
     Store,
 }
@@ -525,6 +529,8 @@ fn parse_reactive_kind(raw: &str, allow_bare: bool) -> Option<ReactiveValueKind>
     match normalized {
         "signal" => Some(ReactiveValueKind::Signal),
         "memo" => Some(ReactiveValueKind::Memo),
+        "async" => Some(ReactiveValueKind::Async),
+        "asyncAccessor" => Some(ReactiveValueKind::AsyncAccessor),
         "store" => Some(ReactiveValueKind::Store),
         _ => None,
     }

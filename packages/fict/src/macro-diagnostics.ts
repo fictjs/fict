@@ -1,4 +1,4 @@
-export function createUncompiledMacroError(macroName: '$state' | '$effect'): Error {
+export function createUncompiledMacroError(macroName: '$state' | '$effect' | '$async'): Error {
   const isDev =
     typeof __DEV__ !== 'undefined'
       ? __DEV__

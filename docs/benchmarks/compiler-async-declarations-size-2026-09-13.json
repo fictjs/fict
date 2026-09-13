@@ -1,0 +1,66 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-09-13",
+  "baselineRevision": "a8c8f2db9f46e0c55982e440df81cbb89a003e6c",
+  "baselineEvidence": {
+    "archive": "causal-transition-size-2026-09-13.json",
+    "boundary": "distributed package measurements qualified by A5"
+  },
+  "candidate": "A6 explicit compiler async declarations; exact source and artifact trees below",
+  "tools": {
+    "node": "v24.16.0",
+    "sizeLimit": "12.0.0",
+    "esbuild": "0.27.0"
+  },
+  "measurement": {
+    "unit": "bytes",
+    "compression": "Brotli",
+    "minified": true,
+    "production": true,
+    "command": "pnpm exec size-limit --json",
+    "moduleResolution": "tsconfigRaw.compilerOptions={} with distributed input verification"
+  },
+  "hashAlgorithm": "sha256 of each sorted relative file path, NUL, file bytes, NUL",
+  "candidateSources": {
+    "files": 62,
+    "sha256": "7149c5d8d2d4871af27ed35c8b579427b3b8da4b4a4310b930f26bc643e970b0"
+  },
+  "candidateArtifacts": {
+    "files": 168,
+    "sha256": "13ad3958979e87a8a39a0a9c4cb0b054159e9fe10967d815130186598aa7be1f"
+  },
+  "results": [
+    {
+      "name": "Fict package (ESM)",
+      "baselineBytes": 24424,
+      "candidateBytes": 24421,
+      "deltaBytes": -3
+    },
+    {
+      "name": "Fict package (CJS)",
+      "baselineBytes": 44015,
+      "candidateBytes": 44062,
+      "deltaBytes": 47
+    },
+    {
+      "name": "Fict package async memo (ESM)",
+      "baselineBytes": 8369,
+      "candidateBytes": 8365,
+      "deltaBytes": -4
+    },
+    {
+      "name": "Fict package sync memo (ESM)",
+      "baselineBytes": 4920,
+      "candidateBytes": 4923,
+      "deltaBytes": 3
+    },
+    {
+      "name": "Fict package resource (ESM)",
+      "baselineBytes": 21362,
+      "candidateBytes": 21362,
+      "deltaBytes": 0
+    }
+  ],
+  "interpretation": "Compiler-owned async declarations add a macro stub and an internal owned context-slot helper. Direct manual accessor aliases allocate no extra node; selected derived values preserve their emitted getter layer. Existing distributed package/import budgets pass unchanged. This is a code-size measurement, not a CPU-performance claim.",
+  "verifiedSourceMapEntries": 98
+}

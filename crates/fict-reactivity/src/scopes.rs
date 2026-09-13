@@ -153,8 +153,12 @@ pub fn analyze_reactive_scopes(
         };
         let kind = match shape.source {
             ShapeSource::ReactiveMacro(FictMacroKind::State) => Some(ReactiveBindingKind::State),
-            ShapeSource::ReactiveMacro(FictMacroKind::Memo) => Some(ReactiveBindingKind::Memo),
-            ShapeSource::RuntimeReactive(ReactiveCallKind::Memo) => Some(ReactiveBindingKind::Memo),
+            ShapeSource::ReactiveMacro(FictMacroKind::Memo | FictMacroKind::Async) => {
+                Some(ReactiveBindingKind::Memo)
+            }
+            ShapeSource::RuntimeReactive(ReactiveCallKind::Memo | ReactiveCallKind::AsyncMemo) => {
+                Some(ReactiveBindingKind::Memo)
+            }
             ShapeSource::RuntimeReactive(ReactiveCallKind::Store) => {
                 Some(ReactiveBindingKind::Store)
             }
@@ -167,9 +171,11 @@ pub fn analyze_reactive_scopes(
             ShapeSource::ImportedReactive(ImportedReactiveKind::Signal) => {
                 Some(ReactiveBindingKind::State)
             }
-            ShapeSource::ImportedReactive(ImportedReactiveKind::Memo) => {
-                Some(ReactiveBindingKind::Memo)
-            }
+            ShapeSource::ImportedReactive(
+                ImportedReactiveKind::Memo
+                | ImportedReactiveKind::Async
+                | ImportedReactiveKind::AsyncAccessor,
+            ) => Some(ReactiveBindingKind::Memo),
             ShapeSource::ImportedReactive(ImportedReactiveKind::Store) => {
                 Some(ReactiveBindingKind::Store)
             }

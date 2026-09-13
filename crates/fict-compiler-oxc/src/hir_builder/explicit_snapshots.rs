@@ -22,6 +22,7 @@ pub(super) struct SnapshotInputs<'a> {
     pub states: &'a BTreeSet<SymbolId>,
     pub immutable: &'a BTreeSet<SymbolId>,
     pub functions: &'a [HirFunction],
+    pub reactive_functions: &'a BTreeMap<FunctionId, ReactiveScopeKind>,
 }
 
 impl SnapshotFacts {
@@ -31,11 +32,24 @@ impl SnapshotFacts {
 
     pub(super) fn collect(program: &Program<'_>, inputs: SnapshotInputs<'_>) -> Self {
         let mut collector = SnapshotCollector {
-            inputs,
             constraints: BTreeMap::new(),
-            owners: BTreeSet::new(),
+            // An explicit async producer owns synchronous input capture. Grant only
+            // the same proven primitive argument boundary as untrack; references
+            // and retained closures still need their own lifetime proof.
+            owners: inputs
+                .reactive_functions
+                .iter()
+                .filter_map(|(id, kind)| {
+                    let flags = inputs.functions[id.as_usize()].flags;
+                    (*kind == ReactiveScopeKind::AsyncCallback
+                        && !flags.is_async
+                        && !flags.is_generator)
+                        .then_some(*id)
+                })
+                .collect(),
             calls: BTreeMap::new(),
             bindings: BTreeMap::new(),
+            inputs,
         };
         collector.visit_program(program);
         let mut primitive_symbols = BTreeSet::new();

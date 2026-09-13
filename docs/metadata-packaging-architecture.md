@@ -156,7 +156,12 @@ The metadata file itself uses the compiler-owned `ModuleReactiveMetadata` shape:
 }
 ```
 
-`version: 1` is the current package metadata ABI. Metadata without a version remains accepted for backwards compatibility; unsupported future versions are rejected.
+`version: 1` is the current package metadata ABI. A version is required; unknown
+versions or export kinds are rejected. Explicit async declarations add `async`
+(resolved-value surface) and `asyncAccessor` (manual callable object) kinds. A
+publisher and consumer need compatible readers for these kinds; they must not be
+relabeled as `memo`. See [async declarations](./async-declarations.md) for the call
+and alias contract. The packed Vite library smoke test exercises both kinds.
 
 ## Desired author experience
 

@@ -78,6 +78,8 @@ pub enum EmitValueRef {
 pub enum ReactiveSlotKind {
     Signal,
     Memo,
+    Async,
+    AsyncAccessor,
     Effect,
     Context,
     Store,
@@ -90,6 +92,8 @@ pub enum ReactiveSlotKind {
 pub enum ReactiveSlotStorage {
     /// The function contains the reactive creator operation.
     Owned,
+    /// An immutable source alias preserves an existing manual async accessor.
+    Alias { initializer: ValueId },
     /// The function closes over a reactive binding created by another HIR function.
     Captured { owner: FunctionId },
     /// The function closes over a structured accessor returned by a hook.

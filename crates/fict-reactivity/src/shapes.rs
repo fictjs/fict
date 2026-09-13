@@ -852,7 +852,10 @@ fn structural_value_shape(
             array_length: None,
         },
         HirInstructionKind::Call(call) => {
-            if let Some(kind @ (FictMacroKind::State | FictMacroKind::Memo)) = call.macro_kind {
+            if let Some(
+                kind @ (FictMacroKind::State | FictMacroKind::Memo | FictMacroKind::Async),
+            ) = call.macro_kind
+            {
                 ValueShape {
                     kind: ShapeKind::Reactive,
                     source: ShapeSource::ReactiveMacro(kind),

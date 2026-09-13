@@ -1144,6 +1144,7 @@ pub(crate) fn macro_kind(source: &str, imported_name: &str) -> Option<FictMacroK
         "$state" if FICT_MACRO_MODULES.contains(&source) => Some(FictMacroKind::State),
         "$effect" if FICT_MACRO_MODULES.contains(&source) => Some(FictMacroKind::Effect),
         "$memo" if MEMO_MACRO_MODULES.contains(&source) => Some(FictMacroKind::Memo),
+        "$async" if FICT_MACRO_MODULES.contains(&source) => Some(FictMacroKind::Async),
         _ => None,
     }
 }

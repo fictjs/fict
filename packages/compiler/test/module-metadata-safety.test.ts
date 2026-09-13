@@ -64,6 +64,23 @@ afterEach(async () => {
 })
 
 describe('native module metadata safety', () => {
+  it('round trips async value and manual accessor metadata without conflating their ABI', () => {
+    const metadata = {
+      version: 1 as const,
+      exports: { value: 'async' as const, manual: 'asyncAccessor' as const },
+      hooks: {
+        useValue: { directAccessor: 'async' as const },
+        useManual: { objectProps: { request: 'asyncAccessor' as const } },
+      },
+    }
+    expect(parseModuleReactiveMetadata(JSON.stringify(metadata))).toEqual(metadata)
+    for (const kind of ['asyncMemo', 'promise', 'async-accessor']) {
+      expect(
+        parseModuleReactiveMetadata(JSON.stringify({ version: 1, exports: { value: kind } })),
+      ).toBeNull()
+    }
+  })
+
   it('fails closed for malformed, non-canonical, unknown, and over-deep schemas', () => {
     const invalid = [
       '{',

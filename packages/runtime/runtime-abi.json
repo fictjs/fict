@@ -64,6 +64,13 @@
       "stability": "core"
     },
     {
+      "key": "asyncMemo",
+      "export": "createAsyncMemo",
+      "preferredLocal": "createAsyncMemo",
+      "module": "internal",
+      "stability": "core"
+    },
+    {
       "key": "useContext",
       "export": "__fictUseContext",
       "preferredLocal": "__fictUseContext",
@@ -102,6 +109,13 @@
       "key": "useEffect",
       "export": "__fictUseEffect",
       "preferredLocal": "__fictUseEffect",
+      "module": "internal",
+      "stability": "core"
+    },
+    {
+      "key": "useAsyncMemo",
+      "export": "__fictUseAsyncMemo",
+      "preferredLocal": "__fictUseAsyncMemo",
       "module": "internal",
       "stability": "core"
     },

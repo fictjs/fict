@@ -61,12 +61,13 @@ export type CompilerExplainEventKind =
   | 'source-signal'
   | 'source-effect'
   | 'source-memo'
+  | 'source-async'
   | 'source-jsx'
   | 'source-control-flow'
   | 'runtime-helper'
   | 'diagnostic'
 
-export type ReactiveExportKind = 'signal' | 'memo' | 'store'
+export type ReactiveExportKind = 'signal' | 'memo' | 'store' | 'async' | 'asyncAccessor'
 
 export type ModuleReactiveMetadataVersion = typeof MODULE_REACTIVE_METADATA_VERSION
 

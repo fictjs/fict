@@ -78,7 +78,13 @@ function hasOnlyKeys(value: Record<string, unknown>, allowed: ReadonlySet<string
 }
 
 function isReactiveExportKind(value: unknown): value is ModuleReactiveMetadata['exports'][string] {
-  return value === 'signal' || value === 'memo' || value === 'store'
+  return (
+    value === 'signal' ||
+    value === 'memo' ||
+    value === 'store' ||
+    value === 'async' ||
+    value === 'asyncAccessor'
+  )
 }
 
 function isHookReturnInfo(value: unknown): boolean {

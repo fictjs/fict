@@ -94,6 +94,8 @@ pub enum CompilerExplainEventKind {
     SourceEffect,
     /// Source memo decision.
     SourceMemo,
+    /// Explicit asynchronous computation decision.
+    SourceAsync,
     /// JSX lowering decision.
     SourceJsx,
     /// Control-flow decision.

@@ -3,6 +3,7 @@
 //! CFG, SSA, reactivity, region, and optimizer passes over Fict-owned HIR.
 
 mod alias;
+mod async_dependencies;
 mod cfg;
 mod cycles;
 mod effects;
@@ -54,3 +55,5 @@ pub use structurize::{
     StructuredSwitchArm, StructurizeAnalysis, StructurizeFallbackReason, StructurizeStats,
     structurize_cfg, verify_structurized_cfg,
 };
+
+pub use async_dependencies::async_dependent_locals;

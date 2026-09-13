@@ -1840,6 +1840,8 @@ const fn imported_reactive_kind(kind: &ReactiveExportKind) -> ImportedReactiveKi
     match kind {
         ReactiveExportKind::Signal => ImportedReactiveKind::Signal,
         ReactiveExportKind::Memo => ImportedReactiveKind::Memo,
+        ReactiveExportKind::Async => ImportedReactiveKind::Async,
+        ReactiveExportKind::AsyncAccessor => ImportedReactiveKind::AsyncAccessor,
         ReactiveExportKind::Store => ImportedReactiveKind::Store,
     }
 }
@@ -2411,10 +2413,16 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                     ImportedReactiveKind::Signal => {
                         unsafe_member_operations.push((mutation.target_span, name, "mutating"));
                     }
-                    ImportedReactiveKind::Memo if exact_target => {
+                    ImportedReactiveKind::Memo
+                    | ImportedReactiveKind::Async
+                    | ImportedReactiveKind::AsyncAccessor
+                        if exact_target =>
+                    {
                         readonly_targets.push((name, resolved.kind, mutation.target_span));
                     }
-                    ImportedReactiveKind::Memo => {
+                    ImportedReactiveKind::Memo
+                    | ImportedReactiveKind::Async
+                    | ImportedReactiveKind::AsyncAccessor => {
                         unsafe_member_operations.push((mutation.target_span, name, "mutating"));
                     }
                     ImportedReactiveKind::Store if exact_target => {
@@ -2430,8 +2438,12 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             else {
                 continue;
             };
-            if let Some(kind @ (ImportedReactiveKind::Memo | ImportedReactiveKind::Store)) =
-                self.imported_reactive_kind(binding)
+            if let Some(
+                kind @ (ImportedReactiveKind::Memo
+                | ImportedReactiveKind::Async
+                | ImportedReactiveKind::AsyncAccessor
+                | ImportedReactiveKind::Store),
+            ) = self.imported_reactive_kind(binding)
             {
                 readonly_targets.push((
                     self.binding_display_name(binding).to_owned(),
@@ -2445,8 +2457,12 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                 let Some(binding) = self.symbol_to_binding.get(&target.symbol).copied() else {
                     continue;
                 };
-                if let Some(kind @ (ImportedReactiveKind::Memo | ImportedReactiveKind::Store)) =
-                    self.imported_reactive_kind(binding)
+                if let Some(
+                    kind @ (ImportedReactiveKind::Memo
+                    | ImportedReactiveKind::Async
+                    | ImportedReactiveKind::AsyncAccessor
+                    | ImportedReactiveKind::Store),
+                ) = self.imported_reactive_kind(binding)
                 {
                     readonly_targets.push((
                         self.binding_display_name(binding).to_owned(),
@@ -2465,10 +2481,16 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                     ImportedReactiveKind::Signal => {
                         unsafe_member_operations.push((target.span, name, "mutating"));
                     }
-                    ImportedReactiveKind::Memo if exact_target => {
+                    ImportedReactiveKind::Memo
+                    | ImportedReactiveKind::Async
+                    | ImportedReactiveKind::AsyncAccessor
+                        if exact_target =>
+                    {
                         readonly_targets.push((name, resolved.kind, target.span));
                     }
-                    ImportedReactiveKind::Memo => {
+                    ImportedReactiveKind::Memo
+                    | ImportedReactiveKind::Async
+                    | ImportedReactiveKind::AsyncAccessor => {
                         unsafe_member_operations.push((target.span, name, "mutating"));
                     }
                     ImportedReactiveKind::Store if exact_target => {
@@ -2504,6 +2526,10 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
         readonly_targets.dedup();
         for (name, kind, span) in readonly_targets {
             let (kind, help) = match kind {
+                ImportedReactiveKind::Async | ImportedReactiveKind::AsyncAccessor => (
+                    "async",
+                    "change the async producer inputs or expose an explicit refresh method instead",
+                ),
                 ImportedReactiveKind::Memo => (
                     "memo",
                     "derive a new local value instead of assigning to the imported memo accessor",
@@ -2728,7 +2754,10 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                         .binding
                         .and_then(|binding| self.macro_bindings.get(&binding))
                         .is_some_and(|kind| {
-                            matches!(kind, FictMacroKind::State | FictMacroKind::Memo)
+                            matches!(
+                                kind,
+                                FictMacroKind::State | FictMacroKind::Memo | FictMacroKind::Async
+                            )
                         })
             })
             .filter_map(|call| call.direct_variable_binding)
@@ -2739,7 +2768,12 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             .filter(|call| {
                 call.binding
                     .and_then(|binding| self.macro_bindings.get(&binding))
-                    .is_some_and(|kind| matches!(kind, FictMacroKind::State | FictMacroKind::Memo))
+                    .is_some_and(|kind| {
+                        matches!(
+                            kind,
+                            FictMacroKind::State | FictMacroKind::Memo | FictMacroKind::Async
+                        )
+                    })
             })
             .filter_map(|call| call.direct_variable_binding)
             .filter_map(|binding| binding_to_symbol.get(&binding).copied())
@@ -3254,6 +3288,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                 states: &reactive.state,
                 immutable: &immutable_storage_aliases,
                 functions: &self.functions,
+                reactive_functions: &self.reactive_functions,
             },
         );
         let mut collector = ReactiveEscapeCollector {
@@ -3889,7 +3924,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             FunctionKind::ReactiveScope => {
                 self.reactive_functions.get(&function) == Some(&ReactiveScopeKind::Configured)
             }
-            FunctionKind::Plain => false,
+            FunctionKind::Plain | FunctionKind::RuntimeScope => false,
         }
     }
 
@@ -3932,7 +3967,12 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             .filter(|call| {
                 call.binding
                     .and_then(|binding| self.macro_bindings.get(&binding))
-                    .is_some_and(|kind| matches!(kind, FictMacroKind::State | FictMacroKind::Memo))
+                    .is_some_and(|kind| {
+                        matches!(
+                            kind,
+                            FictMacroKind::State | FictMacroKind::Memo | FictMacroKind::Async
+                        )
+                    })
             })
             .filter_map(|call| call.direct_variable_binding)
             .collect();
@@ -3947,7 +3987,10 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                         .is_some_and(|kind| {
                             matches!(
                                 kind,
-                                ImportedReactiveKind::Signal | ImportedReactiveKind::Memo
+                                ImportedReactiveKind::Signal
+                                    | ImportedReactiveKind::Memo
+                                    | ImportedReactiveKind::Async
+                                    | ImportedReactiveKind::AsyncAccessor
                             )
                         })
                 })
@@ -3957,7 +4000,10 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             let reactive = binding.import.as_ref().and_then(|import| import.reactive)?;
             matches!(
                 reactive,
-                ImportedReactiveKind::Signal | ImportedReactiveKind::Memo
+                ImportedReactiveKind::Signal
+                    | ImportedReactiveKind::Memo
+                    | ImportedReactiveKind::Async
+                    | ImportedReactiveKind::AsyncAccessor
             )
             .then(|| self.old_to_new.get(&binding.id.index()).copied())
             .flatten()
@@ -8423,6 +8469,7 @@ enum RuntimeReactiveCreationKind {
     Effect,
     Memo,
     NamespaceMemo,
+    AsyncMemo,
     Selector,
 }
 
@@ -8430,6 +8477,7 @@ impl RuntimeReactiveCreationKind {
     const fn scope_kind(self) -> Option<ReactiveScopeKind> {
         match self {
             Self::Effect => Some(ReactiveScopeKind::EffectCallback),
+            Self::AsyncMemo => Some(ReactiveScopeKind::AsyncCallback),
             Self::Memo | Self::NamespaceMemo => Some(ReactiveScopeKind::MemoCallback),
             Self::Selector => None,
         }
@@ -10286,7 +10334,12 @@ fn collect_local_hook_return_shapes(
         .filter(|call| {
             call.binding
                 .and_then(|binding| macro_bindings.get(&binding))
-                .is_some_and(|kind| matches!(kind, FictMacroKind::State | FictMacroKind::Memo))
+                .is_some_and(|kind| {
+                    matches!(
+                        kind,
+                        FictMacroKind::State | FictMacroKind::Memo | FictMacroKind::Async
+                    )
+                })
         })
         .filter_map(|call| call.direct_variable_binding)
         .filter_map(|binding| binding_to_symbol.get(&binding).copied())
@@ -42893,6 +42946,7 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
                 host,
                 runtime_callbacks::RuntimeCallbackHost::Render
                     | runtime_callbacks::RuntimeCallbackHost::Computation
+                    | runtime_callbacks::RuntimeCallbackHost::AsyncComputation
             )
         });
         let state_arguments_allowed = store
@@ -42901,7 +42955,7 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
             || fact.runtime_creation_kind == Some(RuntimeReactiveCreationKind::NamespaceMemo)
             || matches!(
                 macro_kind,
-                Some(FictMacroKind::Effect | FictMacroKind::Memo)
+                Some(FictMacroKind::Effect | FictMacroKind::Memo | FictMacroKind::Async)
             );
         let selector = runtime_host == Some(runtime_callbacks::RuntimeCallbackHost::Selector);
         let snapshot_arguments = if selector {
@@ -43831,7 +43885,8 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
                 RuntimeCallbackHost::Selector => self.selector_callbacks_are_owned(arguments),
                 RuntimeCallbackHost::Snapshot
                 | RuntimeCallbackHost::Managed
-                | RuntimeCallbackHost::Computation => {
+                | RuntimeCallbackHost::Computation
+                | RuntimeCallbackHost::AsyncComputation => {
                     self.runtime_callbacks_are_synchronous(arguments)
                 }
                 RuntimeCallbackHost::Render => false,
@@ -46195,6 +46250,20 @@ fn runtime_reactive_call_classification(
             Some(classified(
                 Some(ReactiveCallKind::Memo),
                 Some(RuntimeReactiveCreationKind::Memo),
+            ))
+        }
+        "createAsyncMemo"
+            if matches!(
+                source,
+                "fict/advanced"
+                    | "fict/internal"
+                    | "@fictjs/runtime/advanced"
+                    | "@fictjs/runtime/internal"
+            ) =>
+        {
+            Some(classified(
+                Some(ReactiveCallKind::AsyncMemo),
+                Some(RuntimeReactiveCreationKind::AsyncMemo),
             ))
         }
         "useContextAccessor"

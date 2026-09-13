@@ -116,7 +116,9 @@ impl Builder<'_, '_> {
                     "Memo has no reactive dependencies and could be a constant.",
                     "replace the memo with a constant or read the intended reactive value",
                 ),
-                FictMacroKind::State => unreachable!("filtered reactive callback kinds"),
+                FictMacroKind::State | FictMacroKind::Async => {
+                    unreachable!("filtered reactive callback kinds")
+                }
             };
             self.diagnostics
                 .push(advisory(code, severity, message, call.span).with_help(help));
@@ -130,6 +132,7 @@ impl Builder<'_, '_> {
                 super::RuntimeReactiveCreationKind::Effect => Some(FictMacroKind::Effect),
                 super::RuntimeReactiveCreationKind::Memo
                 | super::RuntimeReactiveCreationKind::NamespaceMemo => Some(FictMacroKind::Memo),
+                super::RuntimeReactiveCreationKind::AsyncMemo => Some(FictMacroKind::Async),
                 super::RuntimeReactiveCreationKind::Selector => None,
             })
     }

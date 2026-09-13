@@ -306,6 +306,8 @@ const fn imported_reactive_kind(kind: &ReactiveExportKind) -> ImportedReactiveKi
     match kind {
         ReactiveExportKind::Signal => ImportedReactiveKind::Signal,
         ReactiveExportKind::Memo => ImportedReactiveKind::Memo,
+        ReactiveExportKind::Async => ImportedReactiveKind::Async,
+        ReactiveExportKind::AsyncAccessor => ImportedReactiveKind::AsyncAccessor,
         ReactiveExportKind::Store => ImportedReactiveKind::Store,
     }
 }
@@ -317,21 +319,78 @@ fn collect_local_facts(core: &CorePassOutput, frontend: &FrontendSummary) -> Loc
         return facts;
     };
     let mut local_kinds = BTreeMap::new();
+    let async_locals = fict_reactivity::async_dependent_locals(
+        &core.hir,
+        root,
+        &analysis.scopes,
+        &BTreeMap::new(),
+    );
     for local in &root.locals {
-        if let Some(kind) = classify_local(analysis, local.id)
-            .or_else(|| classify_local_initializer(&core.hir, root, local.id, &mut BTreeSet::new()))
+        if let Some(kind @ (ImportedReactiveKind::Async | ImportedReactiveKind::AsyncAccessor)) =
+            local
+                .binding
+                .and_then(|binding| core.hir.bindings[binding.as_usize()].import.as_ref())
+                .and_then(|import| import.reactive)
         {
+            local_kinds.insert(local.id, imported_reactive_export_kind(kind));
+            continue;
+        }
+        let async_alias = root
+            .blocks
+            .iter()
+            .flat_map(|block| &block.instructions)
+            .find_map(|instruction| {
+                let HirInstructionKind::Declare {
+                    local: target,
+                    initializer: Some(value),
+                    ..
+                } = instruction.kind
+                else {
+                    return None;
+                };
+                if target != local.id
+                    || !matches!(
+                        root.instruction_for_result(value)?.kind,
+                        HirInstructionKind::Read { .. }
+                            | HirInstructionKind::Sequence { .. }
+                            | HirInstructionKind::Conditional { .. }
+                            | HirInstructionKind::Binary { .. }
+                    )
+                {
+                    return None;
+                }
+                fict_hir::async_value_kind(&core.hir, root.id, value, None)
+            });
+        match async_alias {
+            // Module-level ordinary values are eager snapshots, not generated memos.
+            Some(ImportedReactiveKind::Async) => continue,
+            Some(ImportedReactiveKind::AsyncAccessor) => {
+                local_kinds.insert(local.id, ReactiveExportKind::AsyncAccessor);
+                continue;
+            }
+            _ => {}
+        }
+        let creator = classify_local_initializer(&core.hir, root, local.id, &mut BTreeSet::new());
+        if creator.is_none() && async_locals.contains(&local.id) {
+            continue;
+        }
+        if let Some(kind) = creator.or_else(|| classify_local(analysis, local.id)) {
             local_kinds.insert(local.id, kind);
         }
     }
     for _ in 0..=analysis.aliases.edges.len() {
         let previous = local_kinds.clone();
         for edge in &analysis.aliases.edges {
-            if edge.alias.local == edge.source.local || local_kinds.contains_key(&edge.alias.local)
+            if edge.alias.local == edge.source.local
+                || local_kinds.contains_key(&edge.alias.local)
+                || async_locals.contains(&edge.alias.local)
             {
                 continue;
             }
-            if previous.contains_key(&edge.source.local) {
+            if previous
+                .get(&edge.source.local)
+                .is_some_and(|kind| *kind != ReactiveExportKind::Async)
+            {
                 local_kinds.insert(edge.alias.local, ReactiveExportKind::Memo);
             }
         }
@@ -541,7 +600,9 @@ fn classify_call(call: &fict_hir::CallInstruction) -> Option<ReactiveExportKind>
     match (call.macro_kind, call.reactive_kind) {
         (Some(FictMacroKind::State), _) => Some(ReactiveExportKind::Signal),
         (Some(FictMacroKind::Memo), _) => Some(ReactiveExportKind::Memo),
+        (Some(FictMacroKind::Async), _) => Some(ReactiveExportKind::Async),
         (_, Some(ReactiveCallKind::Memo)) => Some(ReactiveExportKind::Memo),
+        (_, Some(ReactiveCallKind::AsyncMemo)) => Some(ReactiveExportKind::AsyncAccessor),
         (_, Some(ReactiveCallKind::Store)) => Some(ReactiveExportKind::Store),
         _ => None,
     }
@@ -634,6 +695,8 @@ const fn imported_reactive_export_kind(kind: ImportedReactiveKind) -> ReactiveEx
     match kind {
         ImportedReactiveKind::Signal => ReactiveExportKind::Signal,
         ImportedReactiveKind::Memo => ReactiveExportKind::Memo,
+        ImportedReactiveKind::Async => ReactiveExportKind::Async,
+        ImportedReactiveKind::AsyncAccessor => ReactiveExportKind::AsyncAccessor,
         ImportedReactiveKind::Store => ReactiveExportKind::Store,
     }
 }
@@ -664,6 +727,8 @@ fn runtime_creator_kind(source: &str, imported: &str) -> Option<ReactiveExportKi
     }
     match imported {
         "createSignal" => Some(ReactiveExportKind::Signal),
+        "$async" => Some(ReactiveExportKind::Async),
+        "createAsyncMemo" => Some(ReactiveExportKind::AsyncAccessor),
         "createMemo" | "$memo" => Some(ReactiveExportKind::Memo),
         "$store" => Some(ReactiveExportKind::Store),
         "createStore" if !matches!(source, "fict/internal" | "@fictjs/runtime/internal") => {
@@ -738,6 +803,30 @@ fn infer_hook_return(
     if function.kind != FunctionKind::Hook {
         return HookReturnInference::None;
     }
+    let imported_hooks: BTreeMap<_, _> = known_hooks
+        .iter()
+        .map(|(binding, info)| (*binding, imported_hook_return(info)))
+        .collect();
+    let async_locals =
+        fict_reactivity::async_dependent_locals(file, function, &analysis.scopes, &imported_hooks);
+    let mut materialized_bindings = known_bindings.clone();
+    if !async_locals.is_empty() {
+        let writes = fict_emit::collect_captured_write_bindings(file);
+        for (_, local, _) in fict_emit::derived_declarations(
+            file,
+            function,
+            Some(&analysis.scopes),
+            &writes,
+            &imported_hooks,
+        ) {
+            if async_locals.contains(&local)
+                && let Some(binding) = function.locals[local.as_usize()].binding
+            {
+                materialized_bindings.insert(binding, ReactiveExportKind::Async);
+            }
+        }
+    }
+    let known_bindings = &materialized_bindings;
     let mut branches = Vec::new();
     let mut first_return_span = None;
     for block in &function.blocks {
@@ -785,6 +874,13 @@ fn collect_hook_branch_shapes(
 ) {
     if !visiting.insert(value) {
         branches.push(HookBranchShape::Direct(HookSlotShape::Plain));
+        return;
+    }
+    if known_async_value_read(function, value, known_bindings) {
+        branches.push(HookBranchShape::Direct(HookSlotShape::Accessor(
+            ReactiveExportKind::Async,
+        )));
+        visiting.remove(&value);
         return;
     }
     if let Some(initializer) = stable_read_initializer(function, value) {
@@ -943,6 +1039,10 @@ fn hook_slot_for_value(
 ) -> HookSlotShape {
     if !visiting.insert(value) {
         return HookSlotShape::Plain;
+    }
+    if known_async_value_read(function, value, known_bindings) {
+        visiting.remove(&value);
+        return HookSlotShape::Accessor(ReactiveExportKind::Async);
     }
     if let Some(initializer) = stable_read_initializer(function, value) {
         let shape = hook_slot_for_value(
@@ -1176,6 +1276,30 @@ fn static_nullish(
     };
     visiting.remove(&value);
     result
+}
+
+fn known_async_value_read(
+    function: &HirFunction,
+    value: ValueId,
+    bindings: &BTreeMap<BindingId, ReactiveExportKind>,
+) -> bool {
+    let Some(HirInstructionKind::Read { place }) =
+        defining_instruction(function, value).map(|instruction| &instruction.kind)
+    else {
+        return false;
+    };
+    if !place.projections.is_empty() {
+        return false;
+    }
+    let local = match place.base {
+        PlaceBase::Local(local) => local,
+        PlaceBase::Ssa(name) => name.local,
+        _ => return false,
+    };
+    function.locals[local.as_usize()]
+        .binding
+        .and_then(|binding| bindings.get(&binding))
+        == Some(&ReactiveExportKind::Async)
 }
 
 fn stable_read_initializer(function: &HirFunction, value: ValueId) -> Option<ValueId> {
@@ -1590,6 +1714,8 @@ fn reactive_value_kind(kind: ReactiveValueKind) -> ReactiveExportKind {
     match kind {
         ReactiveValueKind::Signal => ReactiveExportKind::Signal,
         ReactiveValueKind::Memo => ReactiveExportKind::Memo,
+        ReactiveValueKind::Async => ReactiveExportKind::Async,
+        ReactiveValueKind::AsyncAccessor => ReactiveExportKind::AsyncAccessor,
         ReactiveValueKind::Store => ReactiveExportKind::Store,
     }
 }

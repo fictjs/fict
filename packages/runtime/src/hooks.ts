@@ -1,5 +1,12 @@
+import {
+  createAsyncMemo,
+  type AsyncContext,
+  type AsyncMemo,
+  type AsyncMemoOptions,
+} from './async-memo'
 import { createEffect } from './effect'
 import { createMemo } from './memo'
+import { resetComponentRenderPhase, runComponentRender } from './render-phase'
 import {
   createSignal,
   type SignalAccessor,
@@ -8,7 +15,6 @@ import {
   type MemoOptions,
   type SignalOptions,
 } from './signal'
-import { resetComponentRenderPhase, runComponentRender } from './render-phase'
 
 const isDev =
   typeof __DEV__ !== 'undefined'
@@ -124,6 +130,20 @@ export function __fictUseMemo<T>(
     ctx.slots[index] = createMemo(fn, options)
   }
   return ctx.slots[index] as ComputedAccessor<T>
+}
+
+export function __fictUseAsyncMemo<T>(
+  ctx: HookContext,
+  produce: (context: AsyncContext<T>) => T | PromiseLike<T> | AsyncIterable<T>,
+  optionsOrSlot?: number | AsyncMemoOptions,
+  slot?: number,
+): AsyncMemo<T> {
+  assertRenderContext(ctx, '__fictUseAsyncMemo')
+  const options = typeof optionsOrSlot === 'number' ? undefined : optionsOrSlot
+  const resolvedSlot = typeof optionsOrSlot === 'number' ? optionsOrSlot : slot
+  const index = resolvedSlot ?? ctx.cursor++
+  if (!ctx.slots[index]) ctx.slots[index] = createAsyncMemo(produce, options)
+  return ctx.slots[index] as AsyncMemo<T>
 }
 
 export function __fictUseEffect(

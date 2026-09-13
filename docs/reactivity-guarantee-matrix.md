@@ -50,6 +50,15 @@ dev/test migration experiments may opt out only outside production.
 | Out of model | External direct DOM mutation / unstable external node ownership                                  | Runtime invariant may be broken                                                                             | No compiler guarantee        |
 | Out of model | Third-party package hooks without `package.json#fict` metadata                                   | Import stays opaque; compiler cannot recover hook return reactivity                                         | No auto-recovery guarantee   |
 
+## Explicit async declarations
+
+Named `$async` declarations have the [explicit async contract](./async-declarations.md):
+const bindings, synchronous producers, tracked inputs, graph readiness, owned
+cancellation, and distinct value/accessor metadata. Template and VNode consumers
+use the same graph protocol. Unsupported placement, async/generator producers,
+result writes and Preview resumability fail closed. Native `await` continuations
+and async component return values are not implicitly made reactive.
+
 ## Notes
 
 - A synchronous callback passed directly to Fict's imported `untrack` can pass

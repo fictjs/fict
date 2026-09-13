@@ -64,6 +64,7 @@ impl Builder<'_, '_> {
             Some(FictMacroKind::Effect) => Some(ReactiveScopeKind::EffectCallback),
             Some(FictMacroKind::Memo) => Some(ReactiveScopeKind::MemoCallback),
             Some(FictMacroKind::State) => None,
+            Some(FictMacroKind::Async) => Some(ReactiveScopeKind::AsyncCallback),
             None => call
                 .runtime_creation_kind
                 .and_then(|kind| kind.scope_kind()),
@@ -75,8 +76,28 @@ impl Builder<'_, '_> {
             if let (Some(kind), Some(callback)) =
                 (self.call_reactive_scope_kind(call), call.callback)
             {
-                self.functions[callback.as_usize()].kind = FunctionKind::ReactiveScope;
+                self.functions[callback.as_usize()].kind =
+                    if kind == ReactiveScopeKind::AsyncCallback {
+                        FunctionKind::RuntimeScope
+                    } else {
+                        FunctionKind::ReactiveScope
+                    };
                 self.reactive_functions.insert(callback, kind);
+            }
+        }
+        for fact in self.function_facts.iter().skip(1) {
+            if self.functions[fact.id.as_usize()].kind != FunctionKind::ReactiveScope
+                || self.reactive_functions.get(&fact.id) == Some(&ReactiveScopeKind::Configured)
+            {
+                continue;
+            }
+            let mut parent = fact.parent;
+            while parent != fict_hir::FunctionId::new(0) {
+                if self.functions[parent.as_usize()].kind == FunctionKind::RuntimeScope {
+                    self.functions[fact.id.as_usize()].kind = FunctionKind::RuntimeScope;
+                    break;
+                }
+                parent = self.function_facts[parent.as_usize()].parent;
             }
         }
     }
@@ -189,6 +210,70 @@ impl Builder<'_, '_> {
                         );
                     }
                 }
+                FictMacroKind::Async => {
+                    if call.arguments.len() != 1 {
+                        self.diagnostics.push(error(
+                            "FICT-ASYNC-ARGUMENTS",
+                            "$async() requires exactly one producer callback",
+                            call.span,
+                        ).with_help("pass options to the async helper inside the producer, or use createAsyncMemo for manual runtime options"));
+                    }
+                    let producer = call
+                        .callback
+                        .and_then(|id| self.functions.get(id.as_usize()));
+                    if !producer.is_some_and(|function| {
+                        !function.flags.is_async && !function.flags.is_generator
+                    }) {
+                        self.diagnostics.push(error(
+                            "FICT-ASYNC-PRODUCER",
+                            "$async() requires a statically known synchronous producer",
+                            call.span,
+                        ).with_help("capture reactive inputs synchronously and return a Promise or AsyncIterable from an ordinary async helper; await/yield continuations do not track reactive reads"));
+                    }
+                    if call.direct_variable != Some(true) {
+                        self.diagnostics.push(
+                            error(
+                                "FICT-PLACEMENT-ASYNC-TARGET",
+                                "$async() must be assigned directly to one identifier",
+                                call.span,
+                            )
+                            .with_help(
+                                "use `const value = $async(context => fetchValue(context.signal))`",
+                            ),
+                        );
+                    }
+                    if call.direct_variable_binding.is_some_and(|binding| {
+                        self.functions[call.owner.as_usize()]
+                            .locals
+                            .iter()
+                            .any(|local| {
+                                local.binding == Some(binding)
+                                    && local.declaration_kind != fict_hir::DeclarationKind::Const
+                            })
+                    }) {
+                        self.diagnostics.push(error(
+                            "FICT-PLACEMENT-ASYNC-CONST",
+                            "$async() requires a const binding because its result is read-only",
+                            call.span,
+                        ).with_help("use `const value = $async(...)` and change the producer inputs to refresh it"));
+                    }
+                    if !self.is_reactive_owner(call.owner, true)
+                        || self.is_placement_nested(call.owner)
+                    {
+                        self.diagnostics.push(error(
+                            "FICT-PLACEMENT-ASYNC-OWNER",
+                            "$async() must be declared at the top level of a component, hook, or module",
+                            call.span,
+                        ).with_help("extract a hook, or use createAsyncMemo inside an explicitly owned runtime scope"));
+                    }
+                    if !call.immediate_statement || call.conditional_or_loop {
+                        self.diagnostics.push(error(
+                            "FICT-PLACEMENT-ASYNC-CONTROL",
+                            "$async() cannot be declared inside loops, conditionals, or nested blocks",
+                            call.span,
+                        ).with_help("move async node creation to the reactive owner top level"));
+                    }
+                }
                 FictMacroKind::Memo => {
                     if call.conditional_or_loop {
                         self.diagnostics.push(
@@ -207,6 +292,22 @@ impl Builder<'_, '_> {
 
     pub(super) fn validate_runtime_reactive_placement(&mut self, calls: &[CallFact]) {
         for call in calls {
+            if self.functions[call.owner.as_usize()].kind == FunctionKind::RuntimeScope
+                && matches!(
+                    call.reactive_kind,
+                    Some(
+                        fict_hir::ReactiveCallKind::AsyncMemo
+                            | fict_hir::ReactiveCallKind::Resource
+                    )
+                )
+            {
+                self.diagnostics.push(error(
+                    "FICT-ASYNC-NESTED",
+                    "an async generation cannot create a new async dependency and resume by replaying its construction",
+                    call.span,
+                ).with_help("create the async node or Resource outside the producer, then read it from the producer; return composed Promises or AsyncIterables for a single transport"));
+                continue;
+            }
             if call.runtime_creation_kind.is_none() || !call.conditional_or_loop || call.inside_jsx
             {
                 continue;

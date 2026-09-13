@@ -836,7 +836,10 @@ fn strip_consumed_fict_directives(program: &mut Program<'_>) {
 fn is_scoped_helper(helper: RuntimeHelper) -> bool {
     matches!(
         helper,
-        RuntimeHelper::UseSignal | RuntimeHelper::UseMemo | RuntimeHelper::UseEffect
+        RuntimeHelper::UseSignal
+            | RuntimeHelper::UseMemo
+            | RuntimeHelper::UseAsyncMemo
+            | RuntimeHelper::UseEffect
     )
 }
 #[derive(Debug, Clone)]
@@ -1208,7 +1211,11 @@ fn creation_rewrites(
                 } => name,
                 EmitOperation::CreateReactive {
                     name,
-                    helper: RuntimeHelper::Memo | RuntimeHelper::UseMemo,
+                    helper:
+                        RuntimeHelper::Memo
+                        | RuntimeHelper::UseMemo
+                        | RuntimeHelper::AsyncMemo
+                        | RuntimeHelper::UseAsyncMemo,
                     ..
                 } if emit.dev => name,
                 _ => &None,
@@ -1376,6 +1383,7 @@ struct ReadRewrite {
     projection_count: usize,
     optional_accessor: bool,
     call_value: bool,
+    preserve_accessor: bool,
 }
 fn projection_is_optional(projection: &fict_hir::Projection) -> bool {
     match projection {
@@ -1437,6 +1445,8 @@ fn read_rewrites(emit: &EmitProgram) -> (BTreeMap<(u32, u32), ReadRewrite>, Vec<
                             .and_then(|index| projections.get(index))
                             .is_some_and(projection_is_optional),
                         call_value: *call_value,
+                        preserve_accessor: slot
+                            .is_some_and(|slot| slot.kind == ReactiveSlotKind::AsyncAccessor),
                     },
                 )
                 .is_some()
@@ -4188,6 +4198,17 @@ impl<'a> VisitMut<'a> for AstRewriter<'a, '_> {
             && self.rewrite_mutation(expression, rewrite)
         {
             self.matched_mutations.insert(location);
+            return;
+        }
+        if self
+            .reads
+            .get(&location)
+            .is_some_and(|rewrite| rewrite.preserve_accessor)
+        {
+            // Preserve the callable object, while retaining its read entry so both
+            // template and VNode lowering form a reactive consumer.
+            self.matched_reads.insert(location);
+            walk_mut::walk_expression(self, expression);
             return;
         }
         if let Some(rewrite) = self.reads.get(&location).copied().filter(|rewrite| {

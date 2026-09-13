@@ -190,8 +190,8 @@ Only resolved serializable data enters a request's hydration payload; hydration
 must agree on source identity and initial state without sharing private request
 data. Aborted requests cannot publish into another session.
 
-Compiler lowering, metadata, runtime ABI, and types must agree on the explicit
-async accessor shape. A Promise return type alone is not permission to unwrap or
+Compiler lowering, metadata, runtime ABI, and types agree on the explicit
+async value/accessor shapes through [`$async` declarations](./async-declarations.md). A Promise return type alone is not permission to unwrap or
 move code across `await`. Strict diagnostics continue to reject unsupported
 continuations and unknown hosts. Optimizer profiles must preserve invocation
 counts, exceptions, reference semantics, generation ownership, and cleanup order.
@@ -218,6 +218,10 @@ cache, cancellation, TTL/SWR, mutation, and request-isolation coverage.
 `async-transition.test.ts`, the scheduler regressions, and
 `packages/fict/test/resource-transition.test.ts` exercise indirect requests,
 overlap, queued replacement, stale generations, shared leases, disposal, first
-stream readiness, and returned-Promise composition. Compiler-owned continuations
-and real SSR/streaming/hydration qualification remain separate A6–A8 items. Passing
-state, node, or composition tests alone does not satisfy those requirements.
+stream readiness, and returned-Promise composition.
+
+`scripts/native-compiler-async.test.mjs` executes the explicit compiler declaration,
+generation ownership, callable values, import identities, metadata consumers,
+source maps and strict continuation boundaries across all optimizer/DOM profiles.
+Real SSR/streaming/hydration and application qualification remain A7–A8 items;
+state, node, compiler or composition tests alone do not satisfy those requirements.

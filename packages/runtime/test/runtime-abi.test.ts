@@ -3,6 +3,8 @@ import { afterEach, describe, expect, it } from 'vitest'
 import runtimeAbi from '../runtime-abi.json'
 import * as internal from '../src/internal'
 import * as list from '../src/internal/list'
+import { createRootContext, destroyRoot, withRootContext } from '../src/lifecycle'
+import type { HookContext } from '../src/hooks'
 
 const modules = {
   internal: internal as Record<string, unknown>,
@@ -30,6 +32,36 @@ describe('runtime compiler ABI', () => {
         expect(typeof value, `${helper.key} (${helper.export})`).toBe('function')
       }
     }
+  })
+
+  it('keeps async helper slot identity and root-owned cancellation', () => {
+    const owner = createRootContext()
+    const context: HookContext = { slots: [], cursor: 0, rendering: true }
+    let calls = 0
+    let signal: AbortSignal | undefined
+    const value = withRootContext(owner, () =>
+      internal.__fictUseAsyncMemo(
+        context,
+        input => {
+          calls++
+          signal = input.signal
+          return 42
+        },
+        { name: 'answer' },
+        3,
+      ),
+    )
+    expect(value()).toBe(42)
+    expect(context.cursor).toBe(0)
+    expect(internal.__fictUseAsyncMemo(context, () => 100, 3)).toBe(value)
+    expect(calls).toBe(1)
+    destroyRoot(owner)
+    expect(signal?.aborted).toBe(true)
+    expect(value.state().status).toBe('disposed')
+    context.rendering = false
+    expect(() => internal.__fictUseAsyncMemo(context, () => 1)).toThrow(
+      /render execution|FICT:E_HOOK_RENDER/,
+    )
   })
 
   it('keeps signal, memo, and effect helper contracts usable', () => {

@@ -785,7 +785,7 @@ and `packages/webpack-plugin/src/__tests__/resolver-boundary.test.ts`.
 
 **Severity:** Error
 
-**Why:** A compile-time macro such as `$state`, `$effect`, or `$memo` is called through optional
+**Why:** A compile-time macro such as `$state`, `$effect`, `$memo`, or `$async` is called through optional
 chaining. Runtime creators such as `createMemo?.(...)` are ordinary JavaScript and are not covered
 by this diagnostic.
 
@@ -801,7 +801,7 @@ fixture; do not rewrite supported JavaScript merely to avoid an internal code.
 
 **Severity:** Error
 
-**Why:** An unresolved call uses the reserved `$state`, `$effect`, or `$memo` spelling without a
+**Why:** An unresolved call uses the reserved `$state`, `$effect`, `$memo`, or `$async` spelling without a
 matching named import from a Fict entrypoint.
 
 **Impact:** The call would otherwise remain in emitted JavaScript and fail at runtime instead of
@@ -870,3 +870,96 @@ tooling alias.
 
 - [reactivity-semantics.md](./reactivity-semantics.md) — Reactive behavior rules
 - [compiler-spec.md](./compiler-spec.md) — Compiler transformation details
+
+### FICT-ASYNC-PRODUCER: Unsupported async producer
+
+**Severity:** Error
+
+**Why:** The `$async` callback is unknown, async or a generator.
+
+**Impact:** Compilation stops before emitting an unsupported async or lifetime contract.
+
+**Fix:** Capture inputs synchronously and return a Promise or AsyncIterable from an ordinary helper. Native continuations do not inherit reactive tracking.
+
+### FICT-ASYNC-ARGUMENTS: Invalid async macro arguments
+
+**Severity:** Error
+
+**Why:** `$async` was not given exactly one producer callback.
+
+**Impact:** Compilation stops before emitting an unsupported async or lifetime contract.
+
+**Fix:** Pass one synchronous producer. Use `createAsyncMemo` from `fict/advanced` for manual runtime options.
+
+### FICT-ASYNC-READONLY: Write to an async result
+
+**Severity:** Error
+
+**Why:** An async value or accessor is being assigned, updated, deleted or mutated.
+
+**Impact:** Compilation stops before emitting an unsupported async or lifetime contract.
+
+**Fix:** Change producer inputs, call the manual accessor refresh method, or make an explicit immutable copy. The async node is not a signal setter.
+
+### FICT-PLACEMENT-ASYNC-TARGET: Async declaration needs a direct binding
+
+**Severity:** Error
+
+**Why:** `$async` is not assigned directly to a single identifier.
+
+**Impact:** Compilation stops before emitting an unsupported async or lifetime contract.
+
+**Fix:** Use `const value = $async(producer)`, then read that value in a reactive consumer.
+
+### FICT-PLACEMENT-ASYNC-CONST: Async declaration needs const
+
+**Severity:** Error
+
+**Why:** The declaration uses a mutable binding for a read-only async result.
+
+**Impact:** Compilation stops before emitting an unsupported async or lifetime contract.
+
+**Fix:** Use `const`, and update producer inputs to refresh the result.
+
+### FICT-PLACEMENT-ASYNC-OWNER: Async declaration outside a supported owner
+
+**Severity:** Error
+
+**Why:** The macro appears in an ordinary nested function rather than component, hook or module setup.
+
+**Impact:** Compilation stops before emitting an unsupported async or lifetime contract.
+
+**Fix:** Extract a hook or create a manually disposed async memo inside an explicit runtime scope.
+
+### FICT-PLACEMENT-ASYNC-CONTROL: Conditional async node creation
+
+**Severity:** Error
+
+**Why:** The macro appears in a loop, conditional or nested block.
+
+**Impact:** Compilation stops before emitting an unsupported async or lifetime contract.
+
+**Fix:** Move creation to the reactive owner top level. Let producer inputs and reactive consumers control when work is required.
+
+### FICT-PREVIEW-ASYNC: Async graph cannot use Preview serialization
+
+**Severity:** Error
+
+**Why:** Preview resumability cannot serialize graph readiness, cancellation or generation ownership.
+
+**Impact:** Compilation stops before emitting an unsupported async or lifetime contract.
+
+**Fix:** Disable Preview resumability and use eager Core event handlers. This boundary does not disable the async graph in ordinary compiled output.
+
+### FICT-ASYNC-NESTED: Async dependency construction inside a producer
+
+**Severity:** Error
+
+**Why:** An async generation constructs a new async memo or Resource. A pending
+read would retry the producer and construct another pending dependency.
+
+**Impact:** Compilation rejects a lifetime that could repeatedly discard its own
+pending work. Synchronous nested computations remain generation-owned.
+
+**Fix:** Create the async dependency outside the producer and read it inside, or
+compose Promises/AsyncIterables into one producer result.

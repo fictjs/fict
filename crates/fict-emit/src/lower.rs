@@ -1,3 +1,5 @@
+mod async_aliases;
+
 use crate::{
     CleanupOwner, ComponentChild, ComponentProp, ComponentTarget, ConditionalKind,
     DELEGATED_EVENTS, DomBindingKind, DomNamespace, DomTextSegment, EmitContext, EmitFunction,
@@ -118,6 +120,7 @@ struct ReactiveBindingSite {
     binding: BindingId,
     kind: ReactiveSlotKind,
     call_value: bool,
+    alias_initializer: Option<ValueId>,
     origin: Origin,
 }
 #[derive(Debug, Clone, Copy)]
@@ -587,11 +590,13 @@ fn derived_read_crosses_dependency_write(
     }
     false
 }
-fn derived_declarations(
+/// Plan the implicit getters shared by metadata inference and final lowering.
+pub fn derived_declarations(
     hir: &HirFile,
     function: &HirFunction,
     scopes: Option<&ReactiveScopeAnalysis>,
     captured_write_bindings: &BTreeSet<BindingId>,
+    local_hook_returns: &BTreeMap<BindingId, ImportedHookReturn>,
 ) -> Vec<(ValueId, LocalId, Origin)> {
     use HirInstructionKind as K;
     use ReactiveBindingKind::{Alias, Derived};
@@ -626,6 +631,13 @@ fn derived_declarations(
         };
         let source = &function.blocks[block.as_usize()].instructions[instruction as usize];
         let (result, local) = declaration_initializer(function, source)?;
+        if function
+            .instruction_for_result(result)
+            .is_some_and(|instruction| matches!(instruction.kind, K::Read { .. }))
+            && fict_hir::async_accessor_identity(hir, function.id, result, Some(local_hook_returns))
+        {
+            return None;
+        }
         if derived_initializer_is_explicit_snapshot(function, result, &reassigned, &tracked_locals)
             && derived_read_crosses_dependency_write(
                 function,
@@ -714,8 +726,10 @@ fn collect_reactive_binding_sites(
             let slot_kind = match (call.macro_kind, call.reactive_kind) {
                 (Some(FictMacroKind::State), _) => ReactiveSlotKind::Signal,
                 (Some(FictMacroKind::Memo), _) => ReactiveSlotKind::Memo,
+                (Some(FictMacroKind::Async), _) => ReactiveSlotKind::Async,
                 (Some(FictMacroKind::Effect), _) => continue,
                 (None, Some(ReactiveCallKind::Memo)) => ReactiveSlotKind::Memo,
+                (None, Some(ReactiveCallKind::AsyncMemo)) => ReactiveSlotKind::AsyncAccessor,
                 (None, Some(ReactiveCallKind::Store)) => ReactiveSlotKind::Store,
                 (None, Some(ReactiveCallKind::Resource)) => ReactiveSlotKind::Resource,
                 (None, Some(ReactiveCallKind::Selector)) => ReactiveSlotKind::Selector,
@@ -723,6 +737,10 @@ fn collect_reactive_binding_sites(
                     match hook_direct(hir, local_hook_returns, call).map(|(_, kind)| kind) {
                         Some(ImportedReactiveKind::Signal) => ReactiveSlotKind::Signal,
                         Some(ImportedReactiveKind::Memo) => ReactiveSlotKind::Memo,
+                        Some(ImportedReactiveKind::Async) => ReactiveSlotKind::Async,
+                        Some(ImportedReactiveKind::AsyncAccessor) => {
+                            ReactiveSlotKind::AsyncAccessor
+                        }
                         Some(ImportedReactiveKind::Store) | None => continue,
                     }
                 }
@@ -734,11 +752,12 @@ fn collect_reactive_binding_sites(
                 continue;
             };
             let is_state = call.macro_kind == Some(FictMacroKind::State);
-            let call_value = is_state
-                && call
-                    .arguments
-                    .first()
-                    .is_some_and(|argument| function_value(function, argument.value).is_some());
+            let call_value = slot_kind == ReactiveSlotKind::Async
+                || is_state
+                    && call
+                        .arguments
+                        .first()
+                        .is_some_and(|argument| function_value(function, argument.value).is_some());
             insert_reactive_binding_site(
                 &mut sites,
                 ReactiveBindingSite {
@@ -746,6 +765,7 @@ fn collect_reactive_binding_sites(
                     binding,
                     kind: slot_kind,
                     call_value,
+                    alias_initializer: None,
                     origin: instruction.origin,
                 },
             )?;
@@ -754,11 +774,18 @@ fn collect_reactive_binding_sites(
             }
         }
         if let Some(scopes) = scopes {
+            let async_locals = fict_reactivity::async_dependent_locals(
+                hir,
+                function,
+                &scopes[function_index],
+                local_hook_returns,
+            );
             for (_, local, origin) in derived_declarations(
                 hir,
                 function,
                 Some(&scopes[function_index]),
                 captured_write_bindings,
+                local_hook_returns,
             ) {
                 let Some(binding) = function.locals[local.as_usize()].binding else {
                     continue;
@@ -769,13 +796,15 @@ fn collect_reactive_binding_sites(
                         owner,
                         binding,
                         kind: ReactiveSlotKind::Memo,
-                        call_value: false,
+                        call_value: async_locals.contains(&local),
+                        alias_initializer: None,
                         origin,
                     },
                 )?;
             }
         }
     }
+    async_aliases::collect_async_alias_sites(hir, local_hook_returns, &mut sites);
     for function in &hir.functions {
         for instruction in function.blocks.iter().flat_map(|block| &block.instructions) {
             let HirInstructionKind::Write { place, value } = &instruction.kind else {
@@ -880,7 +909,10 @@ fn collect_structured_hook_member_uses(
             };
             if matches!(
                 property.kind,
-                ImportedReactiveKind::Signal | ImportedReactiveKind::Memo
+                ImportedReactiveKind::Signal
+                    | ImportedReactiveKind::Memo
+                    | ImportedReactiveKind::Async
+                    | ImportedReactiveKind::AsyncAccessor
             ) {
                 uses.entry((root.binding, property))
                     .or_insert(instruction.origin);
@@ -1006,6 +1038,8 @@ fn lower_function(
             let kind = match kind {
                 ImportedReactiveKind::Signal => ReactiveSlotKind::Signal,
                 ImportedReactiveKind::Memo => ReactiveSlotKind::Memo,
+                ImportedReactiveKind::Async => ReactiveSlotKind::Async,
+                ImportedReactiveKind::AsyncAccessor => ReactiveSlotKind::AsyncAccessor,
                 ImportedReactiveKind::Store => return None,
             };
             Some((
@@ -1054,7 +1088,10 @@ fn lower_function(
         };
         if !matches!(
             property.kind,
-            ImportedReactiveKind::Signal | ImportedReactiveKind::Memo
+            ImportedReactiveKind::Signal
+                | ImportedReactiveKind::Memo
+                | ImportedReactiveKind::Async
+                | ImportedReactiveKind::AsyncAccessor
         ) {
             continue;
         }
@@ -1072,6 +1109,8 @@ fn lower_function(
             kind: match property.kind {
                 ImportedReactiveKind::Signal => ReactiveSlotKind::Signal,
                 ImportedReactiveKind::Memo => ReactiveSlotKind::Memo,
+                ImportedReactiveKind::Async => ReactiveSlotKind::Async,
+                ImportedReactiveKind::AsyncAccessor => ReactiveSlotKind::AsyncAccessor,
                 ImportedReactiveKind::Store => unreachable!("stores are not accessor slots"),
             },
             origin,
@@ -1095,7 +1134,10 @@ fn lower_function(
         if root.owner == function_id
             || !matches!(
                 property.kind,
-                ImportedReactiveKind::Signal | ImportedReactiveKind::Memo
+                ImportedReactiveKind::Signal
+                    | ImportedReactiveKind::Memo
+                    | ImportedReactiveKind::Async
+                    | ImportedReactiveKind::AsyncAccessor
             )
         {
             continue;
@@ -1123,6 +1165,8 @@ fn lower_function(
                 kind: match property.kind {
                     ImportedReactiveKind::Signal => ReactiveSlotKind::Signal,
                     ImportedReactiveKind::Memo => ReactiveSlotKind::Memo,
+                    ImportedReactiveKind::Async => ReactiveSlotKind::Async,
+                    ImportedReactiveKind::AsyncAccessor => ReactiveSlotKind::AsyncAccessor,
                     ImportedReactiveKind::Store => {
                         unreachable!("stores are not captured accessor slots")
                     }
@@ -1164,6 +1208,8 @@ fn lower_function(
                 match kind {
                     ImportedReactiveKind::Signal => ReactiveSlotKind::Signal,
                     ImportedReactiveKind::Memo => ReactiveSlotKind::Memo,
+                    ImportedReactiveKind::Async => ReactiveSlotKind::Async,
+                    ImportedReactiveKind::AsyncAccessor => ReactiveSlotKind::AsyncAccessor,
                     ImportedReactiveKind::Store => ReactiveSlotKind::Store,
                 },
                 local.origin,
@@ -1187,6 +1233,8 @@ fn lower_function(
                 match resolved.kind {
                     ImportedReactiveKind::Signal => ReactiveSlotKind::Signal,
                     ImportedReactiveKind::Memo => ReactiveSlotKind::Memo,
+                    ImportedReactiveKind::Async => ReactiveSlotKind::Async,
+                    ImportedReactiveKind::AsyncAccessor => ReactiveSlotKind::AsyncAccessor,
                     ImportedReactiveKind::Store => ReactiveSlotKind::Store,
                 },
                 resolved.accessor_depth,
@@ -1209,18 +1257,34 @@ fn lower_function(
             },
         )
         .collect();
+    let alias_sites: Vec<_> = function
+        .locals
+        .iter()
+        .filter_map(|local| {
+            let site = reactive_bindings.get(&local.binding?)?;
+            (site.owner == function_id && site.alias_initializer.is_some())
+                .then_some((local.id, *site))
+        })
+        .map(|(local, site)| (local, site, allocate_slot()))
+        .collect();
     let derived_start = sites.len();
     let owned_reactive_locals: BTreeSet<_> = sites.iter().filter_map(|site| site.local).collect();
     sites.extend(
-        derived_declarations(hir, function, scopes, captured_write_bindings)
-            .into_iter()
-            .filter(|(_, local, _)| !owned_reactive_locals.contains(local))
-            .map(|(result, local, _)| ReactiveSite {
-                result,
-                local: Some(local),
-                kind: ReactiveSiteKind::Macro(FictMacroKind::Memo),
-                slot: allocate_slot(),
-            }),
+        derived_declarations(
+            hir,
+            function,
+            scopes,
+            captured_write_bindings,
+            local_hook_returns,
+        )
+        .into_iter()
+        .filter(|(_, local, _)| !owned_reactive_locals.contains(local))
+        .map(|(result, local, _)| ReactiveSite {
+            result,
+            local: Some(local),
+            kind: ReactiveSiteKind::Macro(FictMacroKind::Memo),
+            slot: allocate_slot(),
+        }),
     );
     let imported_member_slots: BTreeMap<_, _> = imported_member_sites
         .iter()
@@ -1233,16 +1297,20 @@ fn lower_function(
         .filter_map(|site| {
             matches!(
                 site.kind,
-                ReactiveSiteKind::Macro(FictMacroKind::State | FictMacroKind::Memo)
-                    | ReactiveSiteKind::Runtime(
-                        ReactiveCallKind::Memo | ReactiveCallKind::Selector
-                    )
+                ReactiveSiteKind::Macro(
+                    FictMacroKind::State | FictMacroKind::Memo | FictMacroKind::Async
+                ) | ReactiveSiteKind::Runtime(
+                    ReactiveCallKind::Memo
+                        | ReactiveCallKind::AsyncMemo
+                        | ReactiveCallKind::Selector
+                )
             )
             .then_some(site.local)
             .flatten()
             .map(|local| (local, site.slot))
         })
         .collect();
+    slot_by_local.extend(alias_sites.iter().map(|(local, _, slot)| (*local, *slot)));
     slot_by_local.extend(
         hook_return_sites
             .iter()
@@ -1252,7 +1320,13 @@ fn lower_function(
         captured_sites
             .iter()
             .filter(|(_, site, _)| {
-                matches!(site.kind, ReactiveSlotKind::Signal | ReactiveSlotKind::Memo)
+                matches!(
+                    site.kind,
+                    ReactiveSlotKind::Signal
+                        | ReactiveSlotKind::Memo
+                        | ReactiveSlotKind::Async
+                        | ReactiveSlotKind::AsyncAccessor
+                )
             })
             .map(|(local, _, slot)| (*local, *slot)),
     );
@@ -1260,19 +1334,29 @@ fn lower_function(
         imported_sites
             .iter()
             .filter(|(_, _, kind, _, _)| {
-                matches!(kind, ReactiveSlotKind::Signal | ReactiveSlotKind::Memo)
+                matches!(
+                    kind,
+                    ReactiveSlotKind::Signal
+                        | ReactiveSlotKind::Memo
+                        | ReactiveSlotKind::Async
+                        | ReactiveSlotKind::AsyncAccessor
+                )
             })
             .map(|(local, _, _, _, slot)| (*local, *slot)),
     );
     let call_value_slots: BTreeSet<_> = sites
         .iter()
         .filter(|site| {
-            site.kind == ReactiveSiteKind::Macro(FictMacroKind::State)
-                && site
-                    .local
-                    .and_then(|local| function.locals[local.as_usize()].binding)
-                    .and_then(|binding| reactive_bindings.get(&binding))
-                    .is_some_and(|site| site.call_value)
+            matches!(
+                site.kind,
+                ReactiveSiteKind::Macro(
+                    FictMacroKind::State | FictMacroKind::Memo | FictMacroKind::Async
+                )
+            ) && site
+                .local
+                .and_then(|local| function.locals[local.as_usize()].binding)
+                .and_then(|binding| reactive_bindings.get(&binding))
+                .is_some_and(|site| site.call_value)
         })
         .map(|site| site.slot)
         .chain(
@@ -1289,8 +1373,12 @@ fn lower_function(
             kind: match site.kind {
                 ReactiveSiteKind::Macro(FictMacroKind::State) => ReactiveSlotKind::Signal,
                 ReactiveSiteKind::Macro(FictMacroKind::Memo) => ReactiveSlotKind::Memo,
+                ReactiveSiteKind::Macro(FictMacroKind::Async) => ReactiveSlotKind::Async,
                 ReactiveSiteKind::Macro(FictMacroKind::Effect) => ReactiveSlotKind::Effect,
                 ReactiveSiteKind::Runtime(ReactiveCallKind::Memo) => ReactiveSlotKind::Memo,
+                ReactiveSiteKind::Runtime(ReactiveCallKind::AsyncMemo) => {
+                    ReactiveSlotKind::AsyncAccessor
+                }
                 ReactiveSiteKind::Runtime(ReactiveCallKind::Store) => ReactiveSlotKind::Store,
                 ReactiveSiteKind::Runtime(ReactiveCallKind::Resource) => ReactiveSlotKind::Resource,
                 ReactiveSiteKind::Runtime(ReactiveCallKind::Selector) => ReactiveSlotKind::Selector,
@@ -1304,6 +1392,16 @@ fn lower_function(
             origin: reactive_site_origin(function, site.result),
         })
         .collect();
+    slots.extend(alias_sites.iter().map(|(_, site, slot)| ReactiveSlot {
+        id: *slot,
+        kind: site.kind,
+        storage: ReactiveSlotStorage::Alias {
+            initializer: site.alias_initializer.expect("alias initializer"),
+        },
+        binding: Some(site.binding),
+        control_path: Vec::new(),
+        origin: site.origin,
+    }));
     slots.extend(hook_return_sites.iter().map(|site| {
         ReactiveSlot {
             id: site.slot,
@@ -1454,7 +1552,7 @@ fn lower_function(
                         source_result: site.result,
                         projections: Vec::new(),
                         accessor_depth: 0,
-                        call_value: false,
+                        call_value: site.kind == ReactiveSlotKind::Async,
                         target,
                         helper: None,
                         origin: instruction.origin,
@@ -1469,7 +1567,9 @@ fn lower_function(
             {
                 let result = instruction.result.expect("reactive result validated");
                 match site.kind {
-                    ReactiveSiteKind::Macro(FictMacroKind::State | FictMacroKind::Memo) => {
+                    ReactiveSiteKind::Macro(
+                        FictMacroKind::State | FictMacroKind::Memo | FictMacroKind::Async,
+                    ) => {
                         operations.push(EmitOperation::CreateReactive {
                             slot: site.slot,
                             source_result: result,
@@ -1593,7 +1693,10 @@ fn lower_function(
                                 .filter(|(_, kind, _)| {
                                     matches!(
                                         kind,
-                                        ReactiveSlotKind::Signal | ReactiveSlotKind::Memo
+                                        ReactiveSlotKind::Signal
+                                            | ReactiveSlotKind::Memo
+                                            | ReactiveSlotKind::Async
+                                            | ReactiveSlotKind::AsyncAccessor
                                     )
                                 })
                                 .map(|(slot, _, accessor_depth)| (*slot, *accessor_depth))
@@ -1665,7 +1768,8 @@ fn lower_function(
                         source_result: result,
                         projections: place.projections.clone(),
                         accessor_depth,
-                        call_value: call_value_slots.contains(&slot),
+                        call_value: call_value_slots.contains(&slot)
+                            || slots[slot.as_usize()].kind == ReactiveSlotKind::Async,
                         target,
                         helper: None,
                         origin: instruction.origin,
@@ -2136,7 +2240,10 @@ fn lower_component_props_plan(
 fn is_scoped_helper(helper: RuntimeHelper) -> bool {
     matches!(
         helper,
-        RuntimeHelper::UseSignal | RuntimeHelper::UseMemo | RuntimeHelper::UseEffect
+        RuntimeHelper::UseSignal
+            | RuntimeHelper::UseMemo
+            | RuntimeHelper::UseAsyncMemo
+            | RuntimeHelper::UseEffect
     )
 }
 #[derive(Debug)]
@@ -3144,7 +3251,13 @@ fn trusted_receiver(
             projected: false,
             known_array: false,
         } => reactive.get(&root).is_some_and(|site| {
-            matches!(site.kind, ReactiveSlotKind::Signal | ReactiveSlotKind::Memo)
+            matches!(
+                site.kind,
+                ReactiveSlotKind::Signal
+                    | ReactiveSlotKind::Memo
+                    | ReactiveSlotKind::Async
+                    | ReactiveSlotKind::AsyncAccessor
+            )
         }),
         JsxListReceiver::Binding {
             root,
@@ -4330,6 +4443,8 @@ fn creation_helper(kind: FunctionKind, macro_kind: FictMacroKind) -> RuntimeHelp
         (FictMacroKind::State, true) => RuntimeHelper::UseSignal,
         (FictMacroKind::Memo, false) => RuntimeHelper::Memo,
         (FictMacroKind::Memo, true) => RuntimeHelper::UseMemo,
+        (FictMacroKind::Async, false) => RuntimeHelper::AsyncMemo,
+        (FictMacroKind::Async, true) => RuntimeHelper::UseAsyncMemo,
         (FictMacroKind::Effect, _) => unreachable!("effect has a dedicated helper"),
     }
 }
@@ -4469,7 +4584,8 @@ fn reassigned_locals(function: &HirFunction) -> BTreeSet<LocalId> {
         })
         .collect()
 }
-fn collect_captured_write_bindings(hir: &HirFile) -> BTreeSet<BindingId> {
+/// Collect cross-function writes that prevent an implicit derived getter.
+pub fn collect_captured_write_bindings(hir: &HirFile) -> BTreeSet<BindingId> {
     hir.functions
         .iter()
         .flat_map(|function| {
@@ -4603,7 +4719,7 @@ fn reject_hook_property_mutation(
             )
             .with_help("mutate a nested store property, or expose an explicit setter from the hook"),
         ])),
-        ImportedReactiveKind::Memo if place.projections.len() == 1 => {
+        ImportedReactiveKind::Memo | ImportedReactiveKind::Async | ImportedReactiveKind::AsyncAccessor if place.projections.len() == 1 => {
             Err(DiagnosticBundle::new(vec![
                 lower_error(
                     "FICT-METADATA-READONLY",
@@ -4613,7 +4729,7 @@ fn reject_hook_property_mutation(
                 .with_help("perform the update inside the hook and expose an explicit setter"),
             ]))
         }
-        ImportedReactiveKind::Signal | ImportedReactiveKind::Memo => Err(DiagnosticBundle::new(
+        ImportedReactiveKind::Signal | ImportedReactiveKind::Memo | ImportedReactiveKind::Async | ImportedReactiveKind::AsyncAccessor => Err(DiagnosticBundle::new(
             vec![lower_error(
                 "FICT-M",
                 "mutating a hook return accessor member is not yet guaranteed",
@@ -4629,6 +4745,18 @@ fn ensure_writable_hook_return(
     slots: &[ReactiveSlot],
     slot: EmitSlotId,
 ) -> Result<(), DiagnosticBundle> {
+    if slots.get(slot.as_usize()).is_some_and(|slot| {
+        matches!(
+            slot.kind,
+            ReactiveSlotKind::Async | ReactiveSlotKind::AsyncAccessor
+        )
+    }) {
+        return Err(DiagnosticBundle::new(vec![lower_error(
+            "FICT-ASYNC-READONLY",
+            "async results and accessor objects cannot be assigned, updated, or mutated reactively",
+            GuaranteeClass::Unsupported,
+        ).with_help("change producer inputs, use the manual accessor refresh method, or make an explicit immutable copy")]));
+    }
     if slots.get(slot.as_usize()).is_some_and(|slot| {
         slot.kind == ReactiveSlotKind::Memo
             && matches!(slot.storage, ReactiveSlotStorage::HookReturn { .. })

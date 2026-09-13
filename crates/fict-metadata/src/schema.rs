@@ -12,6 +12,11 @@ pub enum ReactiveExportKind {
     Signal,
     /// Derived memo accessor.
     Memo,
+    /// Compiler-owned async value accessor, distinct from a manual accessor.
+    Async,
+    /// Manual accessor: preserve authored calls and readiness/lifetime methods.
+    #[serde(rename = "asyncAccessor")]
+    AsyncAccessor,
     /// Deep reactive store.
     Store,
 }

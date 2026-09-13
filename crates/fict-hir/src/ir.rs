@@ -106,6 +106,10 @@ pub enum ImportedReactiveKind {
     Signal,
     /// Imported memo accessor.
     Memo,
+    /// Compiler-owned async value accessor (calls invoke its resolved value).
+    Async,
+    /// Manual async accessor including its readiness/lifetime methods.
+    AsyncAccessor,
     /// Imported deep reactive store.
     Store,
 }
@@ -329,6 +333,8 @@ pub enum FunctionKind {
     Hook,
     /// Callback selected by a configured reactive-scope host.
     ReactiveScope,
+    /// Computation callback owned by a runtime generation rather than render slots.
+    RuntimeScope,
 }
 
 /// Syntax flags that change function execution semantics.
@@ -877,6 +883,8 @@ pub enum FictMacroKind {
     Effect,
     /// Derived memo macro.
     Memo,
+    /// Explicit async derived value macro.
+    Async,
 }
 
 /// Binding-resolved runtime reactive call whose value needs compiler tracking but whose call is
@@ -885,6 +893,8 @@ pub enum FictMacroKind {
 pub enum ReactiveCallKind {
     /// Memo accessor returned by `createMemo`.
     Memo,
+    /// Manual async memo accessor returned by `createAsyncMemo`.
+    AsyncMemo,
     /// Deep proxy returned by `$store`.
     Store,
     /// Async resource factory returned by `resource`.
@@ -906,6 +916,8 @@ pub enum ReactiveScopeKind {
     EffectCallback,
     /// Memo callback.
     MemoCallback,
+    /// Synchronous input collection for an explicit async computation.
+    AsyncCallback,
 }
 
 /// Reactive callback host classification with optional lexical identity.

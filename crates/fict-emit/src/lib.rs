@@ -22,8 +22,8 @@ pub use ir::{
     ReactiveSlotKind, ReactiveSlotStorage, RuntimeImportIntent,
 };
 pub use lower::{
-    NoJsxLoweringOptions, lower_core, lower_core_with_hook_returns, lower_no_jsx,
-    parse_event_attribute,
+    NoJsxLoweringOptions, collect_captured_write_bindings, derived_declarations, lower_core,
+    lower_core_with_hook_returns, lower_no_jsx, parse_event_attribute,
 };
 
 pub use runtime_abi::{

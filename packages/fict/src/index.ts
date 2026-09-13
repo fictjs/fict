@@ -32,6 +32,8 @@
  * @packageDocumentation
  */
 
+import type { AsyncContext } from '@fictjs/runtime/advanced'
+
 import { createUncompiledMacroError } from './macro-diagnostics'
 
 // Re-export everything from runtime
@@ -82,6 +84,18 @@ export { $store } from './store'
 // ============================================================================
 // Compiler Macros (transformed at compile time)
 // ============================================================================
+
+/**
+ * Explicit compiler-owned asynchronous derived value.
+ * Read reactive inputs synchronously in the producer; return its Promise or
+ * async iterable. The compiler reads the current value in reactive consumers.
+ * @public
+ */
+export function $async<T>(
+  _produce: (context: AsyncContext<T>) => T | PromiseLike<T> | AsyncIterable<T>,
+): T {
+  throw createUncompiledMacroError('$async')
+}
 
 /**
  * Compiler macro for reactive state.

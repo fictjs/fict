@@ -2,6 +2,7 @@
 
 //! Typed, OXC-independent high-level intermediate representation for Fict.
 
+mod async_contract;
 mod ids;
 mod ir;
 mod jsx;
@@ -12,6 +13,7 @@ mod reactive_method;
 mod syntax;
 mod verify;
 
+pub use async_contract::{async_accessor_identity, async_place_kind, async_value_kind};
 pub use fict_diagnostics::SourceSpan;
 pub use ids::{
     BindingId, BlockId, FileId, FunctionId, GlobalId, LocalId, RegionId, ScopeId, SsaName,
