@@ -1,0 +1,2074 @@
+{
+  "schemaVersion": 1,
+  "item": "G4 - managed binding preparation allocation",
+  "recordedAt": "2026-09-13T21:47:27.879Z",
+  "baselineRevision": "b85633a68feddf0b85108a1b12d792abe2eb66f3",
+  "environment": {
+    "browser": "Chrome 152.0.7977.83",
+    "platform": "macOS arm64",
+    "node": "v24.16.0",
+    "headless": true
+  },
+  "decision": {
+    "adopted": true,
+    "basis": "Remove the binding value-cell forwarding layer while retaining the same graph nodes, readiness preparation, cleanup, error routing and callback arities. Allocation sampling decreases and forced-GC live page memory after 1k rows decreases 3.20%; complete CPU comparisons do not establish a stable overall speed improvement.",
+    "tradeoffs": "Pooled 1k creation is 0.56% slower and append is 1.07% slower. The two complete CPU rounds have opposite overall directions. The five-framework 1.10 target is not evaluated here.",
+    "rejectedClaims": [
+      "Do not infer overall CPU improvement from fewer closures or the pooled point estimate.",
+      "Do not reintroduce the historically rejected row-ID elimination or class/label fusion prototypes without new current-stack evidence."
+    ],
+    "historicalExperiments": "docs/benchmarks/runtime-optimization-2026-09-12.json"
+  },
+  "sourceFiles": [
+    {
+      "file": "packages/runtime/src/effect.ts",
+      "sha256": "88d3aa4497c5a47791e9c1a47f35d823b5191a451790364d8a21037f155b9015"
+    },
+    {
+      "file": "packages/runtime/test/render-binding-call-contract.test.ts",
+      "sha256": "16eefdaa6fbd1753ff45686f83e6e61e1f87a4dfe68e94e70b882db02de9ff58"
+    },
+    {
+      "file": "scripts/runtime-benchmark-profile.mjs",
+      "sha256": "9f936fdd34b96ed0fce3f3702bf920d956261f536b01be75b287219d75b79300"
+    }
+  ],
+  "sourceSnapshots": {
+    "baselineEffect": "import { isAsyncPending } from './async-state'\nimport {\n  getCurrentRoot,\n  handleError,\n  handleSuspend,\n  registerManagedEffectCleanup,\n  runCleanupList,\n  withEffectCleanups,\n  type EffectCleanupScope,\n  type RootContext,\n} from './lifecycle'\nimport { effectWithCleanup, isAsyncRejection, type EffectOptions } from './signal'\nimport type { Cleanup } from './types'\n\n/**\n * Effect callback run synchronously; async callbacks are not tracked after the first await.\n * TypeScript will reject `async () => {}` here—split async work or read signals before awaiting.\n */\nexport type Effect = () => void | Cleanup\n\nconst noopCleanup = () => {}\n\nfunction handleEffectFailure(err: unknown, root: RootContext | undefined): void {\n  if (isAsyncRejection(err)) {\n    if (handleError(err, { source: 'effect' }, root)) return\n    throw err\n  }\n  if (isAsyncPending(err)) {\n    handleSuspend(err, root)\n    return\n  }\n  if (handleSuspend(err as Parameters<typeof handleSuspend>[0], root)) return\n  if (handleError(err, { source: 'effect' }, root)) return\n  throw err\n}\n\nfunction createManagedEffect(\n  fn: Effect,\n  options?: EffectOptions,\n  releaseUnobserved = false,\n  prepare?: () => void,\n): () => void {\n  const cleanupScope: EffectCleanupScope = { cleanups: undefined }\n  let phase: 'active' | 'disposing' | 'disposed' = 'active'\n  const rootForError = getCurrentRoot()\n\n  // Cleanup runner - called by runEffect BEFORE signal values are committed\n  const doCleanup = () => {\n    const pending = cleanupScope.cleanups\n    cleanupScope.cleanups = undefined\n    if (pending) runCleanupList(pending, rootForError)\n  }\n\n  const prepareRun = prepare\n    ? () => {\n        if (phase !== 'active') return false\n        try {\n          prepare()\n          return true\n        } catch (error) {\n          handleEffectFailure(error, rootForError)\n          return false\n        }\n      }\n    : undefined\n\n  const run = () => {\n    if (phase !== 'active') return\n    // Note: cleanups are now run by signal.ts runEffect before this function is called\n    try {\n      withEffectCleanups(cleanupScope, () => {\n        try {\n          const maybeCleanup = fn()\n          if (typeof maybeCleanup === 'function') {\n            ;(cleanupScope.cleanups ??= []).push(maybeCleanup)\n          }\n        } catch (err) {\n          handleEffectFailure(err, rootForError)\n        }\n      })\n    } finally {\n      // A body can dispose itself and then register more cleanup before it\n      // returns. Drain that late work without retaining a second run bucket.\n      if (phase !== 'active') doCleanup()\n    }\n  }\n\n  const finishTeardown = () => {\n    if (phase !== 'active') return\n    if (!cleanupScope.cleanups) {\n      phase = 'disposed'\n      return\n    }\n    phase = 'disposing'\n    try {\n      doCleanup()\n    } finally {\n      phase = 'disposed'\n    }\n  }\n\n  const disposeEffect = effectWithCleanup(\n    run,\n    doCleanup,\n    rootForError,\n    options,\n    finishTeardown,\n    releaseUnobserved ? cleanupScope : undefined,\n    prepareRun,\n  )\n  if (cleanupScope.released) return noopCleanup\n  const teardown = () => {\n    // An enclosing reactive scope may already have detached this effect and\n    // drained its cleanup through onDispose before the root reaches this entry.\n    if (phase === 'disposed') return\n    try {\n      finishTeardown()\n    } finally {\n      // A cleanup failure must still detach the complete reactive subtree.\n      disposeEffect()\n    }\n  }\n\n  registerManagedEffectCleanup(teardown)\n\n  return teardown\n}\n\nexport function createEffect(fn: Effect, options?: EffectOptions): () => void {\n  return createManagedEffect(fn, options)\n}\n\nexport function createRenderEffect(fn: Effect, options?: EffectOptions): () => void {\n  return createManagedEffect(fn, options, true)\n}\n\n/** Internal one-node binding: track the value before replacing committed work. */\nexport function createRenderBinding<T>(\n  prepare: () => T,\n  commit: (value: T) => void | Cleanup,\n  options?: EffectOptions,\n): () => void {\n  let value: T\n  return createManagedEffect(\n    () => commit(value),\n    options,\n    true,\n    () => {\n      value = prepare()\n    },\n  )\n}\n\n/** Internal views which prepare their own roots/DOM before committing them. */\nexport function createRenderTransaction(fn: Effect): () => void {\n  return createManagedEffect(fn, undefined, true, noopCleanup)\n}\n",
+    "effect": "import { isAsyncPending } from './async-state'\nimport {\n  getCurrentRoot,\n  handleError,\n  handleSuspend,\n  registerManagedEffectCleanup,\n  runCleanupList,\n  withEffectCleanups,\n  type EffectCleanupScope,\n  type RootContext,\n} from './lifecycle'\nimport { effectWithCleanup, isAsyncRejection, type EffectOptions } from './signal'\nimport type { Cleanup } from './types'\n\n/**\n * Effect callback run synchronously; async callbacks are not tracked after the first await.\n * TypeScript will reject `async () => {}` here—split async work or read signals before awaiting.\n */\nexport type Effect = () => void | Cleanup\n\nconst noopCleanup = () => {}\n\nfunction handleEffectFailure(err: unknown, root: RootContext | undefined): void {\n  if (isAsyncRejection(err)) {\n    if (handleError(err, { source: 'effect' }, root)) return\n    throw err\n  }\n  if (isAsyncPending(err)) {\n    handleSuspend(err, root)\n    return\n  }\n  if (handleSuspend(err as Parameters<typeof handleSuspend>[0], root)) return\n  if (handleError(err, { source: 'effect' }, root)) return\n  throw err\n}\n\nfunction createManagedEffect<T = void>(\n  fn: Effect,\n  options?: EffectOptions,\n  releaseUnobserved = false,\n  prepare?: () => T,\n  commit?: (value: T) => void | Cleanup,\n): () => void {\n  const cleanupScope: EffectCleanupScope = { cleanups: undefined }\n  let phase: 'active' | 'disposing' | 'disposed' = 'active'\n  const rootForError = getCurrentRoot()\n  let preparedValue: T\n\n  // Cleanup runner - called by runEffect BEFORE signal values are committed\n  const doCleanup = () => {\n    const pending = cleanupScope.cleanups\n    cleanupScope.cleanups = undefined\n    if (pending) runCleanupList(pending, rootForError)\n  }\n\n  const prepareRun = prepare\n    ? () => {\n        if (phase !== 'active') return false\n        try {\n          preparedValue = prepare()\n          return true\n        } catch (error) {\n          handleEffectFailure(error, rootForError)\n          return false\n        }\n      }\n    : undefined\n\n  const run = () => {\n    if (phase !== 'active') return\n    // Note: cleanups are now run by signal.ts runEffect before this function is called\n    try {\n      withEffectCleanups(cleanupScope, () => {\n        try {\n          const maybeCleanup = commit ? commit(preparedValue) : fn()\n          if (typeof maybeCleanup === 'function') {\n            ;(cleanupScope.cleanups ??= []).push(maybeCleanup)\n          }\n        } catch (err) {\n          handleEffectFailure(err, rootForError)\n        }\n      })\n    } finally {\n      // A body can dispose itself and then register more cleanup before it\n      // returns. Drain that late work without retaining a second run bucket.\n      if (phase !== 'active') doCleanup()\n    }\n  }\n\n  const finishTeardown = () => {\n    if (phase !== 'active') return\n    if (!cleanupScope.cleanups) {\n      phase = 'disposed'\n      return\n    }\n    phase = 'disposing'\n    try {\n      doCleanup()\n    } finally {\n      phase = 'disposed'\n    }\n  }\n\n  const disposeEffect = effectWithCleanup(\n    run,\n    doCleanup,\n    rootForError,\n    options,\n    finishTeardown,\n    releaseUnobserved ? cleanupScope : undefined,\n    prepareRun,\n  )\n  if (cleanupScope.released) return noopCleanup\n  const teardown = () => {\n    // An enclosing reactive scope may already have detached this effect and\n    // drained its cleanup through onDispose before the root reaches this entry.\n    if (phase === 'disposed') return\n    try {\n      finishTeardown()\n    } finally {\n      // A cleanup failure must still detach the complete reactive subtree.\n      disposeEffect()\n    }\n  }\n\n  registerManagedEffectCleanup(teardown)\n\n  return teardown\n}\n\nexport function createEffect(fn: Effect, options?: EffectOptions): () => void {\n  return createManagedEffect(fn, options)\n}\n\nexport function createRenderEffect(fn: Effect, options?: EffectOptions): () => void {\n  return createManagedEffect(fn, options, true)\n}\n\n/** Internal one-node binding: track the value before replacing committed work. */\nexport function createRenderBinding<T>(\n  prepare: () => T,\n  commit: (value: T) => void | Cleanup,\n  options?: EffectOptions,\n): () => void {\n  // Keep preparation and commit in the managed owner without allocating a\n  // separate value cell and two forwarding closures for every DOM binding.\n  return createManagedEffect(noopCleanup, options, true, prepare, commit)\n}\n\n/** Internal views which prepare their own roots/DOM before committing them. */\nexport function createRenderTransaction(fn: Effect): () => void {\n  return createManagedEffect(fn, undefined, true, noopCleanup)\n}\n",
+    "fixture": "import { $state, render, createSelector, batch, untrack } from 'fict'\nimport { createSignal, type Signal } from 'fict/advanced'\n\nconst adjectives = [\n  'pretty',\n  'large',\n  'big',\n  'small',\n  'tall',\n  'short',\n  'long',\n  'handsome',\n  'plain',\n  'quaint',\n  'clean',\n  'elegant',\n  'easy',\n  'angry',\n  'crazy',\n  'helpful',\n  'mushy',\n  'odd',\n  'unsightly',\n  'adorable',\n  'important',\n  'inexpensive',\n  'cheap',\n  'expensive',\n  'fancy',\n]\n\nconst colours = [\n  'red',\n  'yellow',\n  'blue',\n  'green',\n  'pink',\n  'brown',\n  'purple',\n  'brown',\n  'white',\n  'black',\n  'orange',\n]\n\nconst nouns = [\n  'table',\n  'chair',\n  'house',\n  'bbq',\n  'desk',\n  'car',\n  'pony',\n  'cookie',\n  'sandwich',\n  'burger',\n  'pizza',\n  'mouse',\n  'keyboard',\n]\n\nlet nextId = 1\nfunction random(max: number) {\n  return Math.round(Math.random() * 1000) % max\n}\n\nfunction buildData(count: number) {\n  const data = new Array(count)\n  for (let i = 0; i < count; i++) {\n    data[i] = {\n      id: nextId++,\n      label: createSignal(\n        `${adjectives[random(adjectives.length)]} ${colours[random(colours.length)]} ${nouns[random(nouns.length)]}`,\n      ),\n    }\n  }\n  return data\n}\n\nfunction Button(props: any) {\n  return (\n    <div class=\"col-sm-6 smallpad\">\n      <button id={props.id} class=\"btn btn-primary btn-block\" type=\"button\" onClick={props.onClick}>\n        {props.text}\n      </button>\n    </div>\n  )\n}\n\nfunction App() {\n  let data: { id: number; label: Signal<string> }[] = $state([])\n  let selected: number | null = $state(null)\n  const isSelected = createSelector(() => selected)\n\n  const run = () => {\n    data = buildData(1000)\n    selected = null\n  }\n\n  const runLots = () => {\n    data = buildData(10000)\n    selected = null\n  }\n\n  const add = () => {\n    data = [...data, ...buildData(1000)]\n  }\n\n  const update = () => {\n    batch(() => {\n      // An event consumes the current rows once; label bindings own their live reads.\n      untrack(() => {\n        for (let i = 0, rows = data; i < rows.length; i += 10) {\n          const label = rows[i]!.label\n          label(label() + ' !!!')\n        }\n      })\n    })\n  }\n\n  const swapRows = () => {\n    const list = data\n    if (list.length <= 998) return\n    const copy = list.slice()\n    const tmp = copy[1]\n    copy[1] = copy[998]\n    copy[998] = tmp\n    data = copy\n  }\n\n  const clear = () => {\n    data = []\n    selected = null\n  }\n\n  const remove = (id: number) => {\n    const rows = data\n    const index = rows.findIndex(row => row.id === id)\n    if (index >= 0) {\n      const next = rows.slice()\n      next.splice(index, 1)\n      data = next\n    }\n    if (selected === id) {\n      selected = null\n    }\n  }\n\n  const select = (id: number) => {\n    selected = id\n  }\n\n  return (\n    <div class=\"container\">\n      <div class=\"jumbotron\">\n        <div class=\"row\">\n          <div class=\"col-md-6\">\n            <h1>Fict Keyed</h1>\n          </div>\n          <div class=\"col-md-6\">\n            <div class=\"row\">\n              <Button id=\"run\" text=\"Create 1,000 rows\" onClick={run} />\n              <Button id=\"runlots\" text=\"Create 10,000 rows\" onClick={runLots} />\n              <Button id=\"add\" text=\"Append 1,000 rows\" onClick={add} />\n              <Button id=\"update\" text=\"Update every 10th row\" onClick={update} />\n              <Button id=\"clear\" text=\"Clear\" onClick={clear} />\n              <Button id=\"swaprows\" text=\"Swap Rows\" onClick={swapRows} />\n            </div>\n          </div>\n        </div>\n      </div>\n      <table class=\"table table-hover table-striped test-data\">\n        <tbody>\n          {data.map(item => {\n            const row = untrack(() => item)\n            return (\n              <tr key={item.id} class={isSelected(row.id) ? 'danger' : ''}>\n                <td class=\"col-md-1\" textContent={row.id} />\n                <td class=\"col-md-4\">\n                  <a onClick={() => select(row.id)} textContent={row.label()} />\n                </td>\n                <td class=\"col-md-1\">\n                  <a onClick={() => remove(row.id)}>\n                    <span class=\"glyphicon glyphicon-remove\" aria-hidden=\"true\"></span>\n                  </a>\n                </td>\n                <td class=\"col-md-6\"></td>\n              </tr>\n            )\n          })}\n        </tbody>\n      </table>\n      <span class=\"preloadicon glyphicon glyphicon-remove\" aria-hidden=\"true\"></span>\n    </div>\n  )\n}\n\nconst app = document.getElementById('main')\nif (app) {\n  render(() => <App />, app)\n}\n\nexport default App\n",
+    "compiled": "import { __fictUseContext } from \"fict/internal\";\nimport { __fictUseSignal } from \"fict/internal\";\nimport { __fictReactive } from \"fict/internal\";\nimport { createElement } from \"fict/internal\";\nimport { __fictElementNamespaceMatches } from \"fict/internal\";\nimport { createKeyedList } from \"fict/internal/list\";\nimport { insert } from \"fict/internal\";\nimport { resolvePath } from \"fict/internal\";\nimport { onDestroy } from \"fict/internal\";\nimport { bindAttribute } from \"fict/internal\";\nimport { bindProperty } from \"fict/internal\";\nimport { bindClass } from \"fict/internal\";\nimport { addEventListener } from \"fict/internal\";\nimport { template } from \"fict/internal\";\nconst __fict_tmpl0 = template(\"<div class=\\\"col-sm-6 smallpad\\\"><button class=\\\"btn btn-primary btn-block\\\" type=\\\"button\\\"><!----></button></div>\");\nconst __fict_tmpl1 = template(\"<div class=\\\"container\\\"><div class=\\\"jumbotron\\\"><div class=\\\"row\\\"><div class=\\\"col-md-6\\\"><h1>Fict Keyed</h1></div><div class=\\\"col-md-6\\\"><div class=\\\"row\\\"><!----><!----><!----><!----><!----><!----></div></div></div></div><table class=\\\"table table-hover table-striped test-data\\\"><tbody><!----><!----></tbody></table><span class=\\\"preloadicon glyphicon glyphicon-remove\\\" aria-hidden=\\\"true\\\"></span></div>\");\nconst __fict_tmpl2 = template(\"<tr><td class=\\\"col-md-1\\\"></td><td class=\\\"col-md-4\\\"><a></a></td><td class=\\\"col-md-1\\\"><a><span class=\\\"glyphicon glyphicon-remove\\\" aria-hidden=\\\"true\\\"></span></a></td><td class=\\\"col-md-6\\\"></td></tr>\");\nimport { render, createSelector, batch, untrack } from \"fict\";\nimport { createSignal } from \"fict/advanced\";\nconst adjectives = [\n\t\"pretty\",\n\t\"large\",\n\t\"big\",\n\t\"small\",\n\t\"tall\",\n\t\"short\",\n\t\"long\",\n\t\"handsome\",\n\t\"plain\",\n\t\"quaint\",\n\t\"clean\",\n\t\"elegant\",\n\t\"easy\",\n\t\"angry\",\n\t\"crazy\",\n\t\"helpful\",\n\t\"mushy\",\n\t\"odd\",\n\t\"unsightly\",\n\t\"adorable\",\n\t\"important\",\n\t\"inexpensive\",\n\t\"cheap\",\n\t\"expensive\",\n\t\"fancy\"\n];\nconst colours = [\n\t\"red\",\n\t\"yellow\",\n\t\"blue\",\n\t\"green\",\n\t\"pink\",\n\t\"brown\",\n\t\"purple\",\n\t\"brown\",\n\t\"white\",\n\t\"black\",\n\t\"orange\"\n];\nconst nouns = [\n\t\"table\",\n\t\"chair\",\n\t\"house\",\n\t\"bbq\",\n\t\"desk\",\n\t\"car\",\n\t\"pony\",\n\t\"cookie\",\n\t\"sandwich\",\n\t\"burger\",\n\t\"pizza\",\n\t\"mouse\",\n\t\"keyboard\"\n];\nlet nextId = 1;\nfunction random(max) {\n\treturn Math.round(Math.random() * 1e3) % max;\n}\nfunction buildData(count) {\n\tconst data = new Array(count);\n\tfor (let i = 0; i < count; i++) {\n\t\tdata[i] = {\n\t\t\tid: nextId++,\n\t\t\tlabel: createSignal(`${adjectives[random(adjectives.length)]} ${colours[random(colours.length)]} ${nouns[random(nouns.length)]}`)\n\t\t};\n\t}\n\treturn data;\n}\nfunction Button(props) {\n\treturn __fictElementNamespaceMatches(\"div\", \"html\") ? (() => {\n\t\tconst __fict_jsx7 = __fict_tmpl0();\n\t\tconst __fict_node1 = resolvePath(__fict_jsx7, [0], true);\n\t\tconst __fict_node2 = resolvePath(__fict_jsx7, [0, 0], true);\n\t\tbindAttribute(__fict_node1, \"id\", () => props.id);\n\t\taddEventListener(__fict_node1, \"click\", props.onClick, true);\n\t\tinsert(__fict_node1, () => props.text, __fict_node2, createElement);\n\t\treturn __fict_jsx7;\n\t})() : {\n\t\ttype: \"div\",\n\t\tprops: {\n\t\t\tclass: \"col-sm-6 smallpad\",\n\t\t\tchildren: {\n\t\t\t\ttype: \"button\",\n\t\t\t\tprops: {\n\t\t\t\t\tid: __fictReactive(() => props.id),\n\t\t\t\t\tclass: \"btn btn-primary btn-block\",\n\t\t\t\t\ttype: \"button\",\n\t\t\t\t\tonClick: props.onClick,\n\t\t\t\t\tchildren: __fictReactive(() => props.text)\n\t\t\t\t}\n\t\t\t}\n\t\t}\n\t};\n}\nfunction App() {\n\tconst __fictCtx = __fictUseContext();\n\tlet data = __fictUseSignal(__fictCtx, [], { name: \"data\" });\n\tlet selected = __fictUseSignal(__fictCtx, null, { name: \"selected\" });\n\tconst isSelected = createSelector(() => selected());\n\tconst run = () => {\n\t\t((__fict_value) => (data(__fict_value), __fict_value))(buildData(1e3));\n\t\t((__fict_value) => (selected(__fict_value), __fict_value))(null);\n\t};\n\tconst runLots = () => {\n\t\t((__fict_value) => (data(__fict_value), __fict_value))(buildData(1e4));\n\t\t((__fict_value) => (selected(__fict_value), __fict_value))(null);\n\t};\n\tconst add = () => {\n\t\t((__fict_value) => (data(__fict_value), __fict_value))([...data(), ...buildData(1e3)]);\n\t};\n\tconst update = () => {\n\t\tbatch(() => {\n\t\t\t// An event consumes the current rows once; label bindings own their live reads.\n\t\t\tuntrack(() => {\n\t\t\t\tfor (let i = 0, rows = data(); i < rows.length; i += 10) {\n\t\t\t\t\tconst label = rows[i].label;\n\t\t\t\t\tlabel(label() + \" !!!\");\n\t\t\t\t}\n\t\t\t});\n\t\t});\n\t};\n\tconst swapRows = () => {\n\t\tconst list = data();\n\t\tif (list.length <= 998) return;\n\t\tconst copy = list.slice();\n\t\tconst tmp = copy[1];\n\t\tcopy[1] = copy[998];\n\t\tcopy[998] = tmp;\n\t\t((__fict_value) => (data(__fict_value), __fict_value))(copy);\n\t};\n\tconst clear = () => {\n\t\t((__fict_value) => (data(__fict_value), __fict_value))([]);\n\t\t((__fict_value) => (selected(__fict_value), __fict_value))(null);\n\t};\n\tconst remove = (id) => {\n\t\tconst rows = data();\n\t\tconst index = rows.findIndex((row) => row.id === id);\n\t\tif (index >= 0) {\n\t\t\tconst next = rows.slice();\n\t\t\tnext.splice(index, 1);\n\t\t\t((__fict_value) => (data(__fict_value), __fict_value))(next);\n\t\t}\n\t\tif (selected() === id) {\n\t\t\t((__fict_value) => (selected(__fict_value), __fict_value))(null);\n\t\t}\n\t};\n\tconst select = (id) => {\n\t\t((__fict_value) => (selected(__fict_value), __fict_value))(id);\n\t};\n\treturn __fictElementNamespaceMatches(\"div\", \"html\") ? (() => {\n\t\tconst __fict_jsx39 = __fict_tmpl1();\n\t\tconst __fict_node8 = resolvePath(__fict_jsx39, [\n\t\t\t0,\n\t\t\t0,\n\t\t\t1,\n\t\t\t0\n\t\t], true);\n\t\tconst __fict_node9 = resolvePath(__fict_jsx39, [\n\t\t\t0,\n\t\t\t0,\n\t\t\t1,\n\t\t\t0,\n\t\t\t0\n\t\t], true);\n\t\tconst __fict_node10 = resolvePath(__fict_jsx39, [\n\t\t\t0,\n\t\t\t0,\n\t\t\t1,\n\t\t\t0,\n\t\t\t1\n\t\t], true);\n\t\tconst __fict_node11 = resolvePath(__fict_jsx39, [\n\t\t\t0,\n\t\t\t0,\n\t\t\t1,\n\t\t\t0,\n\t\t\t2\n\t\t], true);\n\t\tconst __fict_node12 = resolvePath(__fict_jsx39, [\n\t\t\t0,\n\t\t\t0,\n\t\t\t1,\n\t\t\t0,\n\t\t\t3\n\t\t], true);\n\t\tconst __fict_node13 = resolvePath(__fict_jsx39, [\n\t\t\t0,\n\t\t\t0,\n\t\t\t1,\n\t\t\t0,\n\t\t\t4\n\t\t], true);\n\t\tconst __fict_node14 = resolvePath(__fict_jsx39, [\n\t\t\t0,\n\t\t\t0,\n\t\t\t1,\n\t\t\t0,\n\t\t\t5\n\t\t], true);\n\t\tconst __fict_node15 = resolvePath(__fict_jsx39, [1, 0], true);\n\t\tconst __fict_node16 = resolvePath(__fict_jsx39, [\n\t\t\t1,\n\t\t\t0,\n\t\t\t0\n\t\t], true);\n\t\tconst __fict_node17 = resolvePath(__fict_jsx39, [\n\t\t\t1,\n\t\t\t0,\n\t\t\t1\n\t\t], true);\n\t\tinsert(__fict_node8, () => ({\n\t\t\ttype: Button,\n\t\t\tprops: {\n\t\t\t\tid: \"run\",\n\t\t\t\ttext: \"Create 1,000 rows\",\n\t\t\t\tonClick: run\n\t\t\t}\n\t\t}), __fict_node9, createElement);\n\t\tinsert(__fict_node8, () => ({\n\t\t\ttype: Button,\n\t\t\tprops: {\n\t\t\t\tid: \"runlots\",\n\t\t\t\ttext: \"Create 10,000 rows\",\n\t\t\t\tonClick: runLots\n\t\t\t}\n\t\t}), __fict_node10, createElement);\n\t\tinsert(__fict_node8, () => ({\n\t\t\ttype: Button,\n\t\t\tprops: {\n\t\t\t\tid: \"add\",\n\t\t\t\ttext: \"Append 1,000 rows\",\n\t\t\t\tonClick: add\n\t\t\t}\n\t\t}), __fict_node11, createElement);\n\t\tinsert(__fict_node8, () => ({\n\t\t\ttype: Button,\n\t\t\tprops: {\n\t\t\t\tid: \"update\",\n\t\t\t\ttext: \"Update every 10th row\",\n\t\t\t\tonClick: update\n\t\t\t}\n\t\t}), __fict_node12, createElement);\n\t\tinsert(__fict_node8, () => ({\n\t\t\ttype: Button,\n\t\t\tprops: {\n\t\t\t\tid: \"clear\",\n\t\t\t\ttext: \"Clear\",\n\t\t\t\tonClick: clear\n\t\t\t}\n\t\t}), __fict_node13, createElement);\n\t\tinsert(__fict_node8, () => ({\n\t\t\ttype: Button,\n\t\t\tprops: {\n\t\t\t\tid: \"swaprows\",\n\t\t\t\ttext: \"Swap Rows\",\n\t\t\t\tonClick: swapRows\n\t\t\t}\n\t\t}), __fict_node14, createElement);\n\t\tconst __fict_list38 = createKeyedList(() => data(), (item) => item.id, (item, __fict_key) => {\n\t\t\tconst row = untrack(() => item());\n\t\t\treturn __fictElementNamespaceMatches(\"tr\", \"html\") ? (() => {\n\t\t\t\tconst __fict_jsx22 = __fict_tmpl2();\n\t\t\t\tconst __fict_node1 = resolvePath(__fict_jsx22, [0], true);\n\t\t\t\tconst __fict_node2 = resolvePath(__fict_jsx22, [1, 0], true);\n\t\t\t\tconst __fict_node3 = resolvePath(__fict_jsx22, [2, 0], true);\n\t\t\t\tbindClass(__fict_jsx22, () => isSelected(row.id) ? \"danger\" : \"\");\n\t\t\t\tbindProperty(__fict_node1, \"textContent\", () => row.id);\n\t\t\t\taddEventListener(__fict_node2, \"click\", (...__fictArgs) => {\n\t\t\t\t\t(() => select(row.id))(...__fictArgs);\n\t\t\t\t}, true);\n\t\t\t\tbindProperty(__fict_node2, \"textContent\", () => row.label());\n\t\t\t\taddEventListener(__fict_node3, \"click\", (...__fictArgs) => {\n\t\t\t\t\t(() => remove(row.id))(...__fictArgs);\n\t\t\t\t}, true);\n\t\t\t\treturn __fict_jsx22;\n\t\t\t})() : {\n\t\t\t\ttype: \"tr\",\n\t\t\t\tprops: {\n\t\t\t\t\tclass: __fictReactive(() => isSelected(row.id) ? \"danger\" : \"\"),\n\t\t\t\t\tchildren: [\n\t\t\t\t\t\t{\n\t\t\t\t\t\t\ttype: \"td\",\n\t\t\t\t\t\t\tprops: {\n\t\t\t\t\t\t\t\tclass: \"col-md-1\",\n\t\t\t\t\t\t\t\ttextContent: row.id\n\t\t\t\t\t\t\t}\n\t\t\t\t\t\t},\n\t\t\t\t\t\t{\n\t\t\t\t\t\t\ttype: \"td\",\n\t\t\t\t\t\t\tprops: {\n\t\t\t\t\t\t\t\tclass: \"col-md-4\",\n\t\t\t\t\t\t\t\tchildren: {\n\t\t\t\t\t\t\t\t\ttype: \"a\",\n\t\t\t\t\t\t\t\t\tprops: {\n\t\t\t\t\t\t\t\t\t\tonClick: () => select(row.id),\n\t\t\t\t\t\t\t\t\t\ttextContent: __fictReactive(() => row.label())\n\t\t\t\t\t\t\t\t\t}\n\t\t\t\t\t\t\t\t}\n\t\t\t\t\t\t\t}\n\t\t\t\t\t\t},\n\t\t\t\t\t\t{\n\t\t\t\t\t\t\ttype: \"td\",\n\t\t\t\t\t\t\tprops: {\n\t\t\t\t\t\t\t\tclass: \"col-md-1\",\n\t\t\t\t\t\t\t\tchildren: {\n\t\t\t\t\t\t\t\t\ttype: \"a\",\n\t\t\t\t\t\t\t\t\tprops: {\n\t\t\t\t\t\t\t\t\t\tonClick: () => remove(row.id),\n\t\t\t\t\t\t\t\t\t\tchildren: {\n\t\t\t\t\t\t\t\t\t\t\ttype: \"span\",\n\t\t\t\t\t\t\t\t\t\t\tprops: {\n\t\t\t\t\t\t\t\t\t\t\t\tclass: \"glyphicon glyphicon-remove\",\n\t\t\t\t\t\t\t\t\t\t\t\t\"aria-hidden\": \"true\"\n\t\t\t\t\t\t\t\t\t\t\t}\n\t\t\t\t\t\t\t\t\t\t}\n\t\t\t\t\t\t\t\t\t}\n\t\t\t\t\t\t\t\t}\n\t\t\t\t\t\t\t}\n\t\t\t\t\t\t},\n\t\t\t\t\t\t{\n\t\t\t\t\t\t\ttype: \"td\",\n\t\t\t\t\t\t\tprops: { class: \"col-md-6\" }\n\t\t\t\t\t\t}\n\t\t\t\t\t]\n\t\t\t\t}\n\t\t\t};\n\t\t}, false, __fict_node16, __fict_node17, true, \"html\");\n\t\t__fict_list38.flush?.();\n\t\tonDestroy(__fict_list38.dispose);\n\t\treturn __fict_jsx39;\n\t})() : {\n\t\ttype: \"div\",\n\t\tprops: {\n\t\t\tclass: \"container\",\n\t\t\tchildren: [\n\t\t\t\t{\n\t\t\t\t\ttype: \"div\",\n\t\t\t\t\tprops: {\n\t\t\t\t\t\tclass: \"jumbotron\",\n\t\t\t\t\t\tchildren: {\n\t\t\t\t\t\t\ttype: \"div\",\n\t\t\t\t\t\t\tprops: {\n\t\t\t\t\t\t\t\tclass: \"row\",\n\t\t\t\t\t\t\t\tchildren: [{\n\t\t\t\t\t\t\t\t\ttype: \"div\",\n\t\t\t\t\t\t\t\t\tprops: {\n\t\t\t\t\t\t\t\t\t\tclass: \"col-md-6\",\n\t\t\t\t\t\t\t\t\t\tchildren: {\n\t\t\t\t\t\t\t\t\t\t\ttype: \"h1\",\n\t\t\t\t\t\t\t\t\t\t\tprops: { children: \"Fict Keyed\" }\n\t\t\t\t\t\t\t\t\t\t}\n\t\t\t\t\t\t\t\t\t}\n\t\t\t\t\t\t\t\t}, {\n\t\t\t\t\t\t\t\t\ttype: \"div\",\n\t\t\t\t\t\t\t\t\tprops: {\n\t\t\t\t\t\t\t\t\t\tclass: \"col-md-6\",\n\t\t\t\t\t\t\t\t\t\tchildren: {\n\t\t\t\t\t\t\t\t\t\t\ttype: \"div\",\n\t\t\t\t\t\t\t\t\t\t\tprops: {\n\t\t\t\t\t\t\t\t\t\t\t\tclass: \"row\",\n\t\t\t\t\t\t\t\t\t\t\t\tchildren: [\n\t\t\t\t\t\t\t\t\t\t\t\t\t{\n\t\t\t\t\t\t\t\t\t\t\t\t\t\ttype: Button,\n\t\t\t\t\t\t\t\t\t\t\t\t\t\tprops: {\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\tid: \"run\",\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\ttext: \"Create 1,000 rows\",\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\tonClick: run\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t}\n\t\t\t\t\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t\t\t\t\t\t{\n\t\t\t\t\t\t\t\t\t\t\t\t\t\ttype: Button,\n\t\t\t\t\t\t\t\t\t\t\t\t\t\tprops: {\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\tid: \"runlots\",\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\ttext: \"Create 10,000 rows\",\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\tonClick: runLots\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t}\n\t\t\t\t\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t\t\t\t\t\t{\n\t\t\t\t\t\t\t\t\t\t\t\t\t\ttype: Button,\n\t\t\t\t\t\t\t\t\t\t\t\t\t\tprops: {\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\tid: \"add\",\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\ttext: \"Append 1,000 rows\",\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\tonClick: add\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t}\n\t\t\t\t\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t\t\t\t\t\t{\n\t\t\t\t\t\t\t\t\t\t\t\t\t\ttype: Button,\n\t\t\t\t\t\t\t\t\t\t\t\t\t\tprops: {\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\tid: \"update\",\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\ttext: \"Update every 10th row\",\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\tonClick: update\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t}\n\t\t\t\t\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t\t\t\t\t\t{\n\t\t\t\t\t\t\t\t\t\t\t\t\t\ttype: Button,\n\t\t\t\t\t\t\t\t\t\t\t\t\t\tprops: {\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\tid: \"clear\",\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\ttext: \"Clear\",\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\tonClick: clear\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t}\n\t\t\t\t\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t\t\t\t\t\t{\n\t\t\t\t\t\t\t\t\t\t\t\t\t\ttype: Button,\n\t\t\t\t\t\t\t\t\t\t\t\t\t\tprops: {\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\tid: \"swaprows\",\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\ttext: \"Swap Rows\",\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\tonClick: swapRows\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t}\n\t\t\t\t\t\t\t\t\t\t\t\t\t}\n\t\t\t\t\t\t\t\t\t\t\t\t]\n\t\t\t\t\t\t\t\t\t\t\t}\n\t\t\t\t\t\t\t\t\t\t}\n\t\t\t\t\t\t\t\t\t}\n\t\t\t\t\t\t\t\t}]\n\t\t\t\t\t\t\t}\n\t\t\t\t\t\t}\n\t\t\t\t\t}\n\t\t\t\t},\n\t\t\t\t{\n\t\t\t\t\ttype: \"table\",\n\t\t\t\t\tprops: {\n\t\t\t\t\t\tclass: \"table table-hover table-striped test-data\",\n\t\t\t\t\t\tchildren: {\n\t\t\t\t\t\t\ttype: \"tbody\",\n\t\t\t\t\t\t\tprops: { children: __fictReactive(() => data().map((item) => {\n\t\t\t\t\t\t\t\tconst row = untrack(() => item);\n\t\t\t\t\t\t\t\treturn {\n\t\t\t\t\t\t\t\t\ttype: \"tr\",\n\t\t\t\t\t\t\t\t\tprops: {\n\t\t\t\t\t\t\t\t\t\t...(item.id, null),\n\t\t\t\t\t\t\t\t\t\tclass: __fictReactive(() => isSelected(row.id) ? \"danger\" : \"\"),\n\t\t\t\t\t\t\t\t\t\tchildren: [\n\t\t\t\t\t\t\t\t\t\t\t{\n\t\t\t\t\t\t\t\t\t\t\t\ttype: \"td\",\n\t\t\t\t\t\t\t\t\t\t\t\tprops: {\n\t\t\t\t\t\t\t\t\t\t\t\t\tclass: \"col-md-1\",\n\t\t\t\t\t\t\t\t\t\t\t\t\ttextContent: row.id\n\t\t\t\t\t\t\t\t\t\t\t\t}\n\t\t\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t\t\t\t{\n\t\t\t\t\t\t\t\t\t\t\t\ttype: \"td\",\n\t\t\t\t\t\t\t\t\t\t\t\tprops: {\n\t\t\t\t\t\t\t\t\t\t\t\t\tclass: \"col-md-4\",\n\t\t\t\t\t\t\t\t\t\t\t\t\tchildren: {\n\t\t\t\t\t\t\t\t\t\t\t\t\t\ttype: \"a\",\n\t\t\t\t\t\t\t\t\t\t\t\t\t\tprops: {\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\tonClick: () => select(row.id),\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\ttextContent: __fictReactive(() => row.label())\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t}\n\t\t\t\t\t\t\t\t\t\t\t\t\t}\n\t\t\t\t\t\t\t\t\t\t\t\t}\n\t\t\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t\t\t\t{\n\t\t\t\t\t\t\t\t\t\t\t\ttype: \"td\",\n\t\t\t\t\t\t\t\t\t\t\t\tprops: {\n\t\t\t\t\t\t\t\t\t\t\t\t\tclass: \"col-md-1\",\n\t\t\t\t\t\t\t\t\t\t\t\t\tchildren: {\n\t\t\t\t\t\t\t\t\t\t\t\t\t\ttype: \"a\",\n\t\t\t\t\t\t\t\t\t\t\t\t\t\tprops: {\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\tonClick: () => remove(row.id),\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\tchildren: {\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\ttype: \"span\",\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\tprops: {\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\tclass: \"glyphicon glyphicon-remove\",\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\"aria-hidden\": \"true\"\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t}\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t}\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t}\n\t\t\t\t\t\t\t\t\t\t\t\t\t}\n\t\t\t\t\t\t\t\t\t\t\t\t}\n\t\t\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t\t\t\t{\n\t\t\t\t\t\t\t\t\t\t\t\ttype: \"td\",\n\t\t\t\t\t\t\t\t\t\t\t\tprops: { class: \"col-md-6\" }\n\t\t\t\t\t\t\t\t\t\t\t}\n\t\t\t\t\t\t\t\t\t\t]\n\t\t\t\t\t\t\t\t\t}\n\t\t\t\t\t\t\t\t};\n\t\t\t\t\t\t\t})) }\n\t\t\t\t\t\t}\n\t\t\t\t\t}\n\t\t\t\t},\n\t\t\t\t{\n\t\t\t\t\ttype: \"span\",\n\t\t\t\t\tprops: {\n\t\t\t\t\t\tclass: \"preloadicon glyphicon glyphicon-remove\",\n\t\t\t\t\t\t\"aria-hidden\": \"true\"\n\t\t\t\t\t}\n\t\t\t\t}\n\t\t\t]\n\t\t}\n\t};\n}\nconst app = document.getElementById(\"main\");\nif (app) {\n\trender(() => ({\n\t\ttype: App,\n\t\tprops: null\n\t}), app);\n}\nexport default App;\n"
+  },
+  "method": {
+    "cpu": "Official nine CPU cases, 15 samples except selection 25, default harness slowdown: 4x partial update/select/swap/clear, 2x remove, 1x create/replace/append.",
+    "roundA": "One complete invocation for both entries; harness order baseline then prepared within each case, cases 01 through 09.",
+    "roundB": "Separate invocations in reverse case order 09 through 01, prepared then baseline within every case.",
+    "memory": "Separate official 21/22/25 page-memory workloads, three samples per entry and case after forced GC. Values are MiB, not JS heap-only bytes.",
+    "isolation": "No builds, tests, other profiling or other timing runs overlap the CPU or memory batches. Profiles run separately from each other and from timing.",
+    "uncertainty": "Report both complete rounds and all samples. The pooled geometric ratio is descriptive and does not establish a causal speed win or a general runtime cost model."
+  },
+  "profiles": [
+    {
+      "name": "baseline",
+      "file": "docs/benchmarks/runtime-profile-g4-baseline-2026-09-14.json.gz",
+      "sha256": "1e16cb575ab739e632011a56cfe4f02bbf606b665d1f8f5e65c63e19f170649d",
+      "uncompressedSha256": "f1ab84eb4a25745a737d2a26f5b9971540009ca85b86c34e8fee221011d40f76",
+      "method": {
+        "repetitions": 3,
+        "separateFreshPages": true,
+        "warmupCreateClearPairs": 2,
+        "cpuSlowdown": 4,
+        "cpuSamplingIntervalMicroseconds": 250,
+        "allocationSamplingIntervalBytes": 4096,
+        "includesCollectedAllocations": true,
+        "viewport": {
+          "width": 1280,
+          "height": 800
+        },
+        "scope": "Diagnostic sampling with profiler overhead; never included in benchmark scores. CPU capture includes the target click and two animation frames. Allocation estimates include garbage collected during capture and do not represent retained heap or whole-page memory."
+      },
+      "profilerSha256": "9f936fdd34b96ed0fce3f3702bf920d956261f536b01be75b287219d75b79300",
+      "sourceMapSha256": "af273b922b618419c5af7ed79b57f2f7a2b5eb30130471b2c73786fece235d94",
+      "allocation": [
+        {
+          "scenario": "create1k",
+          "sampledBytes": [4262620, 4311196, 4535808],
+          "meanSampledBytes": 4369874.666666667
+        },
+        {
+          "scenario": "create10k",
+          "sampledBytes": [42190564, 41601120, 41798208],
+          "meanSampledBytes": 41863297.333333336
+        },
+        {
+          "scenario": "replace1k",
+          "sampledBytes": [4463936, 4393184, 4760680],
+          "meanSampledBytes": 4539266.666666667
+        },
+        {
+          "scenario": "append1k",
+          "sampledBytes": [4771656, 4701992, 4891828],
+          "meanSampledBytes": 4788492
+        },
+        {
+          "scenario": "clear1k",
+          "sampledBytes": [177916, 148176, 147404],
+          "meanSampledBytes": 157832
+        }
+      ]
+    },
+    {
+      "name": "prepared",
+      "file": "docs/benchmarks/runtime-profile-g4-prepared-2026-09-14.json.gz",
+      "sha256": "c44bd0673761004c2023964109b44f4e49aa5e686a58d162a52ab56bf5c81106",
+      "uncompressedSha256": "ee9dae0472fe8233de3a51518767dc75dc80ed3e26459f3129ba784e33e71f45",
+      "method": {
+        "repetitions": 3,
+        "separateFreshPages": true,
+        "warmupCreateClearPairs": 2,
+        "cpuSlowdown": 4,
+        "cpuSamplingIntervalMicroseconds": 250,
+        "allocationSamplingIntervalBytes": 4096,
+        "includesCollectedAllocations": true,
+        "viewport": {
+          "width": 1280,
+          "height": 800
+        },
+        "scope": "Diagnostic sampling with profiler overhead; never included in benchmark scores. CPU capture includes the target click and two animation frames. Allocation estimates include garbage collected during capture and do not represent retained heap or whole-page memory."
+      },
+      "profilerSha256": "9f936fdd34b96ed0fce3f3702bf920d956261f536b01be75b287219d75b79300",
+      "sourceMapSha256": "4b005210410f2447725259ba21ff81512806cb52ce2f872a9b7d415f329ace64",
+      "allocation": [
+        {
+          "scenario": "create1k",
+          "sampledBytes": [4148588, 4176984, 4181176],
+          "meanSampledBytes": 4168916
+        },
+        {
+          "scenario": "create10k",
+          "sampledBytes": [39567300, 39374960, 39186804],
+          "meanSampledBytes": 39376354.666666664
+        },
+        {
+          "scenario": "replace1k",
+          "sampledBytes": [4263088, 4343568, 4216428],
+          "meanSampledBytes": 4274361.333333333
+        },
+        {
+          "scenario": "append1k",
+          "sampledBytes": [4447400, 4412164, 4304224],
+          "meanSampledBytes": 4387929.333333333
+        },
+        {
+          "scenario": "clear1k",
+          "sampledBytes": [174988, 121880, 125616],
+          "meanSampledBytes": 140828
+        }
+      ]
+    }
+  ],
+  "rounds": [
+    {
+      "round": "a",
+      "startedAt": "2026-09-13T21:11:17Z",
+      "finishedAt": "2026-09-13T21:19:23Z",
+      "entries": [
+        {
+          "name": "fict-g4-baseline",
+          "provenance": {
+            "revision": "b85633a68feddf0b85108a1b12d792abe2eb66f3",
+            "runtimeDiff": "",
+            "compilerDiff": "",
+            "fixtureDiff": "",
+            "toolingDiff": "",
+            "sourcePath": "scripts/fixtures/runtime-benchmark/main.tsx",
+            "compilerOptions": {
+              "dev": false,
+              "strictGuarantee": true
+            },
+            "sourceMap": true,
+            "benchmarkRevision": "c7c90491feb3f9be93177e3a7edd99707847da27",
+            "compilerBuildId": "fict-rust-p1-oxc0.139.0-m1-399f7f7201c93be9d0b6d38f0e148bbf920ff71138e91bad88165c901fcc40af",
+            "nativeSha256": "a67ccea5deeb21fa851cda293956eccce58cf837f58b8015d1242ad403b43974",
+            "sourceSha256": "6399a0b3b0e7f0745e774f8a3618b1dbbc9d5c735ad572ee381aa11b34edb8dc",
+            "compiledSha256": "ddd1473e266ac278cf37cd156ecee76cdc883f671e7da9120158052c2e2d154f",
+            "lockfileSha256": "ac37f12095d8914656cf270909181cfd411f875d4085a5ab10364bff5bfc1635",
+            "bundleSha256": "bbb2bad12bb494bcba9ec52fbdc5b9775d874b7cf0585d50b7de472f6c6d41b8",
+            "diagnostics": [],
+            "modules": [
+              {
+                "path": "packages/runtime/dist/resume-B8Jb7kNT.js",
+                "sha256": "57665d0e5aae78782e8429b98f6c06b8a41b1da780c1d40a9dc84da31b04a9ef"
+              },
+              {
+                "path": "packages/runtime/dist/dom-DSYbSTq4.js",
+                "sha256": "a7da7458624e9e4ffac3607f5afe9404c8bfa82cf2b0d26917c910fcbe371173"
+              },
+              {
+                "path": "packages/runtime/dist/list-helpers-Dg1KZpdN.js",
+                "sha256": "6ab57972e33ed14cdb859dde5193859f9bc6d86a2e6d5c19256d55ccf06f5ff4"
+              },
+              {
+                "path": "js-framework-benchmark/frameworks/keyed/fict-g4-baseline/compiled.js",
+                "sha256": "ddd1473e266ac278cf37cd156ecee76cdc883f671e7da9120158052c2e2d154f"
+              }
+            ]
+          }
+        },
+        {
+          "name": "fict-g4-prepared",
+          "provenance": {
+            "revision": "b85633a68feddf0b85108a1b12d792abe2eb66f3",
+            "runtimeDiff": "diff --git a/packages/runtime/src/effect.ts b/packages/runtime/src/effect.ts\nindex 7bce4d59..5526d636 100644\n--- a/packages/runtime/src/effect.ts\n+++ b/packages/runtime/src/effect.ts\n@@ -34,15 +34,17 @@ function handleEffectFailure(err: unknown, root: RootContext | undefined): void\n   throw err\n }\n \n-function createManagedEffect(\n+function createManagedEffect<T = void>(\n   fn: Effect,\n   options?: EffectOptions,\n   releaseUnobserved = false,\n-  prepare?: () => void,\n+  prepare?: () => T,\n+  commit?: (value: T) => void | Cleanup,\n ): () => void {\n   const cleanupScope: EffectCleanupScope = { cleanups: undefined }\n   let phase: 'active' | 'disposing' | 'disposed' = 'active'\n   const rootForError = getCurrentRoot()\n+  let preparedValue: T\n \n   // Cleanup runner - called by runEffect BEFORE signal values are committed\n   const doCleanup = () => {\n@@ -55,7 +57,7 @@ function createManagedEffect(\n     ? () => {\n         if (phase !== 'active') return false\n         try {\n-          prepare()\n+          preparedValue = prepare()\n           return true\n         } catch (error) {\n           handleEffectFailure(error, rootForError)\n@@ -70,7 +72,7 @@ function createManagedEffect(\n     try {\n       withEffectCleanups(cleanupScope, () => {\n         try {\n-          const maybeCleanup = fn()\n+          const maybeCleanup = commit ? commit(preparedValue) : fn()\n           if (typeof maybeCleanup === 'function') {\n             ;(cleanupScope.cleanups ??= []).push(maybeCleanup)\n           }\n@@ -140,15 +142,9 @@ export function createRenderBinding<T>(\n   commit: (value: T) => void | Cleanup,\n   options?: EffectOptions,\n ): () => void {\n-  let value: T\n-  return createManagedEffect(\n-    () => commit(value),\n-    options,\n-    true,\n-    () => {\n-      value = prepare()\n-    },\n-  )\n+  // Keep preparation and commit in the managed owner without allocating a\n+  // separate value cell and two forwarding closures for every DOM binding.\n+  return createManagedEffect(noopCleanup, options, true, prepare, commit)\n }\n \n /** Internal views which prepare their own roots/DOM before committing them. */",
+            "compilerDiff": "",
+            "fixtureDiff": "",
+            "toolingDiff": "",
+            "sourcePath": "scripts/fixtures/runtime-benchmark/main.tsx",
+            "compilerOptions": {
+              "dev": false,
+              "strictGuarantee": true
+            },
+            "sourceMap": true,
+            "benchmarkRevision": "c7c90491feb3f9be93177e3a7edd99707847da27",
+            "compilerBuildId": "fict-rust-p1-oxc0.139.0-m1-399f7f7201c93be9d0b6d38f0e148bbf920ff71138e91bad88165c901fcc40af",
+            "nativeSha256": "a67ccea5deeb21fa851cda293956eccce58cf837f58b8015d1242ad403b43974",
+            "sourceSha256": "6399a0b3b0e7f0745e774f8a3618b1dbbc9d5c735ad572ee381aa11b34edb8dc",
+            "compiledSha256": "ddd1473e266ac278cf37cd156ecee76cdc883f671e7da9120158052c2e2d154f",
+            "lockfileSha256": "ac37f12095d8914656cf270909181cfd411f875d4085a5ab10364bff5bfc1635",
+            "bundleSha256": "d4a6248f63c1603a84d2e6d083e669014ceca72c99bda4b1b04a03f928dad2b1",
+            "diagnostics": [],
+            "modules": [
+              {
+                "path": "packages/runtime/dist/resume-DN4S-u3u.js",
+                "sha256": "5f563188046e7fcac0b039d0ba6151f46da3d12e2f0104de6e1e1914aecca6bb"
+              },
+              {
+                "path": "packages/runtime/dist/dom-BQtn7-ff.js",
+                "sha256": "e63492fecd06bddaf6728df408758f89aa5eb377ee5c0df2932114587673cb3a"
+              },
+              {
+                "path": "packages/runtime/dist/list-helpers-CSk_o1dn.js",
+                "sha256": "27a9413ca4523212b3c088d3e5f311f89ddf4f53be6f3b8cdaba09f9fc8f53fc"
+              },
+              {
+                "path": "js-framework-benchmark/frameworks/keyed/fict-g4-prepared/compiled.js",
+                "sha256": "ddd1473e266ac278cf37cd156ecee76cdc883f671e7da9120158052c2e2d154f"
+              }
+            ]
+          }
+        }
+      ],
+      "results": [
+        {
+          "framework": "fict-g4-baseline-v0.35.0-keyed",
+          "keyed": true,
+          "benchmark": "01_run1k",
+          "type": "cpu",
+          "values": {
+            "total": {
+              "min": 35.5,
+              "max": 36.7,
+              "median": 36,
+              "mean": 35.99333333333333,
+              "stddev": 0.28652266593628994,
+              "values": [
+                36.1, 35.5, 35.6, 36.2, 36, 35.9, 36.7, 35.9, 35.8, 35.8, 35.9, 36.2, 36.1, 36.2, 36
+              ]
+            },
+            "script": {
+              "min": 8.8,
+              "max": 9.6,
+              "median": 9.1,
+              "mean": 9.086666666666666,
+              "stddev": 0.20307165050320322,
+              "values": [8.9, 8.9, 9.1, 9.2, 9.1, 9, 9.6, 9.1, 8.8, 9.2, 8.9, 9.2, 9.1, 9.3, 8.9]
+            },
+            "paint": {
+              "min": 25.7,
+              "max": 26.3,
+              "median": 26.1,
+              "mean": 26.09333333333333,
+              "stddev": 0.1791514389985137,
+              "values": [
+                26.3, 25.7, 25.8, 26.3, 26, 26.1, 26.3, 26.1, 26.2, 25.9, 26.1, 26.2, 26.1, 26.1,
+                26.2
+              ]
+            }
+          }
+        },
+        {
+          "framework": "fict-g4-baseline-v0.35.0-keyed",
+          "keyed": true,
+          "benchmark": "02_replace1k",
+          "type": "cpu",
+          "values": {
+            "total": {
+              "min": 40.4,
+              "max": 42.6,
+              "median": 41.6,
+              "mean": 41.6,
+              "stddev": 0.5593363414414834,
+              "values": [
+                41.7, 41.3, 41.4, 42.6, 40.8, 41.7, 41.6, 40.4, 42.1, 41.4, 42.1, 42.3, 41.8, 41.4,
+                41.4
+              ]
+            },
+            "script": {
+              "min": 13.5,
+              "max": 14.5,
+              "median": 14,
+              "mean": 13.993333333333334,
+              "stddev": 0.3058166272847333,
+              "values": [
+                13.9, 13.5, 14, 14.4, 13.8, 14.1, 13.8, 13.5, 14.3, 14, 14.3, 14.5, 14.2, 13.8, 13.8
+              ]
+            },
+            "paint": {
+              "min": 26.1,
+              "max": 27.3,
+              "median": 26.8,
+              "mean": 26.766666666666662,
+              "stddev": 0.29195563916132006,
+              "values": [
+                26.9, 26.9, 26.6, 27.3, 26.3, 26.7, 27, 26.1, 27, 26.6, 26.9, 26.9, 26.7, 26.8, 26.8
+              ]
+            }
+          }
+        },
+        {
+          "framework": "fict-g4-baseline-v0.35.0-keyed",
+          "keyed": true,
+          "benchmark": "03_update10th1k_x16",
+          "type": "cpu",
+          "values": {
+            "total": {
+              "min": 17.8,
+              "max": 22.4,
+              "median": 20.5,
+              "mean": 20.433333333333334,
+              "stddev": 1.1387127235025813,
+              "values": [
+                22.4, 21.7, 20.8, 21.4, 17.8, 20.3, 21, 20.8, 19.6, 21.1, 20.3, 20.4, 19.2, 20.5,
+                19.2
+              ]
+            },
+            "script": {
+              "min": 1.8,
+              "max": 3.3,
+              "median": 2.6,
+              "mean": 2.546666666666667,
+              "stddev": 0.4155317877932646,
+              "values": [2.3, 2.8, 2.6, 3.3, 1.8, 2.3, 2.3, 2.4, 2.7, 3, 2.3, 2.6, 2, 2.6, 3.2]
+            },
+            "paint": {
+              "min": 13.9,
+              "max": 16.6,
+              "median": 15.6,
+              "mean": 15.500000000000002,
+              "stddev": 0.7846746368491121,
+              "values": [
+                16.6, 15.1, 16, 15.9, 14.3, 16.3, 16.5, 15.4, 14.8, 15.9, 15.4, 15.6, 14.9, 15.9,
+                13.9
+              ]
+            }
+          }
+        },
+        {
+          "framework": "fict-g4-baseline-v0.35.0-keyed",
+          "keyed": true,
+          "benchmark": "04_select1k",
+          "type": "cpu",
+          "values": {
+            "total": {
+              "min": 5,
+              "max": 12.3,
+              "median": 6,
+              "mean": 6.572,
+              "stddev": 1.7685964303179325,
+              "values": [
+                5.8, 9.1, 6.4, 5, 5.8, 6, 7, 7.3, 12.3, 6.9, 6, 5.4, 5.2, 5.5, 5.2, 6.9, 5.5, 5.2,
+                10.8, 6.2, 5.8, 6.2, 5.3, 7.4, 6.1
+              ]
+            },
+            "script": {
+              "min": 0.2,
+              "max": 1.8,
+              "median": 1.1,
+              "mean": 1.032,
+              "stddev": 0.4534313619501854,
+              "values": [
+                1.6, 1, 0.2, 0.7, 0.6, 0.6, 1.8, 1.4, 0.9, 1.2, 1.6, 1.1, 0.2, 1.2, 0.6, 1.3, 0.9,
+                0.9, 1.4, 1.2, 0.2, 1.5, 1, 1.5, 1.2
+              ]
+            },
+            "paint": {
+              "min": 2.8,
+              "max": 5.2,
+              "median": 4,
+              "mean": 4.008,
+              "stddev": 0.5794537657714088,
+              "values": [
+                3.6, 4.8, 4.3, 3.5, 4, 4.4, 3.5, 4.6, 3.9, 5.2, 3.8, 4, 4.7, 3.7, 4.4, 5, 2.8, 4,
+                3.7, 4.1, 4.3, 3.4, 3.8, 3.2, 3.5
+              ]
+            }
+          }
+        },
+        {
+          "framework": "fict-g4-baseline-v0.35.0-keyed",
+          "keyed": true,
+          "benchmark": "05_swap1k",
+          "type": "cpu",
+          "values": {
+            "total": {
+              "min": 21.9,
+              "max": 25.7,
+              "median": 23.5,
+              "mean": 23.706666666666663,
+              "stddev": 1.0525253079187806,
+              "values": [
+                23, 23.4, 22.8, 24.3, 23, 21.9, 24, 25.5, 23, 24, 23.5, 24.9, 25.7, 22.9, 23.7
+              ]
+            },
+            "script": {
+              "min": 1.6,
+              "max": 3.5,
+              "median": 2.6,
+              "mean": 2.613333333333333,
+              "stddev": 0.505493629558088,
+              "values": [2.2, 2.4, 2.3, 3.2, 2.9, 1.6, 3.3, 2.7, 2.7, 2.6, 2.2, 2.2, 3.5, 2.4, 3]
+            },
+            "paint": {
+              "min": 17.2,
+              "max": 20.2,
+              "median": 18.4,
+              "mean": 18.646666666666665,
+              "stddev": 0.8425019429114234,
+              "values": [
+                17.2, 18.1, 18.3, 18.4, 18.2, 18.4, 18, 20.2, 18, 19.3, 19.2, 20.2, 19.4, 18.5, 18.3
+              ]
+            }
+          }
+        },
+        {
+          "framework": "fict-g4-baseline-v0.35.0-keyed",
+          "keyed": true,
+          "benchmark": "06_remove-one-1k",
+          "type": "cpu",
+          "values": {
+            "total": {
+              "min": 16.1,
+              "max": 18.7,
+              "median": 17.1,
+              "mean": 17.32,
+              "stddev": 0.7311439178242738,
+              "values": [
+                17.1, 16.5, 17.4, 17, 17.1, 16.9, 17.7, 18.6, 18.7, 16.1, 16.8, 16.9, 17.5, 17.3,
+                18.2
+              ]
+            },
+            "script": {
+              "min": 1,
+              "max": 1.3,
+              "median": 1.2,
+              "mean": 1.1666666666666665,
+              "stddev": 0.07237468644557456,
+              "values": [1.2, 1.2, 1.2, 1.2, 1.2, 1, 1.2, 1.2, 1.1, 1.3, 1.1, 1.1, 1.1, 1.2, 1.2]
+            },
+            "paint": {
+              "min": 14,
+              "max": 16.4,
+              "median": 14.7,
+              "mean": 14.873333333333335,
+              "stddev": 0.683966025332782,
+              "values": [
+                14.7, 14.4, 14.9, 14.6, 14.6, 14.4, 15.1, 16.4, 16.1, 14, 14, 14.5, 15.3, 14.8, 15.3
+              ]
+            }
+          }
+        },
+        {
+          "framework": "fict-g4-baseline-v0.35.0-keyed",
+          "keyed": true,
+          "benchmark": "07_create10k",
+          "type": "cpu",
+          "values": {
+            "total": {
+              "min": 366.5,
+              "max": 374.1,
+              "median": 368.9,
+              "mean": 369.4800000000001,
+              "stddev": 1.8770036912970838,
+              "values": [
+                370.3, 369.6, 369.7, 368.8, 368.9, 368.5, 368.7, 368.7, 372.5, 366.5, 370.6, 374.1,
+                368, 367.8, 369.5
+              ]
+            },
+            "script": {
+              "min": 68.5,
+              "max": 70.4,
+              "median": 69.1,
+              "mean": 69.22000000000001,
+              "stddev": 0.5239956379316806,
+              "values": [
+                69.2, 69.1, 69.6, 69.8, 69, 68.9, 69, 69.2, 70.4, 68.8, 68.5, 69.3, 68.8, 68.7, 70
+              ]
+            },
+            "paint": {
+              "min": 287.8,
+              "max": 293.9,
+              "median": 289.3,
+              "mean": 289.73333333333335,
+              "stddev": 1.6016360682870745,
+              "values": [
+                290.7, 290.2, 289.3, 288.6, 289.3, 289.5, 288.9, 288.5, 291.8, 287.8, 291.1, 293.9,
+                289.1, 288, 289.3
+              ]
+            }
+          }
+        },
+        {
+          "framework": "fict-g4-baseline-v0.35.0-keyed",
+          "keyed": true,
+          "benchmark": "08_create1k-after1k_x2",
+          "type": "cpu",
+          "values": {
+            "total": {
+              "min": 40.2,
+              "max": 42.9,
+              "median": 41.6,
+              "mean": 41.526666666666664,
+              "stddev": 0.838763261906367,
+              "values": [
+                42.3, 41.5, 41.6, 40.2, 40.8, 41.8, 42.2, 40.7, 42.1, 40.4, 41.6, 41.2, 42.9, 40.8,
+                42.8
+              ]
+            },
+            "script": {
+              "min": 8.7,
+              "max": 9.8,
+              "median": 9,
+              "mean": 9.173333333333334,
+              "stddev": 0.30814344217000794,
+              "values": [9.1, 9, 9.2, 9, 8.9, 9, 9.7, 9.5, 9.4, 8.7, 9, 9, 9, 9.3, 9.8]
+            },
+            "paint": {
+              "min": 29.7,
+              "max": 32.3,
+              "median": 31,
+              "mean": 30.826666666666668,
+              "stddev": 0.6943307843493893,
+              "values": [
+                31.6, 31.1, 30.7, 29.9, 30.4, 31, 31, 29.7, 31, 30.3, 31.1, 30.8, 32.3, 30, 31.5
+              ]
+            }
+          }
+        },
+        {
+          "framework": "fict-g4-baseline-v0.35.0-keyed",
+          "keyed": true,
+          "benchmark": "09_clear1k_x8",
+          "type": "cpu",
+          "values": {
+            "total": {
+              "min": 16.6,
+              "max": 18.9,
+              "median": 17.7,
+              "mean": 17.7,
+              "stddev": 0.7111359122659223,
+              "values": [
+                18.9, 17.5, 18.7, 18.1, 18.3, 17, 17.3, 16.7, 18.3, 17.5, 17.7, 18, 16.6, 18, 16.9
+              ]
+            },
+            "script": {
+              "min": 13.3,
+              "max": 15.6,
+              "median": 14.3,
+              "mean": 14.326666666666664,
+              "stddev": 0.5861090423494669,
+              "values": [
+                15.6, 14.6, 15, 14.8, 14.6, 14.1, 13.8, 13.6, 14.5, 14.1, 14.6, 14.2, 13.3, 14.3,
+                13.8
+              ]
+            },
+            "paint": {
+              "min": 1.1,
+              "max": 2.6,
+              "median": 1.7,
+              "mean": 1.7266666666666668,
+              "stddev": 0.4682286783592983,
+              "values": [1.2, 1.6, 2.2, 1.9, 2.3, 1.3, 2.6, 1.1, 1.8, 2.1, 1.6, 2.1, 1.2, 1.2, 1.7]
+            }
+          }
+        },
+        {
+          "framework": "fict-g4-prepared-v0.35.0-keyed",
+          "keyed": true,
+          "benchmark": "01_run1k",
+          "type": "cpu",
+          "values": {
+            "total": {
+              "min": 35.4,
+              "max": 37.3,
+              "median": 36.2,
+              "mean": 36.24666666666666,
+              "stddev": 0.4867775477077601,
+              "values": [
+                35.4, 36.3, 35.6, 37.3, 36.3, 36.5, 37, 36.1, 36.4, 36.5, 36.2, 35.8, 36.2, 36.2,
+                35.9
+              ]
+            },
+            "script": {
+              "min": 8.8,
+              "max": 9.3,
+              "median": 9.2,
+              "mean": 9.106666666666666,
+              "stddev": 0.19444671200491878,
+              "values": [9, 9.3, 8.9, 9.3, 8.9, 9.2, 8.9, 9.3, 9.2, 9.3, 9.3, 8.8, 8.9, 9, 9.3]
+            },
+            "paint": {
+              "min": 25.6,
+              "max": 27.2,
+              "median": 26.4,
+              "mean": 26.326666666666664,
+              "stddev": 0.4317186032370534,
+              "values": [
+                25.6, 26.2, 25.8, 27.1, 26.5, 26.4, 27.2, 26, 26.4, 26.5, 26.2, 26.2, 26.5, 26.4,
+                25.9
+              ]
+            }
+          }
+        },
+        {
+          "framework": "fict-g4-prepared-v0.35.0-keyed",
+          "keyed": true,
+          "benchmark": "02_replace1k",
+          "type": "cpu",
+          "values": {
+            "total": {
+              "min": 40,
+              "max": 42.8,
+              "median": 41.4,
+              "mean": 41.40666666666665,
+              "stddev": 0.7796213977370828,
+              "values": [
+                40.9, 42.8, 40, 41.4, 41.6, 42.1, 41.4, 41.7, 41.3, 41, 42.8, 41.9, 40.7, 40.8, 40.7
+              ]
+            },
+            "script": {
+              "min": 12.9,
+              "max": 14.4,
+              "median": 13.7,
+              "mean": 13.666666666666666,
+              "stddev": 0.4220133150686577,
+              "values": [
+                13.1, 13.9, 12.9, 13.8, 14.1, 14, 13.6, 13.9, 13.4, 13.7, 14.4, 14.1, 13.2, 13.6,
+                13.3
+              ]
+            },
+            "paint": {
+              "min": 26.2,
+              "max": 27.9,
+              "median": 26.9,
+              "mean": 26.90666666666667,
+              "stddev": 0.44636094725916087,
+              "values": [
+                27, 27.9, 26.2, 26.8, 26.7, 27.3, 26.9, 27, 27.1, 26.5, 27.6, 26.9, 26.7, 26.4, 26.6
+              ]
+            }
+          }
+        },
+        {
+          "framework": "fict-g4-prepared-v0.35.0-keyed",
+          "keyed": true,
+          "benchmark": "03_update10th1k_x16",
+          "type": "cpu",
+          "values": {
+            "total": {
+              "min": 18.9,
+              "max": 22.1,
+              "median": 19.9,
+              "mean": 20.26,
+              "stddev": 1.0321959946776442,
+              "values": [
+                22.1, 21, 22, 19.5, 19.9, 19.8, 21.1, 21.1, 20.7, 19.1, 18.9, 19.1, 20.4, 19.6, 19.6
+              ]
+            },
+            "script": {
+              "min": 1.8,
+              "max": 2.9,
+              "median": 2.3,
+              "mean": 2.3333333333333335,
+              "stddev": 0.35186577527449847,
+              "values": [2.7, 2.3, 2.5, 2.7, 2.5, 2.1, 1.9, 2.6, 1.8, 1.9, 2.1, 2.3, 2.7, 2, 2.9]
+            },
+            "paint": {
+              "min": 14.1,
+              "max": 17,
+              "median": 15.3,
+              "mean": 15.573333333333332,
+              "stddev": 0.9881199078962796,
+              "values": [
+                16.9, 16.5, 16.6, 14.5, 15.1, 15.6, 16.9, 15.8, 17, 14.1, 15.1, 14.8, 15, 15.3, 14.4
+              ]
+            }
+          }
+        },
+        {
+          "framework": "fict-g4-prepared-v0.35.0-keyed",
+          "keyed": true,
+          "benchmark": "04_select1k",
+          "type": "cpu",
+          "values": {
+            "total": {
+              "min": 5.6,
+              "max": 13,
+              "median": 6.4,
+              "mean": 7.207999999999999,
+              "stddev": 1.7813665166569923,
+              "values": [
+                13, 6.2, 10.7, 5.8, 6.8, 6.8, 6.3, 6.5, 7, 6.4, 7.6, 6.1, 7.5, 9.4, 7.9, 5.9, 5.6,
+                9.3, 5.7, 6.2, 8.7, 6, 6.3, 6.3, 6.2
+              ]
+            },
+            "script": {
+              "min": 0.6,
+              "max": 1.7,
+              "median": 1.2,
+              "mean": 1.188,
+              "stddev": 0.2635020556529556,
+              "values": [
+                1.3, 1.7, 1, 0.6, 1, 1.5, 1.4, 0.9, 1.2, 1, 1, 1, 1.6, 1.4, 1, 1.3, 0.9, 1.4, 0.9,
+                1.5, 1.3, 1, 1.3, 1.2, 1.3
+              ]
+            },
+            "paint": {
+              "min": 2.6,
+              "max": 5,
+              "median": 3.9,
+              "mean": 3.9840000000000004,
+              "stddev": 0.5120872321522314,
+              "values": [
+                3.8, 3.6, 4.2, 3.8, 3.7, 5, 3.8, 4.7, 4.5, 4.4, 2.6, 3.7, 4.6, 4.7, 4, 4.4, 3.6,
+                3.9, 3.7, 3.9, 3.6, 3.7, 4.2, 4.1, 3.4
+              ]
+            }
+          }
+        },
+        {
+          "framework": "fict-g4-prepared-v0.35.0-keyed",
+          "keyed": true,
+          "benchmark": "05_swap1k",
+          "type": "cpu",
+          "values": {
+            "total": {
+              "min": 21.6,
+              "max": 25.2,
+              "median": 22.8,
+              "mean": 22.84666666666667,
+              "stddev": 0.9093692214674858,
+              "values": [
+                23.2, 23.8, 23.6, 21.9, 22.4, 25.2, 22.7, 23.2, 22.8, 21.6, 21.9, 22, 22.9, 22.8,
+                22.7
+              ]
+            },
+            "script": {
+              "min": 2,
+              "max": 3.2,
+              "median": 2.4,
+              "mean": 2.48,
+              "stddev": 0.3913347124174614,
+              "values": [2.7, 2.7, 3.2, 2.9, 2.4, 3.2, 2.3, 2.3, 2, 2, 2.2, 2.1, 2.5, 2.2, 2.5]
+            },
+            "paint": {
+              "min": 16.7,
+              "max": 19.6,
+              "median": 18.2,
+              "mean": 17.993333333333336,
+              "stddev": 0.7343283293174079,
+              "values": [
+                18.2, 18.8, 17.9, 17.6, 17.3, 19.6, 17.7, 18.2, 18.2, 16.8, 16.7, 17.9, 18.3, 18.4,
+                18.3
+              ]
+            }
+          }
+        },
+        {
+          "framework": "fict-g4-prepared-v0.35.0-keyed",
+          "keyed": true,
+          "benchmark": "06_remove-one-1k",
+          "type": "cpu",
+          "values": {
+            "total": {
+              "min": 16.6,
+              "max": 17.9,
+              "median": 17.4,
+              "mean": 17.353333333333335,
+              "stddev": 0.32703574873762775,
+              "values": [
+                17.6, 17.9, 17.3, 17.1, 17.3, 16.6, 17.4, 17.3, 17.5, 17.4, 17.2, 17.5, 17.5, 17.8,
+                16.9
+              ]
+            },
+            "script": {
+              "min": 0.8,
+              "max": 1.2,
+              "median": 1.2,
+              "mean": 1.173333333333333,
+              "stddev": 0.10327955589886444,
+              "values": [1.2, 1.2, 1.2, 1.2, 1.2, 1.2, 1.2, 1.2, 1.2, 1.2, 1.2, 0.8, 1.2, 1.2, 1.2]
+            },
+            "paint": {
+              "min": 14.3,
+              "max": 15.5,
+              "median": 15.1,
+              "mean": 14.999999999999998,
+              "stddev": 0.29032002047002226,
+              "values": [
+                15.2, 15.3, 14.9, 14.7, 15.1, 14.3, 14.8, 14.9, 15.2, 14.9, 15.1, 15.5, 15.1, 15.2,
+                14.8
+              ]
+            }
+          }
+        },
+        {
+          "framework": "fict-g4-prepared-v0.35.0-keyed",
+          "keyed": true,
+          "benchmark": "07_create10k",
+          "type": "cpu",
+          "values": {
+            "total": {
+              "min": 364.1,
+              "max": 371.4,
+              "median": 367.7,
+              "mean": 367.9333333333333,
+              "stddev": 2.154286977390048,
+              "values": [
+                370.9, 364.1, 367.7, 369.5, 366, 371, 371.4, 368.6, 365.2, 367.3, 369, 367.3, 366.3,
+                366.8, 367.9
+              ]
+            },
+            "script": {
+              "min": 67.9,
+              "max": 69.3,
+              "median": 68.4,
+              "mean": 68.44666666666667,
+              "stddev": 0.4323799035019797,
+              "values": [
+                69.3, 68.5, 68.1, 68.3, 68.3, 69.2, 67.9, 68.9, 68, 68, 68.4, 68.1, 68.5, 68.4, 68.8
+              ]
+            },
+            "paint": {
+              "min": 285.4,
+              "max": 293.4,
+              "median": 288.6,
+              "mean": 288.9733333333333,
+              "stddev": 2.087536711966884,
+              "values": [
+                291.2, 285.4, 289.4, 290.7, 287.1, 291.6, 293.4, 289.2, 287, 288.6, 289.5, 288.1,
+                287.1, 287.9, 288.4
+              ]
+            }
+          }
+        },
+        {
+          "framework": "fict-g4-prepared-v0.35.0-keyed",
+          "keyed": true,
+          "benchmark": "08_create1k-after1k_x2",
+          "type": "cpu",
+          "values": {
+            "total": {
+              "min": 40.7,
+              "max": 44.6,
+              "median": 42.1,
+              "mean": 42.38666666666667,
+              "stddev": 1.1230485720742864,
+              "values": [
+                41.3, 41.7, 42.1, 41.6, 42.2, 41.1, 42.1, 42.9, 42.6, 40.7, 43.3, 43.1, 44.6, 44.4,
+                42.1
+              ]
+            },
+            "script": {
+              "min": 9.1,
+              "max": 10.1,
+              "median": 9.5,
+              "mean": 9.473333333333333,
+              "stddev": 0.29390636669006087,
+              "values": [9.2, 9.3, 9.5, 9.1, 9.8, 9.5, 9.4, 9.5, 9.8, 9.1, 9.2, 9.3, 9.8, 10.1, 9.5]
+            },
+            "paint": {
+              "min": 30.2,
+              "max": 33,
+              "median": 31.1,
+              "mean": 31.4,
+              "stddev": 0.8725987459471688,
+              "values": [
+                30.6, 31, 31.1, 31.1, 31, 30.2, 31.3, 31.8, 31.3, 30.2, 32.6, 32.4, 33, 32.5, 30.9
+              ]
+            }
+          }
+        },
+        {
+          "framework": "fict-g4-prepared-v0.35.0-keyed",
+          "keyed": true,
+          "benchmark": "09_clear1k_x8",
+          "type": "cpu",
+          "values": {
+            "total": {
+              "min": 16.3,
+              "max": 18.4,
+              "median": 17.5,
+              "mean": 17.42666666666667,
+              "stddev": 0.6659758325373447,
+              "values": [
+                17.4, 16.8, 16.4, 18.3, 17.6, 17.5, 18.4, 18.3, 17.3, 17.4, 17.8, 16.6, 17.8, 17.5,
+                16.3
+              ]
+            },
+            "script": {
+              "min": 12.9,
+              "max": 14.8,
+              "median": 14,
+              "mean": 13.986666666666668,
+              "stddev": 0.6069439450072407,
+              "values": [
+                13.5, 13.9, 13, 14.3, 13.9, 14, 14.8, 14.6, 14.2, 13.9, 14.4, 13.2, 14.7, 14.5, 12.9
+              ]
+            },
+            "paint": {
+              "min": 0.4,
+              "max": 2.5,
+              "median": 1.6,
+              "mean": 1.6000000000000003,
+              "stddev": 0.5781744669956589,
+              "values": [2.3, 0.4, 1.2, 1.8, 2.5, 1.5, 2.3, 1.9, 1.3, 1.8, 1.2, 2.1, 1.6, 1.1, 1]
+            }
+          }
+        }
+      ],
+      "ratios": [
+        {
+          "benchmark": "01_run1k",
+          "baseline": 35.99333333333333,
+          "candidate": 36.24666666666666,
+          "ratio": 1.0070383404334136,
+          "baselineScript": 9.086666666666666,
+          "candidateScript": 9.106666666666666
+        },
+        {
+          "benchmark": "02_replace1k",
+          "baseline": 41.6,
+          "candidate": 41.40666666666665,
+          "ratio": 0.9953525641025637,
+          "baselineScript": 13.993333333333334,
+          "candidateScript": 13.666666666666666
+        },
+        {
+          "benchmark": "03_update10th1k_x16",
+          "baseline": 20.433333333333334,
+          "candidate": 20.26,
+          "ratio": 0.9915171288743884,
+          "baselineScript": 2.546666666666667,
+          "candidateScript": 2.3333333333333335
+        },
+        {
+          "benchmark": "04_select1k",
+          "baseline": 6.572,
+          "candidate": 7.207999999999999,
+          "ratio": 1.096774193548387,
+          "baselineScript": 1.032,
+          "candidateScript": 1.188
+        },
+        {
+          "benchmark": "05_swap1k",
+          "baseline": 23.706666666666663,
+          "candidate": 22.84666666666667,
+          "ratio": 0.9637232845894267,
+          "baselineScript": 2.613333333333333,
+          "candidateScript": 2.48
+        },
+        {
+          "benchmark": "06_remove-one-1k",
+          "baseline": 17.32,
+          "candidate": 17.353333333333335,
+          "ratio": 1.0019245573518092,
+          "baselineScript": 1.1666666666666665,
+          "candidateScript": 1.173333333333333
+        },
+        {
+          "benchmark": "07_create10k",
+          "baseline": 369.4800000000001,
+          "candidate": 367.9333333333333,
+          "ratio": 0.9958139367038357,
+          "baselineScript": 69.22000000000001,
+          "candidateScript": 68.44666666666667
+        },
+        {
+          "benchmark": "08_create1k-after1k_x2",
+          "baseline": 41.526666666666664,
+          "candidate": 42.38666666666667,
+          "ratio": 1.020709584202922,
+          "baselineScript": 9.173333333333334,
+          "candidateScript": 9.473333333333333
+        },
+        {
+          "benchmark": "09_clear1k_x8",
+          "baseline": 17.7,
+          "candidate": 17.42666666666667,
+          "ratio": 0.9845574387947271,
+          "baselineScript": 14.326666666666664,
+          "candidateScript": 13.986666666666668
+        }
+      ],
+      "geometricRatio": 1.0057857267199262,
+      "scope": "Complete nine-case local runtime comparison. Ratios are candidate divided by current strict Fict baseline, not the five-framework geometric score. CPU runs are separate from builds, tests and diagnostic profiling."
+    },
+    {
+      "round": "b",
+      "startedAt": "2026-09-13T21:21:39Z",
+      "finishedAt": "2026-09-13T21:29:53Z",
+      "entries": [
+        {
+          "name": "fict-g4-baseline",
+          "provenance": {
+            "revision": "b85633a68feddf0b85108a1b12d792abe2eb66f3",
+            "runtimeDiff": "",
+            "compilerDiff": "",
+            "fixtureDiff": "",
+            "toolingDiff": "",
+            "sourcePath": "scripts/fixtures/runtime-benchmark/main.tsx",
+            "compilerOptions": {
+              "dev": false,
+              "strictGuarantee": true
+            },
+            "sourceMap": true,
+            "benchmarkRevision": "c7c90491feb3f9be93177e3a7edd99707847da27",
+            "compilerBuildId": "fict-rust-p1-oxc0.139.0-m1-399f7f7201c93be9d0b6d38f0e148bbf920ff71138e91bad88165c901fcc40af",
+            "nativeSha256": "a67ccea5deeb21fa851cda293956eccce58cf837f58b8015d1242ad403b43974",
+            "sourceSha256": "6399a0b3b0e7f0745e774f8a3618b1dbbc9d5c735ad572ee381aa11b34edb8dc",
+            "compiledSha256": "ddd1473e266ac278cf37cd156ecee76cdc883f671e7da9120158052c2e2d154f",
+            "lockfileSha256": "ac37f12095d8914656cf270909181cfd411f875d4085a5ab10364bff5bfc1635",
+            "bundleSha256": "bbb2bad12bb494bcba9ec52fbdc5b9775d874b7cf0585d50b7de472f6c6d41b8",
+            "diagnostics": [],
+            "modules": [
+              {
+                "path": "packages/runtime/dist/resume-B8Jb7kNT.js",
+                "sha256": "57665d0e5aae78782e8429b98f6c06b8a41b1da780c1d40a9dc84da31b04a9ef"
+              },
+              {
+                "path": "packages/runtime/dist/dom-DSYbSTq4.js",
+                "sha256": "a7da7458624e9e4ffac3607f5afe9404c8bfa82cf2b0d26917c910fcbe371173"
+              },
+              {
+                "path": "packages/runtime/dist/list-helpers-Dg1KZpdN.js",
+                "sha256": "6ab57972e33ed14cdb859dde5193859f9bc6d86a2e6d5c19256d55ccf06f5ff4"
+              },
+              {
+                "path": "js-framework-benchmark/frameworks/keyed/fict-g4-baseline/compiled.js",
+                "sha256": "ddd1473e266ac278cf37cd156ecee76cdc883f671e7da9120158052c2e2d154f"
+              }
+            ]
+          }
+        },
+        {
+          "name": "fict-g4-prepared",
+          "provenance": {
+            "revision": "b85633a68feddf0b85108a1b12d792abe2eb66f3",
+            "runtimeDiff": "diff --git a/packages/runtime/src/effect.ts b/packages/runtime/src/effect.ts\nindex 7bce4d59..5526d636 100644\n--- a/packages/runtime/src/effect.ts\n+++ b/packages/runtime/src/effect.ts\n@@ -34,15 +34,17 @@ function handleEffectFailure(err: unknown, root: RootContext | undefined): void\n   throw err\n }\n \n-function createManagedEffect(\n+function createManagedEffect<T = void>(\n   fn: Effect,\n   options?: EffectOptions,\n   releaseUnobserved = false,\n-  prepare?: () => void,\n+  prepare?: () => T,\n+  commit?: (value: T) => void | Cleanup,\n ): () => void {\n   const cleanupScope: EffectCleanupScope = { cleanups: undefined }\n   let phase: 'active' | 'disposing' | 'disposed' = 'active'\n   const rootForError = getCurrentRoot()\n+  let preparedValue: T\n \n   // Cleanup runner - called by runEffect BEFORE signal values are committed\n   const doCleanup = () => {\n@@ -55,7 +57,7 @@ function createManagedEffect(\n     ? () => {\n         if (phase !== 'active') return false\n         try {\n-          prepare()\n+          preparedValue = prepare()\n           return true\n         } catch (error) {\n           handleEffectFailure(error, rootForError)\n@@ -70,7 +72,7 @@ function createManagedEffect(\n     try {\n       withEffectCleanups(cleanupScope, () => {\n         try {\n-          const maybeCleanup = fn()\n+          const maybeCleanup = commit ? commit(preparedValue) : fn()\n           if (typeof maybeCleanup === 'function') {\n             ;(cleanupScope.cleanups ??= []).push(maybeCleanup)\n           }\n@@ -140,15 +142,9 @@ export function createRenderBinding<T>(\n   commit: (value: T) => void | Cleanup,\n   options?: EffectOptions,\n ): () => void {\n-  let value: T\n-  return createManagedEffect(\n-    () => commit(value),\n-    options,\n-    true,\n-    () => {\n-      value = prepare()\n-    },\n-  )\n+  // Keep preparation and commit in the managed owner without allocating a\n+  // separate value cell and two forwarding closures for every DOM binding.\n+  return createManagedEffect(noopCleanup, options, true, prepare, commit)\n }\n \n /** Internal views which prepare their own roots/DOM before committing them. */",
+            "compilerDiff": "",
+            "fixtureDiff": "",
+            "toolingDiff": "",
+            "sourcePath": "scripts/fixtures/runtime-benchmark/main.tsx",
+            "compilerOptions": {
+              "dev": false,
+              "strictGuarantee": true
+            },
+            "sourceMap": true,
+            "benchmarkRevision": "c7c90491feb3f9be93177e3a7edd99707847da27",
+            "compilerBuildId": "fict-rust-p1-oxc0.139.0-m1-399f7f7201c93be9d0b6d38f0e148bbf920ff71138e91bad88165c901fcc40af",
+            "nativeSha256": "a67ccea5deeb21fa851cda293956eccce58cf837f58b8015d1242ad403b43974",
+            "sourceSha256": "6399a0b3b0e7f0745e774f8a3618b1dbbc9d5c735ad572ee381aa11b34edb8dc",
+            "compiledSha256": "ddd1473e266ac278cf37cd156ecee76cdc883f671e7da9120158052c2e2d154f",
+            "lockfileSha256": "ac37f12095d8914656cf270909181cfd411f875d4085a5ab10364bff5bfc1635",
+            "bundleSha256": "d4a6248f63c1603a84d2e6d083e669014ceca72c99bda4b1b04a03f928dad2b1",
+            "diagnostics": [],
+            "modules": [
+              {
+                "path": "packages/runtime/dist/resume-DN4S-u3u.js",
+                "sha256": "5f563188046e7fcac0b039d0ba6151f46da3d12e2f0104de6e1e1914aecca6bb"
+              },
+              {
+                "path": "packages/runtime/dist/dom-BQtn7-ff.js",
+                "sha256": "e63492fecd06bddaf6728df408758f89aa5eb377ee5c0df2932114587673cb3a"
+              },
+              {
+                "path": "packages/runtime/dist/list-helpers-CSk_o1dn.js",
+                "sha256": "27a9413ca4523212b3c088d3e5f311f89ddf4f53be6f3b8cdaba09f9fc8f53fc"
+              },
+              {
+                "path": "js-framework-benchmark/frameworks/keyed/fict-g4-prepared/compiled.js",
+                "sha256": "ddd1473e266ac278cf37cd156ecee76cdc883f671e7da9120158052c2e2d154f"
+              }
+            ]
+          }
+        }
+      ],
+      "results": [
+        {
+          "framework": "fict-g4-baseline-v0.35.0-keyed",
+          "keyed": true,
+          "benchmark": "01_run1k",
+          "type": "cpu",
+          "values": {
+            "total": {
+              "min": 35.3,
+              "max": 36.8,
+              "median": 36,
+              "mean": 36.04,
+              "stddev": 0.39964269756156623,
+              "values": [
+                35.6, 36, 36.1, 36, 36, 36, 36.3, 36.8, 35.8, 35.7, 35.3, 36.6, 36.2, 35.7, 36.5
+              ]
+            },
+            "script": {
+              "min": 8.7,
+              "max": 9.4,
+              "median": 9,
+              "mean": 9.046666666666665,
+              "stddev": 0.17674302033770742,
+              "values": [8.9, 9.1, 9, 9.2, 9, 9.1, 9.3, 9, 9, 8.9, 8.7, 9.4, 9, 8.9, 9.2]
+            },
+            "paint": {
+              "min": 25.8,
+              "max": 26.9,
+              "median": 26.2,
+              "mean": 26.18,
+              "stddev": 0.29325756597230357,
+              "values": [
+                25.9, 26.1, 26.3, 26, 26.2, 26.2, 26.2, 26.9, 25.9, 25.9, 25.8, 26.5, 26.3, 26, 26.5
+              ]
+            }
+          }
+        },
+        {
+          "framework": "fict-g4-baseline-v0.35.0-keyed",
+          "keyed": true,
+          "benchmark": "02_replace1k",
+          "type": "cpu",
+          "values": {
+            "total": {
+              "min": 41.1,
+              "max": 42.8,
+              "median": 41.7,
+              "mean": 41.74666666666666,
+              "stddev": 0.44379317362075393,
+              "values": [
+                41.7, 41.6, 41.8, 41.8, 41.8, 41.5, 42.8, 41.3, 41.7, 42.1, 42.5, 41.4, 41.4, 41.7,
+                41.1
+              ]
+            },
+            "script": {
+              "min": 13.7,
+              "max": 14.6,
+              "median": 14,
+              "mean": 14.04,
+              "stddev": 0.2848558532711889,
+              "values": [
+                13.9, 13.9, 14.3, 14, 14.2, 14.1, 14.6, 13.7, 13.9, 14.1, 14.6, 14, 13.8, 13.8, 13.7
+              ]
+            },
+            "paint": {
+              "min": 26.4,
+              "max": 27.3,
+              "median": 26.8,
+              "mean": 26.833333333333336,
+              "stddev": 0.2609506430251477,
+              "values": [
+                27.3, 26.8, 26.6, 26.9, 26.6, 26.5, 27.2, 26.8, 26.9, 27.1, 27, 26.6, 26.8, 27, 26.4
+              ]
+            }
+          }
+        },
+        {
+          "framework": "fict-g4-baseline-v0.35.0-keyed",
+          "keyed": true,
+          "benchmark": "03_update10th1k_x16",
+          "type": "cpu",
+          "values": {
+            "total": {
+              "min": 19.2,
+              "max": 21.9,
+              "median": 20.3,
+              "mean": 20.319999999999997,
+              "stddev": 0.8760300060092523,
+              "values": [
+                20.7, 19.6, 19.4, 21.9, 20.3, 20.7, 20, 20.8, 19.2, 20.3, 19.3, 19.6, 19.9, 21.9,
+                21.2
+              ]
+            },
+            "script": {
+              "min": 1.9,
+              "max": 2.7,
+              "median": 2.4,
+              "mean": 2.36,
+              "stddev": 0.22296700588716198,
+              "values": [2.4, 2.4, 2.1, 2.4, 2.7, 2.7, 2.3, 2.4, 2.4, 2, 2.5, 1.9, 2.5, 2.4, 2.3]
+            },
+            "paint": {
+              "min": 14.3,
+              "max": 17.6,
+              "median": 15.5,
+              "mean": 15.606666666666667,
+              "stddev": 0.8075241408745858,
+              "values": [
+                16, 15.8, 15.2, 15.2, 15.2, 14.8, 15.5, 16.4, 14.3, 15.9, 15.3, 15.7, 14.8, 17.6,
+                16.4
+              ]
+            }
+          }
+        },
+        {
+          "framework": "fict-g4-baseline-v0.35.0-keyed",
+          "keyed": true,
+          "benchmark": "04_select1k",
+          "type": "cpu",
+          "values": {
+            "total": {
+              "min": 5.1,
+              "max": 12,
+              "median": 6.5,
+              "mean": 7.087999999999998,
+              "stddev": 1.6348598308927484,
+              "values": [
+                6.5, 9.7, 6.1, 5.1, 6.2, 6.1, 5.8, 7, 8, 6, 5.9, 9.2, 6.6, 6.6, 6.1, 5.9, 6, 12,
+                10.1, 6.4, 7.1, 6.8, 7.8, 8.2, 6
+              ]
+            },
+            "script": {
+              "min": 0.2,
+              "max": 1.5,
+              "median": 1,
+              "mean": 0.992,
+              "stddev": 0.3402450097601238,
+              "values": [
+                1.1, 0.6, 0.8, 0.6, 0.9, 1.1, 1, 1, 1.1, 1.5, 1.2, 0.9, 1.5, 1.5, 1.3, 0.6, 0.6,
+                0.2, 1, 0.9, 0.6, 1.5, 0.9, 1.1, 1.3
+              ]
+            },
+            "paint": {
+              "min": 2.7,
+              "max": 5.1,
+              "median": 3.9,
+              "mean": 4.008,
+              "stddev": 0.5567165646299141,
+              "values": [
+                4.6, 3.6, 2.7, 3.8, 3.5, 3.9, 3.6, 4.5, 4.9, 3.8, 3.8, 3.9, 4.2, 4.1, 3.8, 4.1, 4.1,
+                5.1, 4.5, 4.4, 3.4, 3.2, 4.8, 4.3, 3.6
+              ]
+            }
+          }
+        },
+        {
+          "framework": "fict-g4-baseline-v0.35.0-keyed",
+          "keyed": true,
+          "benchmark": "05_swap1k",
+          "type": "cpu",
+          "values": {
+            "total": {
+              "min": 20.7,
+              "max": 24.2,
+              "median": 23.2,
+              "mean": 22.819999999999993,
+              "stddev": 0.9221093830374537,
+              "values": [
+                22.7, 21.8, 23.2, 23.2, 23.2, 22.1, 23.4, 23.4, 23.3, 23.3, 23.7, 22.5, 21.6, 20.7,
+                24.2
+              ]
+            },
+            "script": {
+              "min": 1.9,
+              "max": 3.3,
+              "median": 2.4,
+              "mean": 2.4999999999999996,
+              "stddev": 0.3946064947695181,
+              "values": [2.6, 2.9, 1.9, 2.3, 2.4, 2.4, 2.1, 2.4, 2.1, 2.1, 3, 2.7, 2.9, 2.4, 3.3]
+            },
+            "paint": {
+              "min": 15.8,
+              "max": 19.4,
+              "median": 18.2,
+              "mean": 17.78666666666667,
+              "stddev": 0.9847890757972099,
+              "values": [
+                17.3, 16.9, 19.4, 17, 18.6, 17.5, 18.7, 17.6, 18.4, 18.4, 18.2, 18.4, 15.8, 16.3,
+                18.3
+              ]
+            }
+          }
+        },
+        {
+          "framework": "fict-g4-baseline-v0.35.0-keyed",
+          "keyed": true,
+          "benchmark": "06_remove-one-1k",
+          "type": "cpu",
+          "values": {
+            "total": {
+              "min": 16.6,
+              "max": 18.5,
+              "median": 17.8,
+              "mean": 17.65333333333334,
+              "stddev": 0.6010308604706541,
+              "values": [
+                18.5, 17.9, 16.6, 18, 17, 17.9, 18.3, 17.7, 17.1, 16.7, 18.5, 17.9, 17.3, 17.8, 17.6
+              ]
+            },
+            "script": {
+              "min": 0.9,
+              "max": 1.2,
+              "median": 1.2,
+              "mean": 1.1399999999999997,
+              "stddev": 0.09856107606091619,
+              "values": [1.2, 1.2, 1.2, 1, 1.2, 0.9, 1.2, 1.2, 1.2, 1.2, 1.1, 1.2, 1, 1.2, 1.1]
+            },
+            "paint": {
+              "min": 14.3,
+              "max": 15.9,
+              "median": 15.2,
+              "mean": 15.193333333333332,
+              "stddev": 0.44795833139552893,
+              "values": [
+                15.9, 15.7, 14.5, 15.7, 14.9, 15.4, 15.3, 15.2, 14.9, 14.3, 15.4, 15.6, 15, 15.1, 15
+              ]
+            }
+          }
+        },
+        {
+          "framework": "fict-g4-baseline-v0.35.0-keyed",
+          "keyed": true,
+          "benchmark": "07_create10k",
+          "type": "cpu",
+          "values": {
+            "total": {
+              "min": 368,
+              "max": 374.2,
+              "median": 370.1,
+              "mean": 370.34,
+              "stddev": 1.5769772169746539,
+              "values": [
+                372.2, 370.6, 369.5, 370.6, 371.6, 371.7, 369.8, 369.1, 369.5, 369.3, 368.6, 374.2,
+                370.3, 370.1, 368
+              ]
+            },
+            "script": {
+              "min": 68.5,
+              "max": 71.6,
+              "median": 69.9,
+              "mean": 69.87333333333332,
+              "stddev": 0.8430104783848585,
+              "values": [
+                68.8, 70, 68.5, 70.5, 71.6, 69.9, 70, 70.3, 69.8, 69.7, 69.8, 70.4, 69.3, 70.9, 68.6
+              ]
+            },
+            "paint": {
+              "min": 288,
+              "max": 293.1,
+              "median": 289.3,
+              "mean": 289.77333333333337,
+              "stddev": 1.549869426143774,
+              "values": [
+                292.9, 290, 290, 289.3, 289.5, 291.4, 288.9, 288, 289, 288.8, 288.3, 293.1, 289.9,
+                288.7, 288.8
+              ]
+            }
+          }
+        },
+        {
+          "framework": "fict-g4-baseline-v0.35.0-keyed",
+          "keyed": true,
+          "benchmark": "08_create1k-after1k_x2",
+          "type": "cpu",
+          "values": {
+            "total": {
+              "min": 40.3,
+              "max": 43.2,
+              "median": 41.7,
+              "mean": 41.82000000000001,
+              "stddev": 0.9190056738515981,
+              "values": [
+                42.5, 42.7, 41.7, 40.3, 41.2, 40.5, 42.7, 42.9, 43.2, 42.5, 41.3, 42.3, 41.3, 41,
+                41.2
+              ]
+            },
+            "script": {
+              "min": 8.9,
+              "max": 9.5,
+              "median": 9.2,
+              "mean": 9.173333333333336,
+              "stddev": 0.17511900715418266,
+              "values": [9.4, 9.1, 9.4, 8.9, 9.1, 9.1, 9.2, 9.3, 9.5, 9.1, 9.2, 9.2, 8.9, 9, 9.2]
+            },
+            "paint": {
+              "min": 29.9,
+              "max": 32.1,
+              "median": 30.7,
+              "mean": 31.086666666666666,
+              "stddev": 0.8201625855076952,
+              "values": [
+                31.4, 32, 30.6, 30, 30.6, 29.9, 32, 32.1, 32.1, 32, 30.4, 31.6, 30.7, 30.5, 30.4
+              ]
+            }
+          }
+        },
+        {
+          "framework": "fict-g4-baseline-v0.35.0-keyed",
+          "keyed": true,
+          "benchmark": "09_clear1k_x8",
+          "type": "cpu",
+          "values": {
+            "total": {
+              "min": 16.8,
+              "max": 18.9,
+              "median": 17.7,
+              "mean": 17.813333333333336,
+              "stddev": 0.6926828450377014,
+              "values": [
+                17.3, 17.4, 16.8, 16.9, 17.7, 17.7, 17, 18.9, 18.3, 18.6, 18.5, 17.8, 18.8, 18.1,
+                17.4
+              ]
+            },
+            "script": {
+              "min": 13.7,
+              "max": 15.8,
+              "median": 14.4,
+              "mean": 14.506666666666666,
+              "stddev": 0.6562519841239848,
+              "values": [
+                14.1, 14.1, 13.8, 13.9, 14.5, 14, 13.7, 15.4, 15.1, 15.1, 15.8, 14.4, 15.2, 14.5, 14
+              ]
+            },
+            "paint": {
+              "min": 0.4,
+              "max": 3,
+              "median": 1.9,
+              "mean": 1.8066666666666669,
+              "stddev": 0.6273147611237994,
+              "values": [1.6, 1.9, 1.9, 2.2, 0.8, 2.3, 2, 1.5, 1.7, 2.1, 0.4, 2.4, 1.7, 1.6, 3]
+            }
+          }
+        },
+        {
+          "framework": "fict-g4-prepared-v0.35.0-keyed",
+          "keyed": true,
+          "benchmark": "01_run1k",
+          "type": "cpu",
+          "values": {
+            "total": {
+              "min": 35.6,
+              "max": 36.9,
+              "median": 36.3,
+              "mean": 36.186666666666675,
+              "stddev": 0.36226798814978795,
+              "values": [
+                36.3, 35.9, 36.4, 36.9, 36.3, 36.7, 35.6, 36.5, 36.3, 36.1, 35.9, 36.3, 35.7, 36,
+                35.9
+              ]
+            },
+            "script": {
+              "min": 8.8,
+              "max": 9.4,
+              "median": 9.1,
+              "mean": 9.113333333333333,
+              "stddev": 0.19591057240729096,
+              "values": [9.1, 8.9, 9.3, 9.4, 9.3, 9.4, 9.1, 9.3, 8.9, 9, 8.9, 9.2, 8.8, 9.1, 9]
+            },
+            "paint": {
+              "min": 25.7,
+              "max": 26.7,
+              "median": 26.3,
+              "mean": 26.27333333333333,
+              "stddev": 0.24918916127158913,
+              "values": [
+                26.4, 26.2, 26.4, 26.7, 26.2, 26.4, 25.7, 26.5, 26.6, 26.3, 26.2, 26.3, 26, 26.1,
+                26.1
+              ]
+            }
+          }
+        },
+        {
+          "framework": "fict-g4-prepared-v0.35.0-keyed",
+          "keyed": true,
+          "benchmark": "02_replace1k",
+          "type": "cpu",
+          "values": {
+            "total": {
+              "min": 40.4,
+              "max": 42.9,
+              "median": 41.6,
+              "mean": 41.673333333333325,
+              "stddev": 0.7045430805713386,
+              "values": [
+                41.4, 41.1, 41.4, 42.9, 42.2, 40.7, 41.6, 41.6, 42.8, 42.3, 41.3, 41.7, 42.2, 41.5,
+                40.4
+              ]
+            },
+            "script": {
+              "min": 13.2,
+              "max": 14.8,
+              "median": 13.8,
+              "mean": 13.986666666666668,
+              "stddev": 0.49261208538429785,
+              "values": [
+                13.6, 13.6, 14.1, 14.8, 14.2, 13.6, 14, 14.3, 14.8, 14.7, 13.8, 13.8, 13.8, 13.5,
+                13.2
+              ]
+            },
+            "paint": {
+              "min": 26.3,
+              "max": 27.5,
+              "median": 26.7,
+              "mean": 26.84,
+              "stddev": 0.354158963501662,
+              "values": [
+                27, 26.6, 26.4, 27.2, 27.1, 26.3, 26.7, 26.5, 27.1, 26.7, 26.7, 27.1, 27.5, 27.2,
+                26.5
+              ]
+            }
+          }
+        },
+        {
+          "framework": "fict-g4-prepared-v0.35.0-keyed",
+          "keyed": true,
+          "benchmark": "03_update10th1k_x16",
+          "type": "cpu",
+          "values": {
+            "total": {
+              "min": 18.6,
+              "max": 21.4,
+              "median": 20.1,
+              "mean": 20.026666666666664,
+              "stddev": 0.7582561446848818,
+              "values": [
+                19.9, 19.8, 20.1, 21.4, 19.1, 20.3, 21, 18.9, 19.9, 20.3, 20.7, 20.5, 19.7, 18.6,
+                20.2
+              ]
+            },
+            "script": {
+              "min": 2.1,
+              "max": 2.9,
+              "median": 2.6,
+              "mean": 2.48,
+              "stddev": 0.26779523094014523,
+              "values": [2.4, 2.6, 2.7, 2.4, 2.6, 2.2, 2.9, 2.2, 2.1, 2.7, 2.6, 2.7, 2.2, 2.1, 2.8]
+            },
+            "paint": {
+              "min": 13.9,
+              "max": 16.7,
+              "median": 15.2,
+              "mean": 15.093333333333332,
+              "stddev": 0.8021993577183976,
+              "values": [
+                14.1, 15.3, 15.5, 16.7, 14.6, 15.7, 16.1, 13.9, 15.5, 15.4, 15.1, 14.4, 15.2, 13.9,
+                15
+              ]
+            }
+          }
+        },
+        {
+          "framework": "fict-g4-prepared-v0.35.0-keyed",
+          "keyed": true,
+          "benchmark": "04_select1k",
+          "type": "cpu",
+          "values": {
+            "total": {
+              "min": 5.2,
+              "max": 10.5,
+              "median": 6.2,
+              "mean": 6.667999999999999,
+              "stddev": 1.3443461855737406,
+              "values": [
+                10.5, 7.7, 5.9, 5.4, 5.4, 6.2, 9.4, 7.1, 8.8, 5.9, 7, 5.9, 6.1, 6.4, 5.9, 6.2, 6.2,
+                6.5, 8.2, 5.7, 5.7, 6.8, 5.3, 5.2, 7.3
+              ]
+            },
+            "script": {
+              "min": 0.3,
+              "max": 1.8,
+              "median": 1,
+              "mean": 1.0399999999999998,
+              "stddev": 0.34399612400917157,
+              "values": [
+                1.6, 1.3, 1.2, 0.8, 0.8, 0.3, 1.3, 1.2, 1.1, 1.3, 0.8, 0.9, 1.4, 1.2, 0.9, 1, 1.4,
+                0.7, 1.8, 1.2, 0.9, 0.8, 0.9, 0.5, 0.7
+              ]
+            },
+            "paint": {
+              "min": 2.4,
+              "max": 4.9,
+              "median": 3.8,
+              "mean": 3.744,
+              "stddev": 0.6344814155408074,
+              "values": [
+                3.6, 3.1, 3.8, 2.7, 3, 4.5, 3.9, 4.7, 3.6, 3.4, 2.4, 3.8, 4, 3.8, 4.1, 4.2, 3.8,
+                4.9, 4.4, 3.5, 3.8, 4.1, 2.8, 4.5, 3.2
+              ]
+            }
+          }
+        },
+        {
+          "framework": "fict-g4-prepared-v0.35.0-keyed",
+          "keyed": true,
+          "benchmark": "05_swap1k",
+          "type": "cpu",
+          "values": {
+            "total": {
+              "min": 21.2,
+              "max": 24.5,
+              "median": 23.2,
+              "mean": 23.05333333333333,
+              "stddev": 0.9920157448827304,
+              "values": [
+                24.5, 21.9, 24.2, 23, 23.4, 23.3, 21.9, 24, 23.6, 22.6, 24.3, 22.6, 23.2, 22.1, 21.2
+              ]
+            },
+            "script": {
+              "min": 1.6,
+              "max": 3.8,
+              "median": 2.3,
+              "mean": 2.4333333333333327,
+              "stddev": 0.6078847008469694,
+              "values": [3.8, 2.4, 2.8, 2.3, 2, 2.3, 2.4, 2.5, 2.7, 2.1, 3.6, 1.9, 1.6, 2.3, 1.8]
+            },
+            "paint": {
+              "min": 16.7,
+              "max": 19.8,
+              "median": 18.5,
+              "mean": 18.326666666666664,
+              "stddev": 0.8940011718326186,
+              "values": [
+                17.7, 18.1, 19, 18.2, 19.8, 18.5, 17.3, 18.7, 18.8, 18.8, 18.4, 18.6, 19.5, 16.8,
+                16.7
+              ]
+            }
+          }
+        },
+        {
+          "framework": "fict-g4-prepared-v0.35.0-keyed",
+          "keyed": true,
+          "benchmark": "06_remove-one-1k",
+          "type": "cpu",
+          "values": {
+            "total": {
+              "min": 16.8,
+              "max": 18.4,
+              "median": 17.4,
+              "mean": 17.486666666666665,
+              "stddev": 0.4257206774847736,
+              "values": [
+                17.9, 17.5, 17.4, 17.9, 17.2, 18.4, 17.3, 17.2, 17.7, 16.8, 17, 17.1, 17.7, 17.3,
+                17.9
+              ]
+            },
+            "script": {
+              "min": 0.9,
+              "max": 1.3,
+              "median": 1.1,
+              "mean": 1.1066666666666662,
+              "stddev": 0.11629191512658789,
+              "values": [1, 1.1, 0.9, 1.1, 1.2, 1.2, 1.1, 1.3, 1.1, 0.9, 1.2, 1, 1.2, 1.2, 1.1]
+            },
+            "paint": {
+              "min": 14.3,
+              "max": 15.9,
+              "median": 14.9,
+              "mean": 15.040000000000001,
+              "stddev": 0.49684720272649524,
+              "values": [
+                15.8, 15.4, 15.2, 15.2, 14.5, 15.8, 14.7, 14.3, 14.7, 14.7, 14.7, 14.8, 14.9, 15,
+                15.9
+              ]
+            }
+          }
+        },
+        {
+          "framework": "fict-g4-prepared-v0.35.0-keyed",
+          "keyed": true,
+          "benchmark": "07_create10k",
+          "type": "cpu",
+          "values": {
+            "total": {
+              "min": 364.9,
+              "max": 370.4,
+              "median": 368.7,
+              "mean": 368.63333333333327,
+              "stddev": 1.3536546651125458,
+              "values": [
+                370.2, 367.9, 370.3, 368.7, 370.4, 368.6, 368, 368.1, 369.3, 368.4, 369.1, 368.8,
+                369.2, 364.9, 367.6
+              ]
+            },
+            "script": {
+              "min": 67.7,
+              "max": 69.9,
+              "median": 68.6,
+              "mean": 68.74666666666667,
+              "stddev": 0.47938452604305526,
+              "values": [
+                68.7, 68.5, 69, 67.7, 68.9, 69.9, 69.3, 68.6, 68.5, 68.5, 68.5, 68.6, 69, 68.6, 68.9
+              ]
+            },
+            "paint": {
+              "min": 286.4,
+              "max": 291.4,
+              "median": 289.4,
+              "mean": 289.4,
+              "stddev": 1.1964232409262912,
+              "values": [
+                289.7, 289, 290.9, 290.6, 291.4, 288.7, 288.6, 288.7, 290.2, 289.4, 289.6, 289.4,
+                289.8, 286.4, 288.6
+              ]
+            }
+          }
+        },
+        {
+          "framework": "fict-g4-prepared-v0.35.0-keyed",
+          "keyed": true,
+          "benchmark": "08_create1k-after1k_x2",
+          "type": "cpu",
+          "values": {
+            "total": {
+              "min": 41.1,
+              "max": 43,
+              "median": 41.7,
+              "mean": 41.85333333333333,
+              "stddev": 0.5962581735488486,
+              "values": [
+                41.7, 43, 41.9, 41.3, 41.7, 41.5, 41.5, 42.1, 42.5, 41.1, 42.3, 42.9, 41.1, 41.5,
+                41.7
+              ]
+            },
+            "script": {
+              "min": 9,
+              "max": 9.7,
+              "median": 9.4,
+              "mean": 9.32666666666667,
+              "stddev": 0.17915143899851357,
+              "values": [9.4, 9.4, 9, 9.1, 9.7, 9.3, 9.2, 9.4, 9.4, 9.2, 9.2, 9.4, 9.2, 9.5, 9.5]
+            },
+            "paint": {
+              "min": 30.3,
+              "max": 32,
+              "median": 30.8,
+              "mean": 31.006666666666664,
+              "stddev": 0.5548058433447898,
+              "values": [
+                30.8, 32, 31.2, 30.8, 30.6, 30.8, 30.6, 31.2, 31.7, 30.5, 31.4, 32, 30.3, 30.4, 30.8
+              ]
+            }
+          }
+        },
+        {
+          "framework": "fict-g4-prepared-v0.35.0-keyed",
+          "keyed": true,
+          "benchmark": "09_clear1k_x8",
+          "type": "cpu",
+          "values": {
+            "total": {
+              "min": 16.2,
+              "max": 18.5,
+              "median": 17,
+              "mean": 17.259999999999998,
+              "stddev": 0.6378535434228951,
+              "values": [
+                16.9, 17.4, 17.8, 16.9, 17, 16.2, 16.9, 18.5, 17.6, 17.8, 18, 17, 17.7, 16.9, 16.3
+              ]
+            },
+            "script": {
+              "min": 12.6,
+              "max": 14.6,
+              "median": 14,
+              "mean": 13.893333333333334,
+              "stddev": 0.6227435457790983,
+              "values": [
+                12.6, 14.1, 14.5, 13.9, 14.3, 12.9, 13.6, 14.5, 14, 14.1, 14.5, 14, 14.6, 13.8, 13
+              ]
+            },
+            "paint": {
+              "min": 0.4,
+              "max": 2.7,
+              "median": 1.9,
+              "mean": 1.7066666666666668,
+              "stddev": 0.7704049646282205,
+              "values": [2.7, 0.6, 0.9, 1.3, 0.4, 1.2, 2.2, 2, 2.5, 1.9, 2.2, 2.6, 0.9, 1.7, 2.5]
+            }
+          }
+        }
+      ],
+      "ratios": [
+        {
+          "benchmark": "01_run1k",
+          "baseline": 36.04,
+          "candidate": 36.186666666666675,
+          "ratio": 1.0040695523492418,
+          "baselineScript": 9.046666666666665,
+          "candidateScript": 9.113333333333333
+        },
+        {
+          "benchmark": "02_replace1k",
+          "baseline": 41.74666666666666,
+          "candidate": 41.673333333333325,
+          "ratio": 0.9982433727243691,
+          "baselineScript": 14.04,
+          "candidateScript": 13.986666666666668
+        },
+        {
+          "benchmark": "03_update10th1k_x16",
+          "baseline": 20.319999999999997,
+          "candidate": 20.026666666666664,
+          "ratio": 0.9855643044619423,
+          "baselineScript": 2.36,
+          "candidateScript": 2.48
+        },
+        {
+          "benchmark": "04_select1k",
+          "baseline": 7.087999999999998,
+          "candidate": 6.667999999999999,
+          "ratio": 0.9407449209932282,
+          "baselineScript": 0.992,
+          "candidateScript": 1.0399999999999998
+        },
+        {
+          "benchmark": "05_swap1k",
+          "baseline": 22.819999999999993,
+          "candidate": 23.05333333333333,
+          "ratio": 1.010224948875256,
+          "baselineScript": 2.4999999999999996,
+          "candidateScript": 2.4333333333333327
+        },
+        {
+          "benchmark": "06_remove-one-1k",
+          "baseline": 17.65333333333334,
+          "candidate": 17.486666666666665,
+          "ratio": 0.9905589123867065,
+          "baselineScript": 1.1399999999999997,
+          "candidateScript": 1.1066666666666662
+        },
+        {
+          "benchmark": "07_create10k",
+          "baseline": 370.34,
+          "candidate": 368.63333333333327,
+          "ratio": 0.9953916221130131,
+          "baselineScript": 69.87333333333332,
+          "candidateScript": 68.74666666666667
+        },
+        {
+          "benchmark": "08_create1k-after1k_x2",
+          "baseline": 41.82000000000001,
+          "candidate": 41.85333333333333,
+          "ratio": 1.0007970667941972,
+          "baselineScript": 9.173333333333336,
+          "candidateScript": 9.32666666666667
+        },
+        {
+          "benchmark": "09_clear1k_x8",
+          "baseline": 17.813333333333336,
+          "candidate": 17.259999999999998,
+          "ratio": 0.9689371257485028,
+          "baselineScript": 14.506666666666666,
+          "candidateScript": 13.893333333333334
+        }
+      ],
+      "geometricRatio": 0.9880704201964179,
+      "scope": "Complete nine-case local runtime comparison. Ratios are candidate divided by current strict Fict baseline, not the five-framework geometric score. CPU runs are separate from builds, tests and diagnostic profiling."
+    }
+  ],
+  "pooled": [
+    {
+      "benchmark": "01_run1k",
+      "baseline": 36.016666666666666,
+      "candidate": 36.21666666666667,
+      "ratio": 1.005552984729292,
+      "baselineScript": 9.066666666666666,
+      "candidateScript": 9.11
+    },
+    {
+      "benchmark": "02_replace1k",
+      "baseline": 41.67333333333333,
+      "candidate": 41.53999999999999,
+      "ratio": 0.9968005119180929,
+      "baselineScript": 14.016666666666666,
+      "candidateScript": 13.826666666666668
+    },
+    {
+      "benchmark": "03_update10th1k_x16",
+      "baseline": 20.376666666666665,
+      "candidate": 20.14333333333333,
+      "ratio": 0.9885489939473253,
+      "baselineScript": 2.453333333333333,
+      "candidateScript": 2.4066666666666667
+    },
+    {
+      "benchmark": "04_select1k",
+      "baseline": 6.829999999999999,
+      "candidate": 6.937999999999999,
+      "ratio": 1.0158125915080527,
+      "baselineScript": 1.012,
+      "candidateScript": 1.1139999999999999
+    },
+    {
+      "benchmark": "05_swap1k",
+      "baseline": 23.26333333333333,
+      "candidate": 22.950000000000003,
+      "ratio": 0.9865310216363379,
+      "baselineScript": 2.556666666666666,
+      "candidateScript": 2.456666666666666
+    },
+    {
+      "benchmark": "06_remove-one-1k",
+      "baseline": 17.48666666666667,
+      "candidate": 17.42,
+      "ratio": 0.9961875714830345,
+      "baselineScript": 1.153333333333333,
+      "candidateScript": 1.1399999999999997
+    },
+    {
+      "benchmark": "07_create10k",
+      "baseline": 369.91,
+      "candidate": 368.2833333333333,
+      "ratio": 0.9956025339496993,
+      "baselineScript": 69.54666666666667,
+      "candidateScript": 68.59666666666666
+    },
+    {
+      "benchmark": "08_create1k-after1k_x2",
+      "baseline": 41.67333333333333,
+      "candidate": 42.120000000000005,
+      "ratio": 1.0107182850743883,
+      "baselineScript": 9.173333333333336,
+      "candidateScript": 9.400000000000002
+    },
+    {
+      "benchmark": "09_clear1k_x8",
+      "baseline": 17.756666666666668,
+      "candidate": 17.343333333333334,
+      "ratio": 0.9767223577998874,
+      "baselineScript": 14.416666666666664,
+      "candidateScript": 13.940000000000001
+    }
+  ],
+  "pooledGeometricRatio": 0.9968744312275123,
+  "memory": {
+    "startedAt": "2026-09-13T21:33:31Z",
+    "finishedAt": "2026-09-13T21:38:04Z",
+    "records": [
+      {
+        "framework": "fict-g4-baseline-v0.35.0-keyed",
+        "keyed": true,
+        "benchmark": "21_ready-memory",
+        "type": "memory",
+        "values": {
+          "DEFAULT": {
+            "min": 0.9248208999633789,
+            "max": 0.9297294616699219,
+            "median": 0.924896240234375,
+            "mean": 0.9264822006225586,
+            "stddev": 0.0028124628480036135,
+            "values": [0.9248208999633789, 0.9297294616699219, 0.924896240234375]
+          }
+        }
+      },
+      {
+        "framework": "fict-g4-baseline-v0.35.0-keyed",
+        "keyed": true,
+        "benchmark": "22_run-memory",
+        "type": "memory",
+        "values": {
+          "DEFAULT": {
+            "min": 4.689701080322266,
+            "max": 4.693284034729004,
+            "median": 4.6921281814575195,
+            "mean": 4.691704432169597,
+            "stddev": 0.0018286779827112445,
+            "values": [4.693284034729004, 4.689701080322266, 4.6921281814575195]
+          }
+        }
+      },
+      {
+        "framework": "fict-g4-baseline-v0.35.0-keyed",
+        "keyed": true,
+        "benchmark": "25_run-clear-memory",
+        "type": "memory",
+        "values": {
+          "DEFAULT": {
+            "min": 1.291224479675293,
+            "max": 1.3004379272460938,
+            "median": 1.2927570343017578,
+            "mean": 1.2948064804077148,
+            "stddev": 0.004936808284802088,
+            "values": [1.291224479675293, 1.3004379272460938, 1.2927570343017578]
+          }
+        }
+      },
+      {
+        "framework": "fict-g4-prepared-v0.35.0-keyed",
+        "keyed": true,
+        "benchmark": "21_ready-memory",
+        "type": "memory",
+        "values": {
+          "DEFAULT": {
+            "min": 0.9233856201171875,
+            "max": 0.9302701950073242,
+            "median": 0.9236526489257812,
+            "mean": 0.9257694880167643,
+            "stddev": 0.003900012648352667,
+            "values": [0.9233856201171875, 0.9236526489257812, 0.9302701950073242]
+          }
+        }
+      },
+      {
+        "framework": "fict-g4-prepared-v0.35.0-keyed",
+        "keyed": true,
+        "benchmark": "22_run-memory",
+        "type": "memory",
+        "values": {
+          "DEFAULT": {
+            "min": 4.538802146911621,
+            "max": 4.5452070236206055,
+            "median": 4.540404319763184,
+            "mean": 4.541471163431804,
+            "stddev": 0.003333050850838947,
+            "values": [4.538802146911621, 4.5452070236206055, 4.540404319763184]
+          }
+        }
+      },
+      {
+        "framework": "fict-g4-prepared-v0.35.0-keyed",
+        "keyed": true,
+        "benchmark": "25_run-clear-memory",
+        "type": "memory",
+        "values": {
+          "DEFAULT": {
+            "min": 1.28948974609375,
+            "max": 1.2958087921142578,
+            "median": 1.2921371459960938,
+            "mean": 1.2924785614013672,
+            "stddev": 0.003173327750413188,
+            "values": [1.2958087921142578, 1.28948974609375, 1.2921371459960938]
+          }
+        }
+      }
+    ]
+  },
+  "validation": [
+    {
+      "command": "pnpm --dir packages/runtime test",
+      "passed": 1548,
+      "skipped": 8,
+      "failed": 0
+    },
+    {
+      "command": "pnpm guardrails:runtime",
+      "passed": 4,
+      "failed": 0,
+      "exposedGc": true
+    },
+    {
+      "command": "pnpm test:compiler:native-runtime",
+      "coreNativeCasesPassed": 615,
+      "additionalA8DocumentationCasesPassed": 6,
+      "failed": 0
+    },
+    {
+      "command": "runtime source and test typechecks; runtime lint",
+      "status": "passed",
+      "lintErrors": 0,
+      "existingLintWarnings": 21
+    },
+    {
+      "command": "runtime-benchmark-check.mjs and official isKeyed.js for both named entries",
+      "modelChecksPerEntry": 15,
+      "maximumRows": 11000,
+      "officialCasesPerEntry": 3,
+      "status": "passed"
+    }
+  ]
+}

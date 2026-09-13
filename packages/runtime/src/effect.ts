@@ -34,15 +34,17 @@ function handleEffectFailure(err: unknown, root: RootContext | undefined): void 
   throw err
 }
 
-function createManagedEffect(
+function createManagedEffect<T = void>(
   fn: Effect,
   options?: EffectOptions,
   releaseUnobserved = false,
-  prepare?: () => void,
+  prepare?: () => T,
+  commit?: (value: T) => void | Cleanup,
 ): () => void {
   const cleanupScope: EffectCleanupScope = { cleanups: undefined }
   let phase: 'active' | 'disposing' | 'disposed' = 'active'
   const rootForError = getCurrentRoot()
+  let preparedValue: T
 
   // Cleanup runner - called by runEffect BEFORE signal values are committed
   const doCleanup = () => {
@@ -55,7 +57,7 @@ function createManagedEffect(
     ? () => {
         if (phase !== 'active') return false
         try {
-          prepare()
+          preparedValue = prepare()
           return true
         } catch (error) {
           handleEffectFailure(error, rootForError)
@@ -70,7 +72,7 @@ function createManagedEffect(
     try {
       withEffectCleanups(cleanupScope, () => {
         try {
-          const maybeCleanup = fn()
+          const maybeCleanup = commit ? commit(preparedValue) : fn()
           if (typeof maybeCleanup === 'function') {
             ;(cleanupScope.cleanups ??= []).push(maybeCleanup)
           }
@@ -140,15 +142,9 @@ export function createRenderBinding<T>(
   commit: (value: T) => void | Cleanup,
   options?: EffectOptions,
 ): () => void {
-  let value: T
-  return createManagedEffect(
-    () => commit(value),
-    options,
-    true,
-    () => {
-      value = prepare()
-    },
-  )
+  // Keep preparation and commit in the managed owner without allocating a
+  // separate value cell and two forwarding closures for every DOM binding.
+  return createManagedEffect(noopCleanup, options, true, prepare, commit)
 }
 
 /** Internal views which prepare their own roots/DOM before committing them. */

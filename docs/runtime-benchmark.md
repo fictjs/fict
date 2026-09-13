@@ -23,10 +23,70 @@ must read the item reactively, for example through a keyed row component's props
 Generic VNode array rendering retains its existing replacement behavior; keyed
 DOM identity checks apply to the direct DOM list lowering.
 
-The CPU and memory results below describe the archived 0.34.0 implementation.
-They do not measure the subsequent async graph work or this strict fixture.
-Fresh final-stack performance qualification is tracked by G4/G5 in the
+The current 0.35.0 runtime comparison is recorded below. The five-framework
+ranking in the historical sections describes the archived 0.34.0 implementation.
+Fresh five-framework qualification is tracked by G5 in the
 [implementation checklist](./reactivity-implementation-plan.md).
+
+## Strict 0.35.0 creation costs: 2026-09-14
+
+The managed binding owner now stores the prepared value directly. This removes
+the separate value cell and two forwarding closures per binding. Graph nodes,
+subscriptions, preparation before cleanup/commit, pending/error handling and
+callback argument counts keep their existing behavior. This targets runtime
+allocation; it does not add compiler fusion or change the authored row model.
+
+The [archive](./benchmarks/runtime-creation-cost-2026-09-14.json) contains both
+complete CPU rounds, every sample, forced-GC memory results, source snapshots,
+build provenance and links to the compressed raw CPU/allocation profiles.
+Both entries compile the same strict fixture to identical JavaScript and use
+different frozen runtime bundles based on `b85633a6`.
+
+| Candidate / current strict baseline | CPU geometric ratio |
+| ----------------------------------- | ------------------: |
+| Complete round A                    |            1.005786 |
+| Complete reverse-order round B      |            0.988070 |
+| Pooled case means                   |            0.996874 |
+
+Each round has 18 records and 290 samples: 15 per case except selection with 25.
+Round B reverses the case order and runs the candidate before the baseline in
+separate invocations. Selection changes direction between rounds. The pooled
+point estimate does **not** establish a stable overall CPU improvement. Pooled
+1k creation is 0.56% slower and append is 1.07% slower; 10k creation script time
+and clear improve in both rounds. These ratios do not evaluate the five-framework
+1.10 target.
+
+| Page memory after forced GC (MiB) | Baseline | Candidate |
+| --------------------------------- | -------: | --------: |
+| Ready                             | 0.926482 |  0.925769 |
+| Create 1k                         | 4.691704 |  4.541471 |
+| Create and clear 1k               | 1.294806 |  1.292479 |
+
+The 1k live-page reduction is 3.20%; ready and cleared pages are effectively
+unchanged. There are three independent page samples per entry/case. Separate
+allocation profiles estimate 4.6%–8.4% fewer allocated bytes across creation,
+replacement and append. Those samples include collected objects and profiler
+overhead; they are not retained heap or official CPU scores. The change is adopted
+for allocation/live-memory savings, with the CPU tradeoffs above.
+
+Validation passes 1,548 runtime tests (eight existing skipped cases), four
+separately enabled GC stress tests, 615 native compiler/runtime/SSR cases,
+source/test typechecks and runtime lint. Both frozen entries pass 15 browser model
+checks through 11,000 rows and the three official keyed checks. No build, test,
+profile or other timing run overlaps the CPU/memory batches. The older ID-effect
+and class/label fusion experiments remain historical rejected prototypes; these
+results do not qualify either on the new async stack.
+
+To reproduce diagnostic sampling after a named strict build:
+
+```sh
+node scripts/runtime-benchmark-build.mjs --name fict-profile --sourcemap
+node scripts/runtime-benchmark-profile.mjs --name fict-profile --output test-results/fict-profile.json
+```
+
+The profiler checks local/served bundle identity, records exact settings, and
+keeps all 30 captures for the five scenarios, three fresh pages and separate
+CPU/allocation modes. Use a new output filename for each run.
 
 ## Implemented optimizations: 2026-09-13
 

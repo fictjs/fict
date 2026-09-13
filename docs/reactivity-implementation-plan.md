@@ -19,7 +19,7 @@ not only an analysis pass, an API sketch, or a passing unrelated test suite.
 | G1   | Safe implicit memos with one logical JSX consumer can be removed without erasing observable computation or ownership semantics.                                       | Native output and browser/SSR behavior across safe/full/disabled options, explicit memo, multi-consumer, coercion, errors, and cleanup controls.                                              | Complete |
 | G2   | Reactive allocation and optimization decisions are traceable from source consumers through EmitIR to generated bindings and owners.                                   | Verified graph/decision information and final-output counters, including reasons for materialization, inlining, retention, and rejected fusion.                                               | Complete |
 | G3   | Existing SSA simplification facts and lazy placement opportunities are either safely realized in emitted code or accurately reported as retained work.                | Semantic differential tests and final generated-code evidence; no claims based solely on unused analysis fields.                                                                              | Complete |
-| G4   | Creation, replacement, and append costs are profiled and reduced where measurements support safe changes.                                                             | Controlled allocation/CPU profiles, complete repeated benchmark batches, memory and disposal checks, documented rejected experiments.                                                         | Pending  |
+| G4   | Creation, replacement, and append costs are profiled and reduced where measurements support safe changes.                                                             | Controlled allocation/CPU profiles, complete repeated benchmark batches, memory and disposal checks, documented rejected experiments.                                                         | Complete |
 | G5   | README performance claims correspond to the qualified strict build and identify versions, artifact hashes, normalization, uncertainty, and the unrounded 1.10 target. | Frozen source/build provenance, complete keyed/browser checks, reproducible archive and README data validation.                                                                               | Pending  |
 | A1   | An async graph contract specifies readiness, stale/current values, invalidation, errors, effect commit, ownership, and compatibility.                                 | Implementable state transitions and executable acceptance scenarios, not percentage scores.                                                                                                   | Complete |
 | A2   | An explicit async computation is a reactive graph node, including Promise and async iterable completion, invalidation, and cancellation.                              | Graph-level dependency/status behavior, stale-flight rejection, cancellation and disposal tests; preserve existing Promise-valued synchronous memo behavior.                                  | Complete |
@@ -282,6 +282,36 @@ tests, compiler typechecking/lint and 63 corpus/guard contract tests pass. The
 [evidence archive](./testing/reactive-graph-trace-evidence-2026-09-14.json) records
 the five reviewed reports and exact source/native identities. No CPU or runtime
 allocation improvement is attributed to this observational feature.
+
+## G4: measured binding allocation reduction
+
+Managed render bindings now keep their prepared value in the existing effect
+owner, removing a separate captured value cell and two forwarding closures.
+Preparation still precedes cleanup and commit; ordinary callbacks receive no
+arguments, while a binding commit receives exactly its prepared value. Node
+counts, subscriptions, cancellation, error routing and disposal remain unchanged.
+
+The [creation-cost archive](./benchmarks/runtime-creation-cost-2026-09-14.json)
+preserves both strict, zero-diagnostic builds, identical compiled fixture output,
+60 raw CPU/allocation profiles, two complete official CPU rounds (580 samples),
+and 18 separate forced-GC page-memory samples. Reverse ordering changes the
+overall CPU direction: candidate/baseline is 1.005786 in round A and 0.988070 in
+round B. The pooled ratio 0.996874 does not establish a stable overall speed win.
+Pooled 1k creation and append are slightly slower; 10k creation script time and
+clear improve in both rounds.
+
+Allocation sampling estimates 4.6%–8.4% fewer bytes for creation, replacement and
+append. Live page memory after 1k rows falls from 4.691704 to 4.541471 MiB, or
+3.20%; ready and cleared pages remain effectively flat. The change is adopted for
+those allocation and memory savings, with the CPU tradeoffs recorded explicitly.
+Historical ID-effect removal and class/label fusion remain rejected experiments,
+not qualified optimizations on this stack. G5 separately measures all five
+frameworks and the unrounded 1.10 target.
+
+Validation: 1,548 runtime tests, four explicit-GC stress tests, 615 native compiler,
+DOM and SSR cases, source/test typechecks and runtime lint pass. Both frozen
+entries pass 15 browser model checks through 11,000 rows and all three official
+keyed checks. Profiles, tests, builds and CPU/memory batches run separately.
 
 ## A1: executable async readiness contract
 
