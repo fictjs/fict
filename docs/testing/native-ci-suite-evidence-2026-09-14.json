@@ -1,0 +1,101 @@
+{
+  "schemaVersion": 1,
+  "item": "Q1a - canonical native behavior coverage in normal CI",
+  "recordedAt": "2026-09-13T23:16:36.649Z",
+  "baseRevision": "2aa1e9097959a93e151ed79388a00e38f37506a7",
+  "previousTests": [
+    "scripts/babel-compiler-cross-module-semantic-oracle.test.mjs",
+    "scripts/babel-compiler-dom-semantic-oracle.test.mjs",
+    "scripts/babel-compiler-semantic-oracle.test.mjs",
+    "scripts/babel-compiler-source-map-oracle.test.mjs",
+    "scripts/babel-compiler-ssr-semantic-oracle.test.mjs",
+    "scripts/babel-compiler-tooling-semantic-oracle.test.mjs",
+    "scripts/native-compiler-auto-extract.test.mjs",
+    "scripts/native-compiler-build-id.test.mjs",
+    "scripts/native-compiler-capability-expansions.test.mjs",
+    "scripts/native-compiler-commonjs-runtime.test.mjs",
+    "scripts/native-compiler-expression-deps.test.mjs",
+    "scripts/native-compiler-legacy-options-audit.test.mjs",
+    "scripts/native-compiler-optimizer-diff.test.mjs",
+    "scripts/native-compiler-r006-audit.test.mjs",
+    "scripts/native-compiler-reactive-accessors.test.mjs",
+    "scripts/native-compiler-request-matrix.test.mjs",
+    "scripts/native-compiler-runtime.test.mjs",
+    "scripts/native-compiler-state-machine-name-collision.test.mjs",
+    "scripts/native-compiler-vnode-props-order.test.mjs"
+  ],
+  "currentCommand": "pnpm --filter @fictjs/runtime build && pnpm --filter fict build && pnpm --filter @fictjs/ssr build && pnpm --filter @fictjs/compiler build && cargo build --release -p fict-compiler-napi && node scripts/prepare-native-compiler-addon.mjs && node --test scripts/native-compiler-async.test.mjs scripts/native-compiler-async-docs.test.mjs scripts/native-compiler-async-ssr.test.mjs scripts/babel-compiler-cross-module-semantic-oracle.test.mjs scripts/babel-compiler-dom-semantic-oracle.test.mjs scripts/babel-compiler-semantic-oracle.test.mjs scripts/babel-compiler-source-map-oracle.test.mjs scripts/babel-compiler-ssr-semantic-oracle.test.mjs scripts/babel-compiler-tooling-semantic-oracle.test.mjs scripts/native-compiler-auto-extract.test.mjs scripts/native-compiler-boundary.test.mjs scripts/native-compiler-build-id.test.mjs scripts/native-compiler-capability-expansions.test.mjs scripts/native-compiler-collection-receivers.test.mjs scripts/native-compiler-commonjs-runtime.test.mjs scripts/native-compiler-host-contract.test.mjs scripts/native-compiler-expression-deps.test.mjs scripts/native-compiler-jsx-local-getters.test.mjs scripts/native-compiler-jsx-memo-inline.test.mjs scripts/native-compiler-unused-memo.test.mjs scripts/native-compiler-factory-callbacks.test.mjs scripts/native-compiler-legacy-options-audit.test.mjs scripts/native-compiler-optimizer-diff.test.mjs scripts/native-compiler-r006-audit.test.mjs scripts/native-compiler-reactive-accessors.test.mjs scripts/native-compiler-reactive-graph.test.mjs scripts/native-compiler-request-limits.test.mjs scripts/native-compiler-request-matrix.test.mjs scripts/native-compiler-runtime.test.mjs scripts/native-compiler-state-machine-name-collision.test.mjs scripts/native-compiler-vnode-props-order.test.mjs",
+  "currentTests": [
+    "scripts/native-compiler-async.test.mjs",
+    "scripts/native-compiler-async-docs.test.mjs",
+    "scripts/native-compiler-async-ssr.test.mjs",
+    "scripts/babel-compiler-cross-module-semantic-oracle.test.mjs",
+    "scripts/babel-compiler-dom-semantic-oracle.test.mjs",
+    "scripts/babel-compiler-semantic-oracle.test.mjs",
+    "scripts/babel-compiler-source-map-oracle.test.mjs",
+    "scripts/babel-compiler-ssr-semantic-oracle.test.mjs",
+    "scripts/babel-compiler-tooling-semantic-oracle.test.mjs",
+    "scripts/native-compiler-auto-extract.test.mjs",
+    "scripts/native-compiler-boundary.test.mjs",
+    "scripts/native-compiler-build-id.test.mjs",
+    "scripts/native-compiler-capability-expansions.test.mjs",
+    "scripts/native-compiler-collection-receivers.test.mjs",
+    "scripts/native-compiler-commonjs-runtime.test.mjs",
+    "scripts/native-compiler-host-contract.test.mjs",
+    "scripts/native-compiler-expression-deps.test.mjs",
+    "scripts/native-compiler-jsx-local-getters.test.mjs",
+    "scripts/native-compiler-jsx-memo-inline.test.mjs",
+    "scripts/native-compiler-unused-memo.test.mjs",
+    "scripts/native-compiler-factory-callbacks.test.mjs",
+    "scripts/native-compiler-legacy-options-audit.test.mjs",
+    "scripts/native-compiler-optimizer-diff.test.mjs",
+    "scripts/native-compiler-r006-audit.test.mjs",
+    "scripts/native-compiler-reactive-accessors.test.mjs",
+    "scripts/native-compiler-reactive-graph.test.mjs",
+    "scripts/native-compiler-request-limits.test.mjs",
+    "scripts/native-compiler-request-matrix.test.mjs",
+    "scripts/native-compiler-runtime.test.mjs",
+    "scripts/native-compiler-state-machine-name-collision.test.mjs",
+    "scripts/native-compiler-vnode-props-order.test.mjs"
+  ],
+  "sourceFiles": [
+    {
+      "file": ".github/workflows/ci.yml",
+      "sha256": "eee4dfbfcf414e4b2ec3df4a0f61d4504a346114da2450260d3e3df137e0d262"
+    },
+    {
+      "file": "packages/compiler/test/release-strict-scope.test.ts",
+      "sha256": "55b6769f37858155913df65d5924f86d8380a6719afcb9588ca893ddf47b4d63"
+    },
+    {
+      "file": "scripts/compiler-compatibility-corpus.test.mjs",
+      "sha256": "e0ce9d5fdf0040997b75e32baab487b2912dfa102c904d05954615855899b9ce"
+    }
+  ],
+  "validation": {
+    "nativeCases": 621,
+    "compatibilityContracts": 31,
+    "workflowScopeCases": 7,
+    "compilerTypes": "passed",
+    "strictApplicationGate": "passed after replacing Array.at with Array.pop in the new ES2020 test",
+    "remoteCi": "not run"
+  },
+  "logs": [
+    {
+      "file": "/tmp/fict-q1-native.log",
+      "sha256": "16a410ba4503932dfd47c301e298e335961b5a526b2443fc999c7477699dbf27"
+    },
+    {
+      "file": "/tmp/fict-q1a-corpus.log",
+      "sha256": "47e5ecca87707cdc7580bd48928512137d1451128fdfc33bb0c518fc861625b6"
+    },
+    {
+      "file": "/tmp/fict-q1a-contract.log",
+      "sha256": "6008c610554717179202a3890fbb8454b942f52a18b68b02618bf54fee347dda"
+    },
+    {
+      "file": "/tmp/fict-q1a-types.log",
+      "sha256": "286375d3b1a2e84a3807dd1a633e7819bad5f66c1c187fb5afe4caf9ad365279"
+    }
+  ]
+}

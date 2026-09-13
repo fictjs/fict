@@ -102,6 +102,28 @@ describe('release strict guarantee scope', () => {
     expect(platformJob).toContain('node scripts/native-compiler-package-smoke.mjs')
   })
 
+  it('runs the complete canonical native behavior suite in CI and release verification', () => {
+    const nativeJob = workflowJob(readProjectFile('.github/workflows/ci.yml'), 'rust-native')
+    expect(nativeJob).toMatch(/^\s+run: pnpm test:compiler:native-runtime$/m)
+    expect(nativeJob).not.toContain('node --test scripts/babel-compiler-')
+    expect(scripts['release:compiler:verify']).toContain('pnpm test:compiler:native-runtime')
+    const execution = scripts['test:compiler:native-runtime']?.split(' && ').pop()
+    expect(execution).toMatch(/^node --test /)
+    for (const domain of [
+      'async',
+      'async-ssr',
+      'collection-receivers',
+      'factory-callbacks',
+      'host-contract',
+      'jsx-local-getters',
+      'jsx-memo-inline',
+      'unused-memo',
+      'reactive-graph',
+    ]) {
+      expect(execution?.split(' ')).toContain(`scripts/native-compiler-${domain}.test.mjs`)
+    }
+  })
+
   it('keeps a pinned scheduled compiler fuzz campaign with crash artifacts', () => {
     const ciWorkflow = readProjectFile('.github/workflows/ci.yml')
     expect(ciWorkflow).toContain("cron: '17 8 * * *'")

@@ -31,6 +31,7 @@ not only an analysis pass, an API sketch, or a passing unrelated test suite.
 | A6   | Compiler-owned async declarations, types, runtime helpers, and cross-module contracts use the same graph protocol.                                                    | Native strict compilation, source maps, metadata/ABI checks, reactive input updates and lifecycle checks; explicit supported continuation boundaries.                                         | Complete |
 | A7   | Async graph behavior works through SSR, streaming, hydration, and request isolation.                                                                                  | Real server/browser tests covering initial pending, refresh, errors, cancellation, serialization and compatible hydration.                                                                    | Complete |
 | A8   | Representative applications and documentation demonstrate the unified model and its migration boundaries.                                                             | End-to-end async application scenarios, usable examples, API/package checks and synchronous performance regression checks.                                                                    | Complete |
+| Q1a  | Normal CI executes the same complete native behavior suite as local and release qualification.                                                                        | Canonical root command, legacy domain coverage assertions and current compiler/CI contract checks.                                                                                            | Complete |
 | Q1   | The final stack satisfies each row against the current source and artifacts.                                                                                          | Full applicable compiler/runtime/SSR/bundler/strict/browser gates, per-item commits, fresh final audit, and explicit evidence for every completion claim.                                     | Pending  |
 
 Changes must preserve observable JavaScript behavior: reference/receiver semantics,
@@ -674,3 +675,20 @@ async declarations. They run in the existing runtime package gate. G4/G5 provide
 separate current synchronous CPU/allocation/memory qualification: the five-framework
 score is 1.113164 and the 1.10 target remains unmet. No zero-cost async or universal
 optimal-graph claim is made from those results.
+
+## Q1a: one native behavior suite for CI and release
+
+The normal Node 22/24 CI job now invokes the canonical
+`pnpm test:compiler:native-runtime` command. Its former copied list omitted
+new async, factory/collection, JSX, graph-trace and unused-memo cases. Legacy
+domain assertions now follow the actual root command and still require every
+previously covered file. A new contract checks the added domains and the shared
+release entry point.
+
+Validation: all 621 native behavior cases, 31 compatibility/corpus contracts,
+seven compiler CI/release scope tests and compiler typechecking pass. The new
+contract uses ES2020-compatible array operations; the initial `Array.at` test
+error was fixed without changing the project's target. The complete strict
+application gate passes again. The [evidence](./testing/native-ci-suite-evidence-2026-09-14.json)
+records the before/after coverage and source hashes. These are local checks of
+the configured workflow, not a remote CI run.

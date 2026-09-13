@@ -26,6 +26,16 @@ const capabilityManifestPath = 'packages/compiler/compiler-capabilities.json'
 const compilerPackageVersion = readJson('packages/compiler/package.json').version
 const sha256 = value => createHash('sha256').update(value).digest('hex')
 
+function assertNativeRuntimeCiCase(workflow, testPattern) {
+  const nativeJob = workflow.split('\n  rust-native:\n')[1]?.split('\n  native-platform:\n')[0]
+  assert.ok(nativeJob, 'The native compiler CI job must exist')
+  assert.match(nativeJob, /^\s+run: pnpm test:compiler:native-runtime$/m)
+  const command = readJson('package.json').scripts['test:compiler:native-runtime']
+  const testFiles = command.split(' && ').at(-1)
+  assert.match(testFiles, /^node --test /)
+  assert.match(testFiles, testPattern)
+}
+
 test('scopes the capability manifest to certified behavior-variant options', () => {
   const manifest = readJson(capabilityManifestPath)
   assert.equal(manifest.schemaVersion, 2)
@@ -400,7 +410,7 @@ test('keeps codegen, request, and semantic compatibility evidence roles distinct
   assert.match(packageJson, /babel-compiler-ssr-semantic-oracle\.test\.mjs/)
   const ci = read('.github/workflows/ci.yml')
   assert.match(ci, /pnpm --filter @fictjs\/ssr build/)
-  assert.match(ci, /babel-compiler-ssr-semantic-oracle\.test\.mjs/)
+  assertNativeRuntimeCiCase(ci, /babel-compiler-ssr-semantic-oracle\.test\.mjs/)
 
   const toolingSemantic = scope.assets.babelToolingSemanticOracle
   const toolingSemanticInputsText = read(toolingSemantic.inputs)
@@ -467,7 +477,7 @@ test('keeps codegen, request, and semantic compatibility evidence roles distinct
   assert.match(toolingSemanticGenerator, /resolveConfig\(options\.output\)/)
   assert.match(packageJson, /test:compiler:babel-tooling-semantic-oracle/)
   assert.match(packageJson, /babel-compiler-tooling-semantic-oracle\.test\.mjs/)
-  assert.match(ci, /babel-compiler-tooling-semantic-oracle\.test\.mjs/)
+  assertNativeRuntimeCiCase(ci, /babel-compiler-tooling-semantic-oracle\.test\.mjs/)
 
   const sourceMapScope = scope.assets.babelSourceMapOracle
   const sourceMapInputsText = read(sourceMapScope.inputs)
@@ -552,7 +562,7 @@ test('keeps codegen, request, and semantic compatibility evidence roles distinct
   assert.match(sourceMapGenerator, /resolveConfig\(path\.join\(repositoryRoot, 'package\.json'\)\)/)
   assert.match(packageJson, /test:compiler:babel-source-map-oracle/)
   assert.match(packageJson, /babel-compiler-source-map-oracle\.test\.mjs/)
-  assert.match(ci, /babel-compiler-source-map-oracle\.test\.mjs/)
+  assertNativeRuntimeCiCase(ci, /babel-compiler-source-map-oracle\.test\.mjs/)
 
   const sourceMapPrecision = scope.assets.nativeSourceMapPrecision
   assert.equal(sourceMapPrecision.assertionLevel, 'source-map-contract')
@@ -1318,7 +1328,7 @@ test('retains the independently generated Babel 0.28 semantic oracle', () => {
   const packageJson = read('package.json')
   assert.match(packageJson, /test:compiler:babel-semantic-oracle/)
   const ci = read('.github/workflows/ci.yml')
-  assert.match(ci, /babel-compiler-semantic-oracle\.test\.mjs/)
+  assertNativeRuntimeCiCase(ci, /babel-compiler-semantic-oracle\.test\.mjs/)
 })
 
 test('executes independently generated Babel 0.28 multi-file graphs in CI', () => {
@@ -1360,7 +1370,7 @@ test('executes independently generated Babel 0.28 multi-file graphs in CI', () =
   assert.match(packageJson, /test:compiler:babel-cross-module-semantic-oracle/)
   assert.match(packageJson, /babel-compiler-cross-module-semantic-oracle\.test\.mjs/)
   const ci = read('.github/workflows/ci.yml')
-  assert.match(ci, /babel-compiler-cross-module-semantic-oracle\.test\.mjs/)
+  assertNativeRuntimeCiCase(ci, /babel-compiler-cross-module-semantic-oracle\.test\.mjs/)
 })
 
 test('retains full request dimensions with an exact Babel preset oracle', () => {
@@ -1450,7 +1460,7 @@ test('retains full request dimensions with an exact Babel preset oracle', () => 
   assert.match(packageJson, /test:compiler:request-matrix/)
   assert.match(packageJson, /native-compiler-request-matrix\.test\.mjs/)
   const ci = read('.github/workflows/ci.yml')
-  assert.match(ci, /native-compiler-request-matrix\.test\.mjs/)
+  assertNativeRuntimeCiCase(ci, /native-compiler-request-matrix\.test\.mjs/)
 })
 
 test('ports the unrepresented Babel auto-extraction domain through the native Preview pipeline', () => {
@@ -1471,7 +1481,7 @@ test('ports the unrepresented Babel auto-extraction domain through the native Pr
   assert.match(packageJson, /test:compiler:auto-extract/)
   assert.match(packageJson, /native-compiler-auto-extract\.test\.mjs/)
   const ci = read('.github/workflows/ci.yml')
-  assert.match(ci, /native-compiler-auto-extract\.test\.mjs/)
+  assertNativeRuntimeCiCase(ci, /native-compiler-auto-extract\.test\.mjs/)
 })
 
 test('ports the unrepresented Babel expression-dependency domain through Preview artifacts', () => {
@@ -1491,7 +1501,7 @@ test('ports the unrepresented Babel expression-dependency domain through Preview
   assert.match(packageJson, /test:compiler:expression-deps/)
   assert.match(packageJson, /native-compiler-expression-deps\.test\.mjs/)
   const ci = read('.github/workflows/ci.yml')
-  assert.match(ci, /native-compiler-expression-deps\.test\.mjs/)
+  assertNativeRuntimeCiCase(ci, /native-compiler-expression-deps\.test\.mjs/)
 })
 
 test('ports the unrepresented Babel reactive-accessor domain through executable output', () => {
@@ -1510,7 +1520,7 @@ test('ports the unrepresented Babel reactive-accessor domain through executable 
   assert.match(packageJson, /test:compiler:reactive-accessors/)
   assert.match(packageJson, /native-compiler-reactive-accessors\.test\.mjs/)
   const ci = read('.github/workflows/ci.yml')
-  assert.match(ci, /native-compiler-reactive-accessors\.test\.mjs/)
+  assertNativeRuntimeCiCase(ci, /native-compiler-reactive-accessors\.test\.mjs/)
 })
 
 test('ports the unrepresented Babel optimizer differential domain through executable output', () => {
@@ -1530,7 +1540,7 @@ test('ports the unrepresented Babel optimizer differential domain through execut
   assert.match(packageJson, /test:compiler:optimizer-diff/)
   assert.match(packageJson, /native-compiler-optimizer-diff\.test\.mjs/)
   const ci = read('.github/workflows/ci.yml')
-  assert.match(ci, /native-compiler-optimizer-diff\.test\.mjs/)
+  assertNativeRuntimeCiCase(ci, /native-compiler-optimizer-diff\.test\.mjs/)
 })
 
 test('classifies every Babel-rejected Rust acceptance before runtime and release use', () => {
@@ -1578,7 +1588,7 @@ test('classifies every Babel-rejected Rust acceptance before runtime and release
   assert.match(packageJson, /test:compiler:capability-release-gate/)
   assert.match(packageJson, /native-compiler-capability-release-gate\.mjs/)
   const ci = read('.github/workflows/ci.yml')
-  assert.match(ci, /native-compiler-capability-expansions\.test\.mjs/)
+  assertNativeRuntimeCiCase(ci, /native-compiler-capability-expansions\.test\.mjs/)
 })
 
 test('decides every Babel-accepted Rust rejection before stable release', () => {
@@ -1702,7 +1712,7 @@ test('ports the Babel state-machine collision domain to structured native contro
   assert.match(packageJson, /test:compiler:state-machine-name-collision/)
   assert.match(packageJson, /native-compiler-state-machine-name-collision\.test\.mjs/)
   const ci = read('.github/workflows/ci.yml')
-  assert.match(ci, /native-compiler-state-machine-name-collision\.test\.mjs/)
+  assertNativeRuntimeCiCase(ci, /native-compiler-state-machine-name-collision\.test\.mjs/)
 })
 
 test('ports the Babel template extractor domain through serialized and live DOM paths', () => {
@@ -1715,7 +1725,7 @@ test('ports the Babel template extractor domain through serialized and live DOM 
   const packageJson = read('package.json')
   assert.match(packageJson, /test:compiler:native-runtime[^\n]+native-compiler-runtime\.test\.mjs/)
   const ci = read('.github/workflows/ci.yml')
-  assert.match(ci, /native-compiler-runtime\.test\.mjs/)
+  assertNativeRuntimeCiCase(ci, /native-compiler-runtime\.test\.mjs/)
 })
 
 test('maps the Babel release strict-scope domain to the explicit release gate', () => {
@@ -1752,7 +1762,7 @@ test('ports the Babel VNode prop-order domain through executable native output',
   assert.match(packageJson, /test:compiler:vnode-props-order/)
   assert.match(packageJson, /native-compiler-vnode-props-order\.test\.mjs/)
   const ci = read('.github/workflows/ci.yml')
-  assert.match(ci, /native-compiler-vnode-props-order\.test\.mjs/)
+  assertNativeRuntimeCiCase(ci, /native-compiler-vnode-props-order\.test\.mjs/)
 })
 
 test('binds native cache identity to the complete Rust build input set', () => {
@@ -1773,7 +1783,7 @@ test('binds native cache identity to the complete Rust build input set', () => {
   assert.match(packageJson, /test:compiler:build-id/)
   assert.match(packageJson, /native-compiler-build-id\.test\.mjs/)
   const ci = read('.github/workflows/ci.yml')
-  assert.match(ci, /native-compiler-build-id\.test\.mjs/)
+  assertNativeRuntimeCiCase(ci, /native-compiler-build-id\.test\.mjs/)
 })
 
 test('documents every reviewed Babel status and request-identity deviation', () => {
