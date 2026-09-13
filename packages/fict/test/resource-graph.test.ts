@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { createAsyncMemo, createSignal, reactive } from '@fictjs/runtime/advanced'
 import {
   createEffect,
+  createElement,
   createMemo,
   createRoot,
   render,
@@ -10,7 +11,7 @@ import {
   onCleanup,
   batch,
 } from '@fictjs/runtime'
-import { __resetReactiveState } from '@fictjs/runtime/internal'
+import { __resetReactiveState, createConditional } from '@fictjs/runtime/internal'
 import { resource, type ResourceResult } from '../src/resource'
 
 const disposers: (() => void)[] = []
@@ -277,4 +278,56 @@ describe('Resource async graph integration', () => {
     await drain()
     expect(owner.value.data).toBe('current')
   })
+})
+
+it('updates Resource conditional rows after a key change with the same boolean', async () => {
+  const key = createSignal('one')
+  const requests = [deferred<string[]>(), deferred<string[]>()]
+  const calls: string[] = []
+  const query = resource<string[], string>({
+    fetch: (_, id) => {
+      calls.push(id)
+      return requests[id === 'one' ? 0 : 1]!.promise
+    },
+    suspense: true,
+  })
+  const container = document.createElement('div')
+  const Child = () => {
+    const data = query.read(reactive(() => key()))
+    const parent = document.createElement('section')
+    const start = document.createComment('start'),
+      end = document.createComment('end')
+    parent.append(start, end)
+    const binding = createConditional(
+      () => data.data?.length === 0,
+      () => 'empty',
+      createElement,
+      () => data.data?.map(text => ({ type: 'b', props: { children: text } })),
+      start,
+      end,
+      { trackBranchReads: true },
+    )
+    onCleanup(binding.dispose)
+    return parent
+  }
+  disposers.push(
+    render(
+      () => ({
+        type: Suspense as never,
+        props: { fallback: 'loading', children: { type: Child, props: {} } },
+      }),
+      container,
+    ),
+  )
+  expect(container.textContent).toBe('loading')
+  requests[0]!.resolve(['first', 'second'])
+  await drain()
+  expect(container.textContent).toBe('firstsecond')
+  key('two')
+  await drain()
+  expect(calls).toEqual(['one', 'two'])
+  expect(container.textContent).toBe('loading')
+  requests[1]!.resolve(['third'])
+  await drain()
+  expect(container.textContent).toBe('third')
 })

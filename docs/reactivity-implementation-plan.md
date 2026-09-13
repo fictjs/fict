@@ -25,6 +25,7 @@ not only an analysis pass, an API sketch, or a passing unrelated test suite.
 | A2   | An explicit async computation is a reactive graph node, including Promise and async iterable completion, invalidation, and cancellation.                              | Graph-level dependency/status behavior, stale-flight rejection, cancellation and disposal tests; preserve existing Promise-valued synchronous memo behavior.                                  | Complete |
 | A3   | Pending/error states compose through synchronous derived nodes and effect/render consumers with defined commit semantics.                                             | Chains, diamonds, conditional subscriptions, independent boundaries, error recovery, no unintended partial commits, and cleanup ordering.                                                     | Complete |
 | A3b  | Keyed lists retain async subscriptions while their live owner parks DOM in Suspense.                                                                                  | Initial pending, refresh, same-key row identity, superseded results, disposal, existing list/async suites and runtime typechecks.                                                             | Complete |
+| A3c  | Async-dependent memos propagate recovery even when their last successful values compare equal.                                                                        | Resource key-switch and async source-replacement regressions, subsequent subscriptions and disposal, full runtime/Resource suites.                                                            | Complete |
 | A4   | Resource uses the shared async computation protocol while retaining its data/cache policies.                                                                          | Existing resource/cache/TTL/SWR/LRU/sharing/optimistic/SSR regressions and new graph-composition coverage.                                                                                    | Complete |
 | A5   | Transition readiness accounts for registered downstream async work caused by updates, including indirectly triggered requests.                                        | Overlapping transitions, unrelated roots, stale completions, callback failures, disposal, and the indirect-resource regression.                                                               | Complete |
 | A6   | Compiler-owned async declarations, types, runtime helpers, and cross-module contracts use the same graph protocol.                                                    | Native strict compilation, source maps, metadata/ABI checks, reactive input updates and lifecycle checks; explicit supported continuation boundaries.                                         | Complete |
@@ -451,3 +452,18 @@ acceptance and diagnostics. 156 changes contain only getter/import differences;
 selectors and current corpus reference change while all frozen Babel output,
 maps and authored source positions remain intact. See the
 [review archive](./testing/jsx-consumer-contract-evidence-2026-09-14.json).
+
+## A3c: readiness through equal derived values
+
+A Resource key change can suspend an existing conditional before it reaches its
+branch reads. Previously, recovery to the same boolean value suppressed the
+consumer's next execution, restoring stale DOM without renewing its branch
+subscriptions. Async failure-to-value recovery now counts as a graph change even
+when ordinary value equality succeeds. Uninterrupted synchronous memo equality
+continues to suppress redundant updates.
+
+The Resource regression fails before the change and passes afterwards. Runtime
+coverage separately exercises refreshing one async source and switching between
+sources, subsequent value updates, retained component ownership and disposal.
+Production application qualification is tracked separately by S5. See the
+[evidence archive](./testing/async-memo-readiness-evidence-2026-09-14.json).

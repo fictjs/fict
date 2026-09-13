@@ -1,0 +1,78 @@
+{
+  "schemaVersion": 1,
+  "item": "A3c - async memo readiness through equal values",
+  "recordedAt": "2026-09-13T18:23:12.981858+00:00",
+  "baselineRevision": "774397e14927f714bea49d27143b4ae4c877a94c",
+  "sourceFiles": [
+    {
+      "file": "packages/runtime/src/signal.ts",
+      "sha256": "56de21f591bc4d79dd0aaed5f8b36e8b92ad1b7a36d6e381f1231fdb0348a0d6"
+    },
+    {
+      "file": "packages/runtime/test/async-suspense.test.ts",
+      "sha256": "7086fb0d74acfd2f205b82a184cfa72845794ce97a62be628b4200b40af6b0f0"
+    },
+    {
+      "file": "packages/fict/test/resource-graph.test.ts",
+      "sha256": "41942017afa96695f6c88a6cb19e843f8bc8618bdbbcd14917499624e5fd403f"
+    }
+  ],
+  "baseline": [
+    {
+      "suite": "runtime async-suspense",
+      "passed": 13,
+      "failed": 1,
+      "failure": "Switching async sources restores previous conditional rows",
+      "logSha256": "342cad0f962aa62b5439676c519e6099205b27ad3ab0df58c9ec5c17f0d4d7a0"
+    },
+    {
+      "suite": "Resource graph integration",
+      "passed": 9,
+      "failed": 1,
+      "failure": "Resource key change restores previous conditional rows",
+      "logSha256": "d316ea90b73b8d75bce5458b205876ad4a366cc610070c5aab1b2273ba517efe"
+    }
+  ],
+  "validation": [
+    {
+      "command": "pnpm --filter @fictjs/runtime test",
+      "passed": 1546,
+      "skipped": 8,
+      "failed": 0,
+      "logSha256": "062ad7c9e16245ca9dfe9b97012f7793a7b72d248e4bddb0ea27f99817f1b6eb"
+    },
+    {
+      "command": "pnpm --filter fict test",
+      "passed": 202,
+      "failed": 0,
+      "logSha256": "83075be1ff54f88ddcfd5538f0fb8d8b79dc58034cd409dbe542e7911231bc1d"
+    },
+    {
+      "command": "pnpm --filter @fictjs/runtime typecheck",
+      "exitCode": 0
+    },
+    {
+      "command": "pnpm --filter @fictjs/runtime typecheck:tests",
+      "exitCode": 0
+    },
+    {
+      "command": "pnpm --filter fict typecheck",
+      "exitCode": 0
+    },
+    {
+      "command": "pnpm --filter fict typecheck:tests",
+      "exitCode": 0
+    }
+  ],
+  "acceptance": [
+    "Async recovery notifies even if the last successful value compares equal",
+    "Uninterrupted equality still suppresses redundant updates",
+    "Resource key changes renew branch subscriptions",
+    "Subsequent source switches still update",
+    "Component setup is retained and disposal runs exactly once"
+  ],
+  "limits": [
+    "Production application qualification and the separately reviewed example migrations are tracked by S5.",
+    "No new CPU or memory claim; opt-in runtime stress tests were not run in this item."
+  ]
+}

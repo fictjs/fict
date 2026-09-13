@@ -495,3 +495,66 @@ describe('async graph render boundaries', () => {
     expect(renders).toBe(1)
   })
 })
+
+it.each(['refresh', 'replace'])(
+  'resumes conditional reads when %s settles with the same boolean',
+  async mode => {
+    const key = signal(0)
+    const request = deferred<string[]>()
+    const container = document.createElement('div')
+    let setups = 0
+    let cleaned = 0
+    const Child = () => {
+      setups++
+      onCleanup(() => cleaned++)
+      const first = createAsyncMemo(() => ['first', 'second'])
+      const second = createAsyncMemo(() => request.promise)
+      const refresh = createAsyncMemo(() => (key() ? request.promise : ['first', 'second']))
+      const data = mode === 'refresh' ? refresh : () => (key() ? second() : first())
+      const parent = document.createElement('section')
+      const start = document.createComment('start')
+      const end = document.createComment('end')
+      parent.append(start, end)
+      const binding = createConditional(
+        () => data().length === 0,
+        () => 'empty',
+        createElement,
+        () => data().map(text => ({ type: 'b', props: { children: text } })),
+        start,
+        end,
+        { trackBranchReads: true },
+      )
+      onCleanup(binding.dispose)
+      return parent
+    }
+    const stop = render(
+      () => ({
+        type: Suspense,
+        props: {
+          fallback: 'loading',
+          children: { type: Child, props: {} },
+        },
+      }),
+      container,
+    )
+    disposers.push(stop)
+    expect(container.textContent).toBe('firstsecond')
+    key(1)
+    flush()
+    expect(container.textContent).toBe('loading')
+    request.resolve(['third'])
+    await drain()
+    expect(container.textContent).toBe('third')
+    key(0)
+    flush()
+    expect(container.textContent).toBe('firstsecond')
+    key(1)
+    await drain()
+    expect(container.textContent).toBe('third')
+    expect(setups).toBe(1)
+    expect(cleaned).toBe(0)
+    stop()
+    expect(cleaned).toBe(1)
+    expect(container.textContent).toBe('')
+  },
+)

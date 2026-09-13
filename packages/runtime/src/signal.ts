@@ -1142,6 +1142,7 @@ function updateSignal(s: SignalNode): boolean {
 function updateComputed<T>(c: ComputedNode<T>): boolean {
   ++cycle
   const oldValue = c.value
+  const wasAsyncBlocked = c.thrownError?.async === true
   c.depsTail = undefined
   c.asyncReads?.clear()
   if (c.asyncFailure) c.asyncFailure = undefined
@@ -1165,7 +1166,9 @@ function updateComputed<T>(c: ComputedNode<T>): boolean {
       if (isDev) updateComputedDevtools(c, newValue)
       return true
     }
-    return false
+    // Readiness is observable even when the last successful value is equal.
+    // Consumers that suspended before their other reads must resume and re-subscribe.
+    return wasAsyncBlocked
   } catch (e) {
     activeSub = prevSub
     c.flags &= ~Running
