@@ -30,6 +30,8 @@ export interface HookContext {
   scopeId?: string
   scopeType?: string
   slotMap?: Record<string, number>
+  /** Async graph slots have no Preview snapshot/resume ABI. */
+  asyncSlots?: true
 }
 
 const ctxStack: HookContext[] = []
@@ -142,7 +144,10 @@ export function __fictUseAsyncMemo<T>(
   const options = typeof optionsOrSlot === 'number' ? undefined : optionsOrSlot
   const resolvedSlot = typeof optionsOrSlot === 'number' ? optionsOrSlot : slot
   const index = resolvedSlot ?? ctx.cursor++
-  if (!ctx.slots[index]) ctx.slots[index] = createAsyncMemo(produce, options)
+  if (!ctx.slots[index]) {
+    ctx.asyncSlots = true
+    ctx.slots[index] = createAsyncMemo(produce, options)
+  }
   return ctx.slots[index] as AsyncMemo<T>
 }
 

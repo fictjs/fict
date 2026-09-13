@@ -164,6 +164,7 @@ impl<'a> AstRewriter<'a, '_> {
             .reads
             .keys()
             .chain(self.prop_reads.iter())
+            .chain(self.jsx_getter_reads.iter())
             .any(|(start, end)| source_span.start <= *start && *end <= source_span.end)
             || self.control_flow_outputs.values().any(|(_, output)| {
                 output

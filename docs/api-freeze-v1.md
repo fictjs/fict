@@ -138,6 +138,13 @@ export function createRoot<T>(
 // Main render entry
 export function render(view: () => FictNode, container: HTMLElement): () => void
 
+// Eager hydration of completed, compatible server output
+export function hydrate(
+  view: () => FictNode,
+  container: HTMLElement,
+  options?: HydrationOptions,
+): () => void
+
 // Element creation (normally compiler-generated)
 export function createElement(node: FictNode): Node
 ```
@@ -830,6 +837,7 @@ export const $memo = createMemo
 | `createRoot`                         | Lifecycle  | 1    | No                 |
 | `createRef`                          | Ref        | 1    | No                 |
 | `render`                             | DOM        | 1    | No                 |
+| `hydrate`                            | DOM        | 1    | No                 |
 | `createElement`                      | DOM        | 1    | Yes                |
 | `createPortal`                       | DOM        | 1    | No                 |
 | `Fragment`                           | JSX        | 1    | Yes                |

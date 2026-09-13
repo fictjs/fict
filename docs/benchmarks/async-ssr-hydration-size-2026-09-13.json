@@ -1,0 +1,71 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-09-13",
+  "baselineRevision": "67f98741d75a503c18aa86dfff6f061e10c7a5b1",
+  "baselineEvidence": {
+    "archive": "compiler-async-declarations-size-2026-09-13.json",
+    "boundary": "distributed package measurements qualified by A6"
+  },
+  "candidate": "A7 eager async graph SSR hydration; exact source and artifact trees below",
+  "tools": {
+    "node": "v24.16.0",
+    "sizeLimit": "12.0.0",
+    "esbuild": "0.27.0"
+  },
+  "measurement": {
+    "unit": "bytes",
+    "compression": "Brotli",
+    "minified": true,
+    "production": true,
+    "command": "pnpm exec size-limit --json",
+    "moduleResolution": "tsconfigRaw.compilerOptions={} with distributed input verification"
+  },
+  "hashAlgorithm": "sha256 of each sorted relative file path, NUL, file bytes, NUL",
+  "candidateSources": {
+    "files": 62,
+    "sha256": "4858a1dba8bcf29ef1c6a31d0023b92470c44af8d2518da342af9f3327ab04d7"
+  },
+  "candidateArtifacts": {
+    "files": 168,
+    "sha256": "35df017441b47c6d9465e8d9f6801da04710e80e002731886a2bf5c957359360"
+  },
+  "results": [
+    {
+      "name": "Fict package (ESM)",
+      "baselineBytes": 24421,
+      "candidateBytes": 26294,
+      "deltaBytes": 1873,
+      "limitBytes": 26500
+    },
+    {
+      "name": "Fict package (CJS)",
+      "baselineBytes": 44062,
+      "candidateBytes": 45141,
+      "deltaBytes": 1079,
+      "limitBytes": 45300
+    },
+    {
+      "name": "Fict package async memo (ESM)",
+      "baselineBytes": 8365,
+      "candidateBytes": 8365,
+      "deltaBytes": 0,
+      "limitBytes": 8500
+    },
+    {
+      "name": "Fict package sync memo (ESM)",
+      "baselineBytes": 4923,
+      "candidateBytes": 4923,
+      "deltaBytes": 0,
+      "limitBytes": 5000
+    },
+    {
+      "name": "Fict package resource (ESM)",
+      "baselineBytes": 21362,
+      "candidateBytes": 22085,
+      "deltaBytes": 723,
+      "limitBytes": 22200
+    }
+  ],
+  "interpretation": "Public eager hydration adds transparent host and paired-range claiming, strict failure propagation, connected fragment ownership and structural repair. Complete ESM adds 1873 B, CJS 1079 B, and the Resource import with shared Suspense support 723 B. Their budgets record this measured functionality cost. Selective sync and async memo imports remain unchanged with unchanged budgets. These are package-size results, not CPU performance measurements.",
+  "verifiedSourceMapEntries": 98
+}

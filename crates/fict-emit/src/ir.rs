@@ -1078,6 +1078,9 @@ pub struct EmitProgram {
     pub strict_rejected: bool,
     /// Same-module hook return shapes consumed while building this plan.
     pub local_hook_returns: BTreeMap<BindingId, ImportedHookReturn>,
+    /// Sorted semantic identities whose JSX value reads need a deferred consumer.
+    /// This includes transparent component props objects, which require no read rewrite.
+    pub jsx_getter_bindings: Vec<BindingId>,
     pub module: EmitModulePlan,
     pub imports: Vec<RuntimeImportIntent>,
     pub functions: Vec<EmitFunction>,

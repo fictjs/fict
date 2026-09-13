@@ -829,7 +829,7 @@ describe('DOM Module', () => {
 
       function Child() {
         childRenders++
-        return template('<button>client</button>')()
+        return createElement({ type: 'button', props: { children: 'client' } })
       }
       __fictSetComponentMeta(Child, { id: 'Child@test' })
 
@@ -838,8 +838,8 @@ describe('DOM Module', () => {
         container,
       )
 
-      expect(childHost?.isConnected).toBe(false)
-      expect(container.firstElementChild?.tagName).toBe('BUTTON')
+      expect(container.firstElementChild).toBe(childHost)
+      expect(childHost?.firstElementChild?.tagName).toBe('BUTTON')
       expect(container.textContent).toBe('client')
       expect(childRenders).toBe(1)
 

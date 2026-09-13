@@ -2,6 +2,15 @@ import { isReactive, setEventErrorRoot } from './binding'
 import { createElement } from './dom'
 import { createEffect } from './effect'
 import {
+  claimErrorBoundaryRange,
+  finalizePendingHydrationRepair,
+  getPendingHydrationRepairToken,
+  hydratedRangeFragment,
+  isHydrationFailure,
+  withHydrationRange,
+  withoutHydrationClaims,
+} from './hydration'
+import {
   createRootContext,
   destroyRoot,
   flushOnMount,
@@ -31,10 +40,14 @@ export function ErrorBoundary(props: ErrorBoundaryProps): FictNode {
   const hostRoot = getCurrentRoot()
   const boundaryRoot = createRootContext(hostRoot)
   const markerOwnerDocument = hostRoot?.ownerDocument ?? document
+  const hydratedRange = claimErrorBoundaryRange()
+  const hydrationRepair = hydratedRange ? null : getPendingHydrationRepairToken()
+  let initialHydration = !!hydratedRange
   const fragment = markerOwnerDocument.createDocumentFragment()
-  const startMarker = markerOwnerDocument.createComment('fict:error-boundary-start')
-  const marker = markerOwnerDocument.createComment('fict:error-boundary')
-  fragment.append(startMarker, marker)
+  const startMarker =
+    hydratedRange?.start ?? markerOwnerDocument.createComment('fict:error-boundary-start')
+  const marker = hydratedRange?.end ?? markerOwnerDocument.createComment('fict:error-boundary')
+  if (!hydratedRange) fragment.append(startMarker, marker)
 
   let cleanup: (() => void) | undefined
   let activeNodes: Node[] = []
@@ -82,6 +95,10 @@ export function ErrorBoundary(props: ErrorBoundaryProps): FictNode {
     if (generation !== renderGeneration) return
 
     if (value == null || value === false) {
+      if (initialHydration) {
+        initialHydration = false
+        withHydrationRange(startMarker.nextSibling, marker, markerOwnerDocument, () => {})
+      }
       return
     }
 
@@ -119,7 +136,15 @@ export function ErrorBoundary(props: ErrorBoundaryProps): FictNode {
         __fictPushSSRBoundary(streamBoundaryId)
         streamBoundaryPushed = true
       }
-      const output = untrack(() => createElement(value))
+      const hydrate = initialHydration
+      initialHydration = false
+      const output = untrack(() =>
+        hydrate
+          ? withHydrationRange(startMarker.nextSibling, marker, markerOwnerDocument, () =>
+              createElement(value),
+            )
+          : withoutHydrationClaims(() => createElement(value)),
+      )
       nodes = toNodeArray(output, markerOwnerDocument)
       if (generation !== renderGeneration) {
         destroyAttempt()
@@ -160,6 +185,7 @@ export function ErrorBoundary(props: ErrorBoundaryProps): FictNode {
   }
 
   const captureError = (err: unknown) => {
+    if (isHydrationFailure(err)) throw err
     if (disposed) return
     if (disposing) {
       notifyError(err)
@@ -248,5 +274,7 @@ export function ErrorBoundary(props: ErrorBoundaryProps): FictNode {
     })
   }
 
-  return fragment
+  return hydratedRange
+    ? hydratedRangeFragment(startMarker, marker)
+    : finalizePendingHydrationRepair(hydrationRepair, fragment)
 }

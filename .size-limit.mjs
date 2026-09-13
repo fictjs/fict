@@ -14,22 +14,22 @@ export default [
   {
     name: 'Fict package (ESM)',
     path: 'packages/fict/dist/index.js',
-    // Distributed Brotli: causal transitions 24,424 B; see its dated archive.
-    limit: '24.6 KB',
+    // Eager async hydration: 26,294 B; see async-ssr-hydration-size archive.
+    limit: '26.5 KB',
     modifyEsbuildConfig: production,
   },
   {
     name: 'Fict package (CJS)',
     path: 'packages/fict/dist/index.cjs',
-    // Distributed CJS includes advanced APIs: causal transitions 44,015 B.
-    limit: '44.2 KB',
+    // Distributed CJS includes advanced APIs and hydration: 45,141 B.
+    limit: '45.3 KB',
     modifyEsbuildConfig: production,
   },
   {
     name: 'Fict package async memo (ESM)',
     path: 'packages/fict/dist/advanced.js',
     import: '{ createAsyncMemo }',
-    // Causal transitions: 8,369 B including generation readiness accounting.
+    // Eager hydration leaves this selective import unchanged at 8,365 B.
     limit: '8.5 KB',
     modifyEsbuildConfig: production,
   },
@@ -37,7 +37,7 @@ export default [
     name: 'Fict package sync memo (ESM)',
     path: 'packages/fict/dist/index.js',
     import: '{ createMemo }',
-    // Causal transitions: 4,920 B; keep sync entry overhead separately visible.
+    // Eager hydration leaves this selective import unchanged at 4,923 B.
     limit: '5 KB',
     modifyEsbuildConfig: production,
   },
@@ -45,8 +45,8 @@ export default [
     name: 'Fict package resource (ESM)',
     path: 'packages/fict/dist/plus.js',
     import: '{ resource }',
-    // Causal transitions: 21,362 B including shared reader readiness leases.
-    limit: '21.5 KB',
+    // Resource and its shared Suspense hydration support: 22,085 B.
+    limit: '22.2 KB',
     modifyEsbuildConfig: production,
   },
 ]

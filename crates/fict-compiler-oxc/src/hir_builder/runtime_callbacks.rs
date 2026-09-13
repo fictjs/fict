@@ -78,7 +78,7 @@ impl RuntimeImports {
         match name.as_str() {
             "createAsyncMemo" => Some(RuntimeCallbackHost::AsyncComputation),
             "createSelector" => Some(RuntimeCallbackHost::Selector),
-            "render" => Some(RuntimeCallbackHost::Render),
+            "render" | "hydrate" => Some(RuntimeCallbackHost::Render),
             "untrack" => Some(RuntimeCallbackHost::Snapshot),
             "createEffect" | "createMemo" | "createRenderEffect" => {
                 Some(RuntimeCallbackHost::Computation)

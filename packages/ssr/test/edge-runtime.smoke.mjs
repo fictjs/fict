@@ -1,5 +1,9 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
+import * as runtime from '../../runtime/dist/index.js'
+import * as advanced from '../../runtime/dist/advanced.js'
+import * as ssr from '../dist/index.js'
+import { verifyAsyncRuntime } from './async-runtime-contract.mjs'
 
 function assertEdgeGraphHasNoAsyncHooks(entryUrl) {
   const pending = [entryUrl]
@@ -40,6 +44,7 @@ async function readReadableStream(stream) {
 async function run() {
   assertEdgeGraphHasNoAsyncHooks(new URL('../dist/index.js', import.meta.url))
   assertEdgeGraphHasNoAsyncHooks(new URL('../dist/experimental.js', import.meta.url))
+  await verifyAsyncRuntime(runtime, advanced, ssr)
 
   const streamHtml = await readReadableStream(
     renderToStream(

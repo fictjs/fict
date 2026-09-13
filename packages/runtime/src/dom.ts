@@ -44,6 +44,8 @@ import { assertValidDOMAttributeName, assertValidDOMElementName } from './dom-na
 import { __fictPushContext, __fictPopContext, __fictGetCurrentComponentId } from './hooks'
 import {
   claimNodes,
+  claimEagerComponentHost,
+  hydrateFragment,
   claimResumableScopeHost,
   claimText,
   abandonPendingHydrationRepair,
@@ -343,12 +345,44 @@ export function hydrateComponent(
   container: HTMLElement,
   options: HydrateComponentOptions = {},
 ): () => void {
+  return hydrateRoot(view, container, options, false)
+}
+
+/**
+ * Attach a client view to completed server output. For shell streams, wait for
+ * the response and its patches before hydrating. Pass the same initial data on
+ * both sides, or let an explicitly pending client computation show its fallback.
+ * The returned function disposes the client graph and unmounts its container.
+ */
+export function hydrate(
+  view: () => FictNode,
+  container: HTMLElement,
+  options: HydrateComponentOptions = {},
+): () => void {
+  return hydrateRoot(() => createElement(view()), container, options, true)
+}
+
+function hydrateRoot(
+  view: () => FictNode | void,
+  container: HTMLElement,
+  options: HydrateComponentOptions,
+  clearOnDispose: boolean,
+): () => void {
   const root = createRootContext()
   root.ownerDocument = container.ownerDocument ?? document
   const prev = pushRoot(root)
   let completed = false
   let hydrationEntered = false
-  let teardown = () => destroyRoot(root)
+  let teardown = () => {
+    try {
+      destroyRoot(root)
+    } finally {
+      if (clearOnDispose && renderOwners.get(container) === root) {
+        renderOwners.delete(container)
+        container.replaceChildren()
+      }
+    }
+  }
 
   try {
     try {
@@ -365,6 +399,7 @@ export function hydrateComponent(
           onHydrationIssue: options.onHydrationIssue,
           strictHydration: options.strictHydration,
         },
+        false,
       )
     } finally {
       if (hydrationEntered) {
@@ -374,6 +409,7 @@ export function hydrateComponent(
     }
 
     container.setAttribute('data-fict-fine-grained', '1')
+    if (clearOnDispose) renderOwners.set(container, root)
     teardown = __fictRegisterResumedScopeTeardown(container, teardown)
     flushOnMount(root)
 
@@ -559,6 +595,7 @@ function createElementWithContext(
   node: FictNode,
   namespace: NamespaceContext,
   ownerDocument: Document,
+  componentHostClaimed = false,
 ): DOMElement {
   // Already a DOM node - pass through
   if (isNodeLike(node, ownerDocument)) {
@@ -610,9 +647,11 @@ function createElementWithContext(
   // Array - create fragment
   if (Array.isArray(node)) {
     const frag = ownerDocument.createDocumentFragment()
-    for (const child of node) {
-      appendChildNode(frag, child, namespace, ownerDocument)
+    const append = () => {
+      for (const child of node) appendChildNode(frag, child, namespace, ownerDocument)
     }
+    if (isHydratingActive()) return hydrateFragment(ownerDocument, append)
+    append()
     return frag
   }
 
@@ -633,10 +672,17 @@ function createElementWithContext(
     const component = vnode.type
     const componentMeta = __fictGetComponentMeta(component)
     let hydrationRepairToken: object | null = null
-    if (isHydratingActive() && componentMeta?.id) {
-      const scopeHost = claimResumableScopeHost(componentMeta.id)
-      if (scopeHost) {
-        return scopeHost as DOMElement
+    if (isHydratingActive() && !componentHostClaimed) {
+      if (componentMeta?.id) {
+        const scopeHost = claimResumableScopeHost(componentMeta.id)
+        if (scopeHost) return scopeHost as DOMElement
+      }
+      const eagerHost = claimEagerComponentHost()
+      if (eagerHost) {
+        withHydration(eagerHost, () =>
+          createElementWithContext(node, namespace, ownerDocument, true),
+        )
+        return eagerHost as DOMElement
       }
       hydrationRepairToken = getPendingHydrationRepairToken()
     }
@@ -769,6 +815,11 @@ function createElementWithContext(
   if (vnode.type === Fragment) {
     const frag = ownerDocument.createDocumentFragment()
     const children = vnode.props?.children as FictNode | FictNode[] | undefined
+    if (isHydratingActive()) {
+      return hydrateFragment(ownerDocument, () =>
+        appendChildren(frag, children, namespace, ownerDocument),
+      )
+    }
     appendChildren(frag, children, namespace, ownerDocument)
     return frag
   }
@@ -991,7 +1042,7 @@ function appendChildNode(
 
   // Handle DocumentFragment manually to avoid JSDOM issues
   if (domNode.nodeType === 11) {
-    const children = Array.from(domNode.childNodes)
+    const children = toNodeArray(domNode, ownerDocument)
     for (const node of children) {
       appendChildNode(parent, node as FictNode, namespace, parentOwnerDocument)
     }
@@ -1002,7 +1053,10 @@ function appendChildNode(
     parent.ownerDocument.adoptNode(domNode)
   }
 
-  if (isHydratingActive() && domNode.parentNode === parent) {
+  if (
+    isHydratingActive() &&
+    (domNode.parentNode === parent || (parent.nodeType === 11 && domNode.parentNode))
+  ) {
     return
   }
 

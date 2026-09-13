@@ -25,7 +25,7 @@ not only an analysis pass, an API sketch, or a passing unrelated test suite.
 | A4   | Resource uses the shared async computation protocol while retaining its data/cache policies.                                                                          | Existing resource/cache/TTL/SWR/LRU/sharing/optimistic/SSR regressions and new graph-composition coverage.                                                                                    | Complete |
 | A5   | Transition readiness accounts for registered downstream async work caused by updates, including indirectly triggered requests.                                        | Overlapping transitions, unrelated roots, stale completions, callback failures, disposal, and the indirect-resource regression.                                                               | Complete |
 | A6   | Compiler-owned async declarations, types, runtime helpers, and cross-module contracts use the same graph protocol.                                                    | Native strict compilation, source maps, metadata/ABI checks, reactive input updates and lifecycle checks; explicit supported continuation boundaries.                                         | Complete |
-| A7   | Async graph behavior works through SSR, streaming, hydration, and request isolation.                                                                                  | Real server/browser tests covering initial pending, refresh, errors, cancellation, serialization and compatible hydration.                                                                    | Pending  |
+| A7   | Async graph behavior works through SSR, streaming, hydration, and request isolation.                                                                                  | Real server/browser tests covering initial pending, refresh, errors, cancellation, serialization and compatible hydration.                                                                    | Complete |
 | A8   | Representative applications and documentation demonstrate the unified model and its migration boundaries.                                                             | End-to-end async application scenarios, usable examples, API/package checks and synchronous performance regression checks.                                                                    | Pending  |
 | Q1   | The final stack satisfies each row against the current source and artifacts.                                                                                          | Full applicable compiler/runtime/SSR/bundler/strict/browser gates, per-item commits, fresh final audit, and explicit evidence for every completion claim.                                     | Pending  |
 
@@ -267,3 +267,48 @@ verifies 98 source-map entries and source/artifact identities. Distributed CJS
 adds 47 B Brotli and the sync memo import adds 3 B; all five existing budgets
 pass unchanged. SSR streaming/hydration qualification remains A7, and CPU
 performance remains G4/G5/A8.
+
+## A7: async SSR, streaming and eager hydration
+
+The public Core `hydrate` API attaches client ownership to completed server
+output. Transparent eager component hosts tolerate independent minification;
+Preview hosts retain their stable resume-entry identity. Paired Suspense,
+ErrorBoundary and child ranges preserve owned DOM through initial pending,
+refresh and error recovery. Fragment claims keep nodes connected, including
+focus, input values and selection. Strict hydration failures escape application
+ErrorBoundary handlers; repair mode rebuilds damaged ranges within their owner.
+Independent roots keep separate hydration options and cleanup ownership.
+
+Server and client share the async readiness protocol. Requests own their graph,
+AbortSignals and iterator cleanup. Out-of-order completions and disconnected
+transports cannot publish into another request. Applications hand off explicit
+JSON-safe initial values after the shell stream and its patches finish; this does
+not resume native continuations or serialize graph nodes. Preview serialization
+of compiler async slots fails explicitly. The
+[SSR/hydration guide](./async-ssr-hydration.md) documents that handoff and its limits.
+
+Native VNode and namespace fallback output now wraps JSX getter bindings using
+their original semantic identities, recorded before AST cloning. The
+[code-generation review](./benchmarks/async-ssr-codegen-review-2026-09-13.json)
+records 108 primary and 81 replay output changes. Baseline output digests were
+reproduced before comparison: 358 reactive consumers and their helper imports
+are added, with no other AST changes or removed consumers. All 3,172 input
+statuses and diagnostics remain unchanged. Frozen Babel outputs and semantic
+expectations are preserved; SSR text comparisons canonicalize the new internal
+child-start marker alongside the existing child/slot markers.
+
+Validation: 457 native tests, 1,542 runtime tests (8 existing skips), 402 SSR
+tests, and isolated Node ESM, edge ESM and CJS async contract probes pass.
+Both frozen replay suites and 72 corpus/provenance/DOM/SSR oracle checks pass.
+Real Chromium and HTTP
+tests cover shell-first output, overlapping requests, minified client hydration,
+DOM identity, refresh, rejection, unmount and disconnect cancellation. The browser
+gate runs in root E2E CI/release validation. Runtime production/test typechecks,
+Rust Clippy with all targets/features, API boundaries and compiler guardrails pass.
+
+The [size archive](./benchmarks/async-ssr-hydration-size-2026-09-13.json) verifies
+98 source-map entries and actual distributed inputs. Eager hydration adds 1,873 B
+Brotli to complete ESM, 1,079 B to CJS, and 723 B to the Resource import with
+shared Suspense support. Those budgets record the measured API cost. Selective
+sync and async memo imports remain unchanged at 4,923 and 8,365 B. Application
+and CPU qualification remain A8/G4/G5; no historical benchmark is relabeled.

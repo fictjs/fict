@@ -80,6 +80,39 @@ impl SemanticIdentities {
         self.symbols.get(&symbol).copied()
     }
 
+    /// Record original spans before namespace fallbacks clone AST nodes and erase
+    /// OXC reference ids. Binding identity is resolved once on the source program.
+    pub(super) fn binding_reference_spans(
+        &self,
+        program: &Program<'_>,
+        bindings: &[BindingId],
+    ) -> BTreeSet<(u32, u32)> {
+        struct Reads<'s> {
+            identities: &'s SemanticIdentities,
+            bindings: &'s [BindingId],
+            spans: BTreeSet<(u32, u32)>,
+        }
+        impl<'a> Visit<'a> for Reads<'_> {
+            fn visit_identifier_reference(&mut self, identifier: &IdentifierReference<'a>) {
+                if self
+                    .identities
+                    .binding_for_reference(identifier)
+                    .is_some_and(|binding| self.bindings.binary_search(&binding).is_ok())
+                {
+                    self.spans
+                        .insert((identifier.span.start, identifier.span.end));
+                }
+            }
+        }
+        let mut reads = Reads {
+            identities: self,
+            bindings,
+            spans: BTreeSet::new(),
+        };
+        reads.visit_program(program);
+        reads.spans
+    }
+
     fn pattern_bindings<'a>(&self, pattern: &BindingPattern<'a>) -> Vec<PatternBindingIdentity> {
         let mut collector = PatternBindingCollector {
             identities: self,

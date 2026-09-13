@@ -78,9 +78,9 @@ explicit disposer is required.
 
 Preview resumability cannot serialize async readiness, generations or transport
 ownership. Enabling that unfrozen ABI with async slots reports
-`FICT-PREVIEW-ASYNC`; use eager Core output. Stable SSR, streaming and hydration
-qualification is tracked separately in A7 of the
-[implementation plan](./reactivity-implementation-plan.md).
+`FICT-PREVIEW-ASYNC`; use eager Core output. The
+[SSR and hydration guide](./async-ssr-hydration.md) describes request ownership,
+stream handoff, explicit initial data and public `hydrate`.
 
 ## Compiler and package contract
 

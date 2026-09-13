@@ -4,6 +4,14 @@ import { createElement } from './dom'
 import { isCommentLike } from './dom-guards'
 import { createEffect } from './effect'
 import {
+  claimSuspenseRange,
+  hydratedRangeFragment,
+  withHydrationRange,
+  withoutHydrationClaims,
+  getPendingHydrationRepairToken,
+  finalizePendingHydrationRepair,
+} from './hydration'
+import {
   createRootContext,
   destroyRoot,
   flushOnMount,
@@ -152,7 +160,14 @@ export function Suspense(props: SuspenseProps): FictNode {
     const generation = renderGeneration + 1
     cleanupActive()
 
-    if (disposed || generation !== renderGeneration || view == null || view === false) {
+    if (disposed || generation !== renderGeneration) {
+      return
+    }
+    if (view == null || view === false) {
+      if (initialHydration) {
+        initialHydration = false
+        withHydrationRange(startMarker.nextSibling, endMarker, markerOwnerDocument, () => {})
+      }
       return
     }
     const isCurrent = () => !disposed && generation === renderGeneration
@@ -190,7 +205,15 @@ export function Suspense(props: SuspenseProps): FictNode {
       if (isMain) renderingMain++
       let output: ReturnType<typeof createElement>
       try {
-        output = untrack(() => createElement(view))
+        const hydrate = initialHydration
+        initialHydration = false
+        output = untrack(() =>
+          hydrate
+            ? withHydrationRange(startMarker.nextSibling, endMarker, markerOwnerDocument, () =>
+                createElement(view),
+              )
+            : withoutHydrationClaims(() => createElement(view)),
+        )
       } finally {
         if (isMain) renderingMain--
       }
@@ -248,11 +271,17 @@ export function Suspense(props: SuspenseProps): FictNode {
     if (isMain) flushDeferredMounts(mountBoundary)
   }
 
+  const hydratedRange = claimSuspenseRange()
+  const hydrationRepair = hydratedRange ? null : getPendingHydrationRepairToken()
+  let initialHydration = !!hydratedRange
   const fragment = markerOwnerDocument.createDocumentFragment()
-  const startMarker = markerOwnerDocument.createComment('fict:suspense-start')
-  const endMarker = markerOwnerDocument.createComment('fict:suspense-end')
-  fragment.appendChild(startMarker)
-  fragment.appendChild(endMarker)
+  const startMarker =
+    hydratedRange?.start ?? markerOwnerDocument.createComment('fict:suspense-start')
+  const endMarker = hydratedRange?.end ?? markerOwnerDocument.createComment('fict:suspense-end')
+  if (!hydratedRange) {
+    fragment.appendChild(startMarker)
+    fragment.appendChild(endMarker)
+  }
   let cleanup: (() => void) | undefined
   let activeNodes: Node[] = []
   let streamBoundaryId: string | null = null
@@ -538,5 +567,7 @@ export function Suspense(props: SuspenseProps): FictNode {
     })
   }
 
-  return fragment
+  return hydratedRange
+    ? hydratedRangeFragment(startMarker, endMarker)
+    : finalizePendingHydrationRepair(hydrationRepair, fragment)
 }

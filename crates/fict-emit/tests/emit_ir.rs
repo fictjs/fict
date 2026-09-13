@@ -84,6 +84,7 @@ fn program() -> EmitProgram {
         preview_plan: None,
         strict_rejected: false,
         local_hook_returns: Default::default(),
+        jsx_getter_bindings: Vec::new(),
         module: EmitModulePlan {
             source_fragment: None,
             reserved_names: vec!["createSignal".into(), "value".into()],

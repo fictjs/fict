@@ -257,9 +257,10 @@ function assertFixture(fixture) {
 }
 
 function assertStreamIncludes(html, expected, context) {
+  const semanticHtml = normalizeCompilerStreamMarkers(html)
   for (const value of expected) {
     assert.equal(typeof value, 'string', `${context}: expected substring`)
-    assert.ok(html.includes(value), `${context}: missing ${JSON.stringify(value)}`)
+    assert.ok(semanticHtml.includes(value), `${context}: missing ${JSON.stringify(value)}`)
   }
 }
 
@@ -268,6 +269,7 @@ function normalizeCompilerStreamMarkers(html) {
     .replaceAll('<!--fict:slot:start-->', '')
     .replaceAll('<!--fict:slot:end-->', '')
     .replaceAll('<!--fict:child-->', '')
+    .replaceAll('<!--fict:child-start-->', '')
     .replaceAll('<!---->', '')
 }
 
@@ -346,7 +348,7 @@ async function executeSuspenseStream(module, App, fixture) {
     )
     for (const value of fixture.expectedStream.shellExcludes) {
       assert.equal(
-        shellHtml.includes(value),
+        normalizeCompilerStreamMarkers(shellHtml).includes(value),
         false,
         `${fixture.id}: resolved content leaked into shell: ${JSON.stringify(value)}`,
       )

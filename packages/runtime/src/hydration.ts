@@ -37,6 +37,7 @@ const isDev =
 
 const hydrationStack: HydrationContext[] = []
 let hydrationClaimSuppressionDepth = 0
+let hydrationFailures: WeakSet<object> | undefined
 const HYDRATED_FRAGMENT_NODES = Symbol.for('fict:hydration-fragment-nodes')
 export const HYDRATED_TEMPLATE_NODE = Symbol.for('fict:hydration-template-node')
 type HydratedFragment = DocumentFragment & { [HYDRATED_FRAGMENT_NODES]?: Node[] }
@@ -53,15 +54,17 @@ export function withHydration<T>(
   root: ParentNode & Node,
   fn: () => T,
   options: HydrationOptions = {},
+  inheritOptions = true,
 ): T {
   const owner = root.ownerDocument ?? document
+  const parent = inheritOptions ? hydrationStack[hydrationStack.length - 1] : undefined
   const context: HydrationContext = {
     cursor: root.firstChild,
     boundary: null,
     owner,
     parent: root,
-    onIssue: options.onHydrationIssue,
-    strictHydration: options.strictHydration,
+    onIssue: options.onHydrationIssue ?? parent?.onIssue,
+    strictHydration: options.strictHydration ?? parent?.strictHydration,
   }
   hydrationStack.push(context)
   let completed = false
@@ -292,8 +295,134 @@ export function claimResumableScopeHost(expectedType: string): Element | null {
   return host
 }
 
+/**
+ * Eager hosts are transparent, positionally matched containers. Their descendants
+ * are checked normally; function names are only diagnostics and may change when
+ * server and client bundles are independently minified. Only opaque resumable
+ * hosts need the stable component identity contract above.
+ */
+export function claimEagerComponentHost(): Element | null {
+  const ctx = hydrationStack[hydrationStack.length - 1]
+  if (!ctx || hydrationClaimSuppressionDepth > 0 || ctx.pendingRepair) return null
+  const cursor = ctx.cursor
+  if (!cursor || cursor === ctx.boundary || cursor.nodeType !== 1) return null
+  const host = cursor as Element
+  if (
+    host.localName.toLowerCase() !== 'fict-host' ||
+    !host.hasAttribute('data-fict-host') ||
+    !host.getAttribute('data-fict-s') ||
+    host.hasAttribute('data-fict-h')
+  )
+    return null
+  ctx.cursor = host.nextSibling
+  return host
+}
+
+/** Claim a balanced server Suspense range without moving its live DOM. */
+export function claimSuspenseRange(): { start: Comment; end: Comment } | null {
+  return claimMarkerRange('fict:suspense-start', 'fict:suspense-end', 'Suspense', true)
+}
+
+export function claimChildRange(): { start: Comment; end: Comment } | null {
+  return claimMarkerRange('fict:child-start', 'fict:child', 'reactive child', false)
+}
+
+export function claimErrorBoundaryRange(): { start: Comment; end: Comment } | null {
+  const start = hydrationStack[hydrationStack.length - 1]?.cursor
+  // Streamed error boundaries use the shared patch protocol's range markers.
+  const streamed =
+    start?.nodeType === 8 && (start as Comment).data.startsWith('fict:suspense-start:')
+  return streamed
+    ? claimMarkerRange('fict:suspense-start', 'fict:suspense-end', 'ErrorBoundary', true)
+    : claimMarkerRange('fict:error-boundary-start', 'fict:error-boundary', 'ErrorBoundary', true)
+}
+
+function claimMarkerRange(
+  startPrefix: string,
+  endPrefix: string,
+  label: string,
+  required: boolean,
+): { start: Comment; end: Comment } | null {
+  const ctx = hydrationStack[hydrationStack.length - 1]
+  if (!ctx || hydrationClaimSuppressionDepth > 0 || ctx.pendingRepair) return null
+  const start = ctx.cursor
+  const isMarker = (data: string, prefix: string) =>
+    data === prefix || data.startsWith(`${prefix}:`)
+  if (!required && !(start?.nodeType === 8 && isMarker((start as Comment).data, startPrefix)))
+    return null
+  if (start?.nodeType === 8 && isMarker((start as Comment).data, startPrefix)) {
+    const endings: string[] = []
+    for (
+      let cursor: Node | null = start;
+      cursor && cursor !== ctx.boundary;
+      cursor = cursor.nextSibling
+    ) {
+      if (cursor.nodeType !== 8) continue
+      const data = (cursor as Comment).data
+      if (isMarker(data, startPrefix)) endings.push(endPrefix + data.slice(startPrefix.length))
+      else if (isMarker(data, endPrefix)) {
+        if (endings.pop() !== data) break
+        if (!endings.length) {
+          ctx.cursor = cursor.nextSibling
+          return { start: start as Comment, end: cursor as Comment }
+        }
+      }
+    }
+  }
+  const repair = captureHydrationRepairPlan(ctx, start, Number.POSITIVE_INFINITY)
+  emitHydrationIssue(ctx, {
+    code: 'node_type_mismatch',
+    message: `[fict/hydration] Missing or unbalanced server ${label} markers.`,
+    expected: `a matching ${label} start/end range`,
+    actual: start ? describeNode(start) : null,
+    node: start,
+  })
+  ctx.pendingRepair = repair
+  return null
+}
+
+/** Represent claimed live nodes using the existing hydration fragment ABI. */
+export function hydratedRangeFragment(start: Comment, end: Comment): DocumentFragment {
+  const nodes: Node[] = []
+  for (let cursor: Node | null = start; cursor; cursor = cursor.nextSibling) {
+    nodes.push(cursor)
+    if (cursor === end) break
+  }
+  return createHydratedFragment(start.ownerDocument, nodes)
+}
+
+/** Gather fragment claims while leaving the live server nodes in their parent. */
+export function hydrateFragment(owner: Document, render: () => void): DocumentFragment {
+  const ctx = hydrationStack[hydrationStack.length - 1]!
+  const offset = ctx.cursor ? childOffset(ctx.parent, ctx.cursor) : ctx.parent.childNodes.length
+  render()
+  const nodes: Node[] = []
+  for (
+    let cursor: ChildNode | null = ctx.parent.childNodes.item(offset);
+    cursor && cursor !== ctx.cursor;
+    cursor = cursor.nextSibling
+  ) {
+    nodes.push(cursor)
+  }
+  return createHydratedFragment(owner, nodes)
+}
+
+export function isHydrationFailure(value: unknown): boolean {
+  return hydrationFailures?.has(value as object) ?? false
+}
+
 export function isHydratingActive(): boolean {
   return hydrationStack.length > 0 && hydrationClaimSuppressionDepth === 0
+}
+
+/** Build a new view without claiming DOM owned by the enclosing hydration frame. */
+export function withoutHydrationClaims<T>(fn: () => T): T {
+  hydrationClaimSuppressionDepth++
+  try {
+    return fn()
+  } finally {
+    hydrationClaimSuppressionDepth--
+  }
 }
 
 /** @internal Complete a scope-mismatch repair at the component invocation boundary. */
@@ -473,6 +602,7 @@ function emitHydrationIssue(
   if (ctx.strictHydration) {
     const error = new Error(normalized.message) as Error & { issue?: HydrationIssue }
     error.issue = normalized
+    ;(hydrationFailures ??= new WeakSet()).add(error)
     throw error
   }
 }

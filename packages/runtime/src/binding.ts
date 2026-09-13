@@ -26,6 +26,10 @@ import { assertValidDOMAttributeName } from './dom-names'
 import { createRenderBinding, createRenderTransaction } from './effect'
 import {
   HYDRATED_TEMPLATE_NODE,
+  claimChildRange,
+  getPendingHydrationRepairToken,
+  suppressHydrationClaimsForPendingRepair,
+  finalizePendingHydrationRepair,
   withHydration,
   withHydrationRange,
   isHydratingActive,
@@ -50,7 +54,7 @@ import {
 } from './lifecycle'
 import { toNodeArray, removeNodes, insertNodesBefore } from './node-ops'
 import { runOutsideComponentRender } from './render-phase'
-import { __fictIsHydrating } from './resume'
+import { __fictIsHydrating, __fictIsSSR } from './resume'
 import { batch } from './scheduler'
 import {
   computed,
@@ -1734,9 +1738,31 @@ export function createChildBinding(
   getValue: () => FictNode,
   createElementFn: CreateElementFn,
 ): BindingHandle {
-  const marker = (parent.ownerDocument ?? document).createComment('fict:child')
-  parent.appendChild(marker)
+  const ownerDocument = parent.ownerDocument ?? document
+  let hydration = claimChildRange()
+  const hydrationRepair = hydration ? null : getPendingHydrationRepairToken()
+  const repairFragment = hydrationRepair ? ownerDocument.createDocumentFragment() : undefined
+  const start =
+    hydration?.start ??
+    (__fictIsSSR() ? ownerDocument.createComment('fict:child-start') : undefined)
+  const marker = hydration?.end ?? ownerDocument.createComment('fict:child')
+  if (!hydration) {
+    const markerParent = repairFragment ?? parent
+    if (start) markerParent.appendChild(start)
+    markerParent.appendChild(marker)
+  }
+  const releaseHydration = () => {
+    if (!hydration) return
+    let node = hydration.start.nextSibling
+    while (node && node !== hydration.end) {
+      const next = node.nextSibling
+      node.parentNode?.removeChild(node)
+      node = next
+    }
+    hydration = null
+  }
   const hostRoot = getCurrentRoot()
+  let initializingHydration = !!hydration
   let disposed = false
   let activeRelease: Cleanup | undefined
   let preparedRoot: RootContext | undefined
@@ -1762,7 +1788,8 @@ export function createChildBinding(
     }
   }
 
-  let dispose: Cleanup
+  let dispose: Cleanup | undefined
+  const restoreHydration = suppressHydrationClaimsForPendingRepair(hydrationRepair)
   try {
     dispose = createRenderBinding(prepare, value => {
       if (disposed) {
@@ -1787,13 +1814,26 @@ export function createChildBinding(
         }
       }
       try {
+        const initialRange = hydration
+        const hydrating = !!initialRange && initializingHydration
+        if (!hydrating) releaseHydration()
         // Skip if value is null/undefined/false
         if (value == null || value === false) {
+          if (hydrating)
+            withHydrationRange(initialRange!.start.nextSibling, marker, ownerDocument, () => {})
+          hydration = null
           release()
           return
         }
 
-        const output = untrack(() => createElementFn(value))
+        const output = untrack(() =>
+          hydrating
+            ? withHydrationRange(initialRange!.start.nextSibling, marker, ownerDocument, () =>
+                createElementFn(value),
+              )
+            : createElementFn(value),
+        )
+        hydration = null
         nodes = toNodeArray(output, marker.ownerDocument ?? parent.ownerDocument ?? document)
         const parentNode = marker.parentNode as (ParentNode & Node) | null
         if (parentNode) {
@@ -1822,24 +1862,35 @@ export function createChildBinding(
       }
       return committed ? release : undefined
     })
+    restoreHydration()
+    if (repairFragment) finalizePendingHydrationRepair(hydrationRepair, repairFragment)
   } catch (error) {
     try {
-      releasePrepared()
+      try {
+        dispose?.()
+      } finally {
+        releasePrepared()
+      }
     } finally {
       try {
         activeRelease?.()
       } finally {
+        releaseHydration()
+        start?.parentNode?.removeChild(start)
         marker.parentNode?.removeChild(marker)
       }
     }
     throw error
+  } finally {
+    restoreHydration()
+    initializingHydration = false
   }
 
   const handleDispose = () => {
     if (disposed) return
     disposed = true
     try {
-      dispose()
+      dispose!()
     } finally {
       try {
         releasePrepared()
@@ -1847,6 +1898,8 @@ export function createChildBinding(
         try {
           activeRelease?.()
         } finally {
+          releaseHydration()
+          start?.parentNode?.removeChild(start)
           marker.parentNode?.removeChild(marker)
         }
       }

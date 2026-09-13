@@ -62,7 +62,8 @@ export { Fragment } from './jsx'
 // DOM Rendering
 // ============================================================================
 
-export { createElement, render } from './dom'
+export { createElement, render, hydrate } from './dom'
+export type { HydrationOptions, HydrationIssue, HydrationIssueHandler } from './hydration'
 export { createPortal } from './binding'
 export { ErrorBoundary } from './error-boundary'
 export { Suspense, createSuspenseToken } from './suspense'

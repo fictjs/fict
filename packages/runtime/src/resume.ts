@@ -1702,6 +1702,11 @@ function serializeScopeRecord(record: ScopeRecord): ScopeSnapshot {
 }
 
 function serializeSlots(ctx: HookContext, seen = new Map<object, string>()): SlotSnapshot[] {
+  if (ctx.asyncSlots) {
+    throw new Error(
+      '[fict] Preview snapshots cannot serialize async graph slots. Use eager hydration with explicit application data and includeSnapshot: false.',
+    )
+  }
   const slots: SlotSnapshot[] = []
   const values = ctx.slots ?? []
 

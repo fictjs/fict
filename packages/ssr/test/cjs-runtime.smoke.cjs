@@ -9,6 +9,12 @@ const { __fictGetCurrentSSRSession } = require('../../runtime/dist/internal.cjs'
 const { renderToPipeableStream, renderToString } = require('..')
 
 async function run() {
+  const { verifyAsyncRuntime } = await import('./async-runtime-contract.mjs')
+  await verifyAsyncRuntime(
+    require('../../runtime/dist/index.cjs'),
+    require('../../runtime/dist/advanced.cjs'),
+    require('..'),
+  )
   const tempDir = mkdtempSync(path.join(tmpdir(), 'fict-ssr-cjs-'))
 
   try {

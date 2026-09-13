@@ -251,6 +251,16 @@ fn lower_program(
     let list_item_bindings = hir.jsx_list_item_bindings();
     let mut jsx_getter_bindings = list_item_bindings.clone();
     jsx_getter_bindings.extend(reactive_bindings.keys().copied());
+    jsx_getter_bindings.extend(hir.functions.iter().filter_map(|function| {
+        (function.kind == FunctionKind::Component)
+            .then(|| {
+                function
+                    .parameters
+                    .first()
+                    .and_then(|parameter| parameter.binding)
+            })
+            .flatten()
+    }));
     for (function, analysis) in hir.functions.iter().zip(scopes.into_iter().flatten()) {
         jsx_getter_bindings.extend(
             analysis
@@ -403,6 +413,7 @@ fn lower_program(
         preview_plan: None,
         strict_rejected: false,
         local_hook_returns: local_hook_returns.clone(),
+        jsx_getter_bindings: jsx_getter_bindings.into_iter().collect(),
         module: EmitModulePlan {
             source_fragment: module_source_fragment(hir),
             reserved_names: module_names.names(),

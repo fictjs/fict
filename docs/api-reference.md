@@ -27,6 +27,7 @@ Fict is a compiler-first, fine-grained reactive UI framework. This document cove
   - [useDeferredValue](#usedeferredvalue)
 - [DOM Rendering](#dom-rendering)
   - [render](#render)
+  - [hydrate](#hydrate)
   - [Fragment](#fragment)
 - [Components](#components)
   - [ErrorBoundary](#errorboundary)
@@ -772,6 +773,27 @@ const unmount = render(() => <App />, document.getElementById('app')!)
 ```
 
 ---
+
+### hydrate
+
+Attach client ownership to completed, compatible server output. Exported by
+`fict` and `@fictjs/runtime`; returns an unmount function that cancels owned work.
+
+```typescript
+function hydrate(
+  view: () => FictNode,
+  container: HTMLElement,
+  options?: {
+    strictHydration?: boolean
+    onHydrationIssue?: (issue: HydrationIssue) => void
+  },
+): () => void
+```
+
+Finish streamed patches before hydration and provide matching initial application
+data. Default mode reports and repairs mismatches; strict mode throws and disposes
+the attempted client graph. See [async SSR and hydration](./async-ssr-hydration.md)
+for pending inputs, request isolation and the Preview serialization boundary.
 
 ### Fragment
 

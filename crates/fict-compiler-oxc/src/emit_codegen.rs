@@ -173,11 +173,13 @@ pub fn emit_program(
         Ok(declarations) => declarations,
         Err(findings) => return failed_output(findings),
     };
+    let jsx_getter_reads = identities.binding_reference_spans(&program, &emit.jsx_getter_bindings);
     let mut rewriter = AstRewriter {
         allocator: &allocator,
         creations: &creations.expressions,
         derived_creations: &creations.derived_bindings,
         semantic_identities: &identities,
+        jsx_getter_reads: &jsx_getter_reads,
         props: &props_rewrites.parameters,
         prop_reads: &props_rewrites.reads,
         reads: &reads,
@@ -3626,6 +3628,7 @@ fn render_preview_module_statements(
     Ok(source)
 }
 struct AstRewriter<'a, 'emit> {
+    jsx_getter_reads: &'emit BTreeSet<(u32, u32)>,
     allocator: &'a Allocator,
     creations: &'emit BTreeMap<(u32, u32), CreationRewrite>,
     derived_creations: &'emit BTreeMap<BindingId, DerivedCreationRewrite>,

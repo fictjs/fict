@@ -47,6 +47,20 @@ pub fn verify_emit_program(
         ));
     }
     verify_module_plan(hir, program, &mut diagnostics);
+    if program
+        .jsx_getter_bindings
+        .windows(2)
+        .any(|pair| pair[0] >= pair[1])
+        || program
+            .jsx_getter_bindings
+            .iter()
+            .any(|binding| binding.as_usize() >= hir.bindings.len())
+    {
+        diagnostics.push(emit_error(
+            "FICT-EMIT-PROPS-BINDING",
+            "JSX getter identities must be sorted, unique and present in the HIR binding arena",
+        ));
+    }
     verify_local_hook_returns(hir, program, &mut diagnostics);
     verify_imports(program, &mut diagnostics);
     verify_preview_plan(hir, program, &mut diagnostics);
