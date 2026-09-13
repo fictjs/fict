@@ -18,7 +18,7 @@ not only an analysis pass, an API sketch, or a passing unrelated test suite.
 | G3   | Existing SSA simplification facts and lazy placement opportunities are either safely realized in emitted code or accurately reported as retained work.                | Semantic differential tests and final generated-code evidence; no claims based solely on unused analysis fields.                                                                              | Pending  |
 | G4   | Creation, replacement, and append costs are profiled and reduced where measurements support safe changes.                                                             | Controlled allocation/CPU profiles, complete repeated benchmark batches, memory and disposal checks, documented rejected experiments.                                                         | Pending  |
 | G5   | README performance claims correspond to the qualified strict build and identify versions, artifact hashes, normalization, uncertainty, and the unrounded 1.10 target. | Frozen source/build provenance, complete keyed/browser checks, reproducible archive and README data validation.                                                                               | Pending  |
-| A1   | An async graph contract specifies readiness, stale/current values, invalidation, errors, effect commit, ownership, and compatibility.                                 | Implementable state transitions and executable acceptance scenarios, not percentage scores.                                                                                                   | Pending  |
+| A1   | An async graph contract specifies readiness, stale/current values, invalidation, errors, effect commit, ownership, and compatibility.                                 | Implementable state transitions and executable acceptance scenarios, not percentage scores.                                                                                                   | Complete |
 | A2   | An explicit async computation is a reactive graph node, including Promise and async iterable completion, invalidation, and cancellation.                              | Graph-level dependency/status behavior, stale-flight rejection, cancellation and disposal tests; preserve existing Promise-valued synchronous memo behavior.                                  | Pending  |
 | A3   | Pending/error states compose through synchronous derived nodes and effect/render consumers with defined commit semantics.                                             | Chains, diamonds, conditional subscriptions, independent boundaries, error recovery, no unintended partial commits, and cleanup ordering.                                                     | Pending  |
 | A4   | Resource uses the shared async computation protocol while retaining its data/cache policies.                                                                          | Existing resource/cache/TTL/SWR/LRU/sharing/optimistic/SSR regressions and new graph-composition coverage.                                                                                    | Pending  |
@@ -105,3 +105,19 @@ and relocating identical bytes retains the cache hit. Both integration tests and
 all 55 release-verification checks pass. A fresh root `pnpm build --summarize`
 executes all 31 tasks successfully with zero cache hits. The cache test runs in CI,
 precommit, and release verification.
+
+## A1: executable async readiness contract
+
+The [async graph contract](./async-graph-contract.md) defines current versus stale
+reads, generation replacement, rejection identity, stream readiness, empty streams,
+terminal disposal, cancellation, ownership, preparation/commit effects, transitions,
+Resource policy, and compiler/server compatibility. `AsyncState` implements the
+shared state protocol without independent loading/error/value signals. Node and
+host integration remain separately tracked by A2 through A8.
+
+Fifteen executable tests cover the state transitions, all six settlement orders
+for three generations, duplicate and stale results, iterator completion and
+failure, disposed waiters, immutable snapshots, arbitrary rejection values, and
+ordinary Promise-valued synchronous memo behavior. Production and test typechecks
+cover the new protocol. This foundation does not claim that the remaining async
+integration work is complete.

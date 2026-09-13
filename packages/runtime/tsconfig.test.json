@@ -10,6 +10,7 @@
   },
   "include": [
     "src/**/*.ts",
+    "test/async-state.test.ts",
     "test/list-helpers.test.ts",
     "test/binding-edge-cases.test.ts",
     "test/runtime-abi.test.ts",
