@@ -86,6 +86,7 @@ fn effect_program(source: &str) -> EmitProgram {
         strict_rejected: false,
         local_hook_returns: Default::default(),
         jsx_getter_bindings: Vec::new(),
+        jsx_getter_calls: Vec::new(),
         module: EmitModulePlan {
             source_fragment: None,
             reserved_names: vec!["createEffect_1".into()],

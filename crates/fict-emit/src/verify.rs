@@ -62,6 +62,20 @@ pub fn verify_emit_program(
         ));
     }
     verify_local_hook_returns(hir, program, &mut diagnostics);
+    if program
+        .jsx_getter_calls
+        .windows(2)
+        .any(|pair| pair[0] >= pair[1])
+        || program
+            .jsx_getter_calls
+            .iter()
+            .any(|span| span.end() > hir.source_len)
+    {
+        diagnostics.push(emit_error(
+            "FICT-EMIT-JSX-CALL",
+            "JSX getter calls must be sorted, unique and inside the source",
+        ));
+    }
     verify_imports(program, &mut diagnostics);
     verify_preview_plan(hir, program, &mut diagnostics);
     let import_names: BTreeSet<_> = program

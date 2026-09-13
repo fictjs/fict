@@ -86,6 +86,7 @@ fn program() -> EmitProgram {
         strict_rejected: false,
         local_hook_returns: Default::default(),
         jsx_getter_bindings: Vec::new(),
+        jsx_getter_calls: Vec::new(),
         module: EmitModulePlan {
             source_fragment: None,
             reserved_names: vec!["createSignal".into(), "value".into()],
@@ -193,16 +194,30 @@ fn rejects_partial_strict_output_and_preview_helper_leaks() {
     *helper = RuntimeHelper::Qrl;
     let diagnostics =
         verify_emit_program(&hir(), &regions(), &program).expect_err("invalid output");
-    assert!(
-        diagnostics
-            .as_slice()
-            .iter()
-            .any(|diagnostic| { diagnostic.code.as_str() == "FICT-EMIT-REJECTED" })
-    );
-    assert!(
-        diagnostics
-            .as_slice()
-            .iter()
-            .any(|diagnostic| { diagnostic.code.as_str() == "FICT-EMIT-PREVIEW" })
-    );
+    let codes: Vec<_> = diagnostics
+        .as_slice()
+        .iter()
+        .map(|d| d.code.as_str())
+        .collect();
+    assert!(codes.contains(&"FICT-EMIT-REJECTED"));
+    assert!(codes.contains(&"FICT-EMIT-PREVIEW"));
+}
+
+#[test]
+fn rejects_unordered_duplicate_or_out_of_bounds_jsx_call_hints() {
+    for spans in [vec![(0, 1)], vec![(0, 0), (0, 0)], vec![(1, 1), (0, 0)]] {
+        let mut program = program();
+        program.jsx_getter_calls = spans
+            .into_iter()
+            .map(|(start, end)| SourceSpan::new(start, end).expect("ordered span"))
+            .collect();
+        let diagnostics =
+            verify_emit_program(&hir(), &regions(), &program).expect_err("invalid hints");
+        assert!(
+            diagnostics
+                .as_slice()
+                .iter()
+                .any(|d| d.code.as_str() == "FICT-EMIT-JSX-CALL")
+        );
+    }
 }

@@ -1,4 +1,5 @@
 mod async_aliases;
+mod jsx_consumers;
 
 use crate::{
     CleanupOwner, ComponentChild, ComponentProp, ComponentTarget, ConditionalKind,
@@ -131,7 +132,7 @@ struct CrossFunctionFacts<'a> {
     structured_hook_roots: &'a BTreeMap<BindingId, StructuredHookRootSite>,
     structured_hook_members: &'a BTreeMap<(BindingId, ImportedHookPropertyMatch), Origin>,
     list_item_bindings: &'a BTreeSet<BindingId>,
-    jsx_getter_bindings: &'a BTreeSet<BindingId>,
+    jsx_getters: &'a jsx_consumers::JsxGetterFacts,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ReactiveSiteKind {
@@ -249,26 +250,23 @@ fn lower_program(
     let structured_hook_roots = collect_structured_hook_root_sites(hir, local_hook_returns)?;
     let structured_hook_members = collect_structured_hook_member_uses(hir, &structured_hook_roots);
     let list_item_bindings = hir.jsx_list_item_bindings();
-    let mut jsx_getter_bindings = list_item_bindings.clone();
-    jsx_getter_bindings.extend(reactive_bindings.keys().copied());
-    jsx_getter_bindings.extend(hir.functions.iter().filter_map(|function| {
-        (function.kind == FunctionKind::Component)
-            .then(|| {
-                function
-                    .parameters
-                    .first()
-                    .and_then(|parameter| parameter.binding)
-            })
-            .flatten()
-    }));
+    let mut jsx_getters = list_item_bindings.clone();
+    jsx_getters.extend(reactive_bindings.keys().copied());
+    jsx_getters.extend(
+        hir.functions
+            .iter()
+            .filter(|function| function.kind == FunctionKind::Component)
+            .filter_map(|function| function.parameters.first()?.binding),
+    );
     for (function, analysis) in hir.functions.iter().zip(scopes.into_iter().flatten()) {
-        jsx_getter_bindings.extend(
+        jsx_getters.extend(
             analysis
                 .bindings
                 .iter()
                 .filter_map(|fact| function.locals[fact.name.local.as_usize()].binding),
         );
     }
+    let jsx_getters = jsx_consumers::collect_jsx_getters(hir, jsx_getters);
     let facts = CrossFunctionFacts {
         captured_write_bindings: &captured_write_bindings,
         reactive_bindings: &reactive_bindings,
@@ -276,7 +274,7 @@ fn lower_program(
         structured_hook_roots: &structured_hook_roots,
         structured_hook_members: &structured_hook_members,
         list_item_bindings: &list_item_bindings,
-        jsx_getter_bindings: &jsx_getter_bindings,
+        jsx_getters: &jsx_getters,
     };
     let mut functions = Vec::with_capacity(hir.functions.len());
     for (function_index, function) in hir.functions.iter().enumerate() {
@@ -413,7 +411,8 @@ fn lower_program(
         preview_plan: None,
         strict_rejected: false,
         local_hook_returns: local_hook_returns.clone(),
-        jsx_getter_bindings: jsx_getter_bindings.into_iter().collect(),
+        jsx_getter_bindings: jsx_getters.bindings.into_iter().collect(),
+        jsx_getter_calls: jsx_getters.calls.into_iter().collect(),
         module: EmitModulePlan {
             source_fragment: module_source_fragment(hir),
             reserved_names: module_names.names(),
@@ -948,7 +947,7 @@ fn lower_function(
         structured_hook_roots,
         structured_hook_members,
         list_item_bindings,
-        jsx_getter_bindings,
+        jsx_getters,
     } = *facts;
     let function = &hir.functions[function_id.as_usize()];
     let function_contains_jsx = function
@@ -1939,7 +1938,7 @@ fn lower_function(
                             cleanup,
                             reactive_bindings,
                             list_item_bindings,
-                            jsx_getter_bindings,
+                            jsx_getters,
                         )?;
                     } else {
                         let Some(source_result) = instruction.result else {
@@ -1966,7 +1965,7 @@ fn lower_function(
                             &mut value_temporaries,
                             &mut operations,
                             &mut component_targets,
-                            jsx_getter_bindings,
+                            jsx_getters,
                         )?;
                         if !root_is_component {
                             operations.push(EmitOperation::CreateVNode {
@@ -2355,7 +2354,7 @@ fn lower_jsx_instruction(
     cleanup: CleanupOwner,
     reactive_bindings: &BTreeMap<BindingId, ReactiveBindingSite>,
     list_item_bindings: &BTreeSet<BindingId>,
-    jsx_getter_bindings: &BTreeSet<BindingId>,
+    jsx_getters: &jsx_consumers::JsxGetterFacts,
 ) -> Result<(), DiagnosticBundle> {
     let Some(template) = hir.templates.get(template_id.as_usize()) else {
         return Err(DiagnosticBundle::new(vec![lower_error(
@@ -2393,7 +2392,7 @@ fn lower_jsx_instruction(
         value_temporaries,
         operations,
         &mut component_targets,
-        jsx_getter_bindings,
+        jsx_getters,
     )?;
     if root_is_component {
         return Ok(());
@@ -2865,7 +2864,7 @@ fn register_component_nodes(
     value_temporaries: &mut BTreeMap<ValueId, EmitTemporaryId>,
     operations: &mut Vec<EmitOperation>,
     component_targets: &mut BTreeMap<(u32, u32), EmitTemporaryId>,
-    jsx_getter_bindings: &BTreeSet<BindingId>,
+    jsx_getters: &jsx_consumers::JsxGetterFacts,
 ) -> Result<(), DiagnosticBundle> {
     match node {
         JsxNode::Element(element) => {
@@ -2879,7 +2878,7 @@ fn register_component_nodes(
                     temporary_names,
                     value_temporaries,
                     operations,
-                    jsx_getter_bindings,
+                    jsx_getters,
                 )?;
                 let Some(span) = element.origin.primary_span else {
                     return Err(DiagnosticBundle::new(vec![lower_error(
@@ -2921,7 +2920,7 @@ fn register_component_nodes(
                         value_temporaries,
                         operations,
                         component_targets,
-                        jsx_getter_bindings,
+                        jsx_getters,
                     )?;
                 }
             }
@@ -2937,7 +2936,7 @@ fn register_component_nodes(
                         value_temporaries,
                         operations,
                         component_targets,
-                        jsx_getter_bindings,
+                        jsx_getters,
                     )?;
                 }
             }
@@ -2962,28 +2961,13 @@ fn register_component_nodes(
                         value_temporaries,
                         operations,
                         component_targets,
-                        jsx_getter_bindings,
+                        jsx_getters,
                     )?;
                 }
             }
         }
     }
     Ok(())
-}
-fn jsx_value_needs_getter(
-    hir: &HirFile,
-    function: &HirFunction,
-    value: ValueId,
-    bindings: &BTreeSet<BindingId>,
-) -> bool {
-    let ValueKind::SyntaxFragment(fragment) = function.values[value.as_usize()].kind else {
-        return false;
-    };
-    hir.syntax_fragments[fragment.as_usize()]
-        .summary
-        .referenced_bindings
-        .iter()
-        .any(|binding| bindings.contains(binding))
 }
 #[allow(clippy::too_many_arguments)]
 fn lower_component_operation(
@@ -2995,7 +2979,7 @@ fn lower_component_operation(
     temporary_names: &mut NameAllocator,
     value_temporaries: &mut BTreeMap<ValueId, EmitTemporaryId>,
     operations: &mut Vec<EmitOperation>,
-    jsx_getter_bindings: &BTreeSet<BindingId>,
+    jsx_getters: &jsx_consumers::JsxGetterFacts,
 ) -> Result<EmitTemporaryId, DiagnosticBundle> {
     let function = &hir.functions[function_id.as_usize()];
     let resettable_boundary = is_runtime_resettable_boundary(hir, &element.name);
@@ -3031,8 +3015,9 @@ fn lower_component_operation(
                         ..
                     } => (
                         lower_value(*value, value_temporaries),
-                        !function_like
-                            && jsx_value_needs_getter(hir, function, *value, jsx_getter_bindings),
+                        name != "key"
+                            && !function_like
+                            && jsx_getters.value_needs_getter(hir, function, *value),
                         *function_like,
                     ),
                     JsxAttributeValue::Node(node) => {
@@ -3063,8 +3048,7 @@ fn lower_component_operation(
             JsxAttribute::Spread { value, getter, .. } => {
                 props.push(ComponentProp::Spread {
                     value: lower_value(*value, value_temporaries),
-                    getter: *getter
-                        || jsx_value_needs_getter(hir, function, *value, jsx_getter_bindings),
+                    getter: *getter || jsx_getters.value_needs_getter(hir, function, *value),
                 });
             }
         }
@@ -3083,13 +3067,12 @@ fn lower_component_operation(
                 ..
             } => ComponentChild::Value {
                 value: lower_value(*value, value_temporaries),
-                getter: !function_like
-                    && jsx_value_needs_getter(hir, function, *value, jsx_getter_bindings),
+                getter: !function_like && jsx_getters.value_needs_getter(hir, function, *value),
                 non_reactive: *function_like,
             },
             JsxChild::Spread { value, .. } => ComponentChild::Value {
                 value: lower_value(*value, value_temporaries),
-                getter: jsx_value_needs_getter(hir, function, *value, jsx_getter_bindings),
+                getter: jsx_getters.value_needs_getter(hir, function, *value),
                 non_reactive: false,
             },
             JsxChild::Node(node) => ComponentChild::Node(node.origin()),

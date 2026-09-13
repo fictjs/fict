@@ -10,6 +10,7 @@ not only an analysis pass, an API sketch, or a passing unrelated test suite.
 | S1   | Explicit snapshot semantics and diagnostic fixes agree under default strict compilation. Retained reactive closures and unsafe lifetime escapes remain diagnosed.     | Executable cookbook examples, adversarial native compiler tests, disabled/safe/full behavioral checks.                                                                                        | Complete |
 | S2   | Official selector and reactive callback APIs are recognized by binding identity and their actual tracking/lifetime contracts.                                         | Positive imports/aliases and negative shadowed, external, deferred, and reassigned-host cases.                                                                                                | Complete |
 | S2b  | Known runtime factory results preserve Resource getter and transition callback contracts, including reactive Resource views.                                          | Strict marked-getter, alias/mutation, VNode/direct DOM, causal readiness and disposal checks discovered during application qualification.                                                     | Complete |
+| S2c  | JSX calls retain consumer tracking and component prop/children value contracts in direct DOM and VNode output.                                                        | Six output profiles; live helper calls, callback identity, snapshots, key evaluation, await/source-map and reviewed corpus checks.                                                            | Complete |
 | S3   | Collection/fresh-copy analysis and explicit per-row signal boundaries support the optimized keyed fixture with strict guarantees.                                     | Strict fixture compilation, precise alias/mutation regressions, same-key replacement and teardown behavior.                                                                                   | Complete |
 | S4   | Custom compiler host environment and metadata obligations are executable and documented.                                                                              | Facade/native integration contract tests, missing metadata cases, consumer package checks.                                                                                                    | Complete |
 | S5   | Representative application coverage measures strict boundary incidence and usable diagnostic repairs.                                                                 | Maintained corpus with source identity, diagnostics, boundary/LOC counts, migration evidence, strict production and browser gates; distinguish maintained fixtures from independent adoption. | Pending  |
@@ -426,3 +427,27 @@ with this change. The existing async/list checks pass (47 tests), as does the
 runtime suite (1544 passed; eight existing opt-in/legacy cases skipped).
 Production and test typechecks pass. This is correctness evidence, not a new
 performance measurement. See the [recorded evidence](testing/async-keyed-list-evidence-2026-09-14.json).
+
+## S2c: JSX consumer contracts
+
+Application helpers can read reactive values through parameters, callbacks,
+methods, aliases or imported functions. Their calls now retain a deferred JSX
+consumer even when no direct reactive binding is visible at that call site.
+These source spans are verified EmitIR consumer hints; they do not assert purity
+or authorize memo elimination. Explicit `untrack` still defines snapshot reads.
+
+Both DOM backends preserve numeric component props and children as values rather
+than accidentally passing reactive functions. Authored callbacks keep their
+identity, component keys evaluate once, and direct `await` expressions remain in
+their original async scope. Conditional branches retain their own reads when the
+condition's boolean is unchanged.
+
+Validation: 42 native execution cases pass across disabled/safe/full optimization
+and direct DOM/VNode output; the prior addon fails 36 of those cases. The complete
+526-case native suite and 25 source-map/async-SSR checks pass. Review of all 3,172
+frozen inputs finds 89 primary and 72 replay output changes, with unchanged
+acceptance and diagnostics. 156 changes contain only getter/import differences;
+5 additionally enable conditional branch tracking. The two Rust source-map
+selectors and current corpus reference change while all frozen Babel output,
+maps and authored source positions remain intact. See the
+[review archive](./testing/jsx-consumer-contract-evidence-2026-09-14.json).

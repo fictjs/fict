@@ -69,7 +69,7 @@ impl<'a> AstRewriter<'a, '_> {
         self.vnode_depth -= 1;
         self.source_clone_depth -= 1;
         self.active_fragment_local = previous_fragment;
-        self.active_vnode_reactive_local = previous_reactive;
+        self.active_vnode_reactive_local = previous_reactive.clone();
         let fallback_matches = self.rewrite_match_state();
         let fallback_contexts: Vec<_> = context_snapshot
             .keys()
@@ -78,7 +78,10 @@ impl<'a> AstRewriter<'a, '_> {
             .collect();
         self.restore_rewrite_match_state(base_matches);
         self.context_declarations = context_snapshot;
+        self.active_vnode_reactive_local
+            .clone_from(&clone.reactive_helper);
         let optimized = self.lower_template_clone_optimized(clone, jsx, span);
+        self.active_vnode_reactive_local = previous_reactive;
         self.merge_rewrite_match_state(fallback_matches);
         for location in fallback_contexts {
             self.context_declarations.remove(&location);
@@ -157,11 +160,30 @@ impl<'a> AstRewriter<'a, '_> {
         value: Expression<'a>,
         source_span: Span,
     ) -> Expression<'a> {
-        let Some(helper) = &self.active_vnode_reactive_local else {
-            return value;
+        self.wrap_vnode_value(
+            value,
+            source_span,
+            self.active_vnode_reactive_local.as_deref(),
+        )
+    }
+    pub(super) fn jsx_child_needs_getter(&self, child: &JSXChild<'a>) -> bool {
+        let expression = match child {
+            JSXChild::ExpressionContainer(container) if container.expression.is_expression() => {
+                container
+                    .expression
+                    .as_expression()
+                    .expect("JSX expression")
+            }
+            JSXChild::Spread(spread) => &spread.expression,
+            _ => return false,
         };
-        let contains_reactive_read = self
-            .reads
+        !matches!(
+            expression.get_inner_expression(),
+            Expression::ArrowFunctionExpression(_) | Expression::FunctionExpression(_)
+        ) && self.span_needs_jsx_getter(expression.span())
+    }
+    fn span_needs_jsx_getter(&self, source_span: Span) -> bool {
+        self.reads
             .keys()
             .chain(self.prop_reads.iter())
             .chain(self.jsx_getter_reads.iter())
@@ -171,8 +193,18 @@ impl<'a> AstRewriter<'a, '_> {
                     .references
                     .iter()
                     .any(|(start, end)| source_span.start <= *start && *end <= source_span.end)
-            });
-        if !contains_reactive_read {
+            })
+    }
+    pub(super) fn wrap_vnode_value(
+        &self,
+        value: Expression<'a>,
+        source_span: Span,
+        helper: Option<&str>,
+    ) -> Expression<'a> {
+        let Some(helper) = helper else {
+            return value;
+        };
+        if expression_contains_direct_await(&value) || !self.span_needs_jsx_getter(source_span) {
             return value;
         }
         let builder = AstBuilder::new(self.allocator);

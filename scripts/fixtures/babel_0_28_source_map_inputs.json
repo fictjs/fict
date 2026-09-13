@@ -72,7 +72,7 @@
             "needle": "value: __fictProp(() => count())",
             "offset": 24
           },
-          "rust": { "needle": "value: count()", "offset": 7 },
+          "rust": { "needle": "value: __fictProp(() => count())", "offset": 22 },
           "reason": "Babel mapped the component prop read to whitespace before the attribute; Rust maps the emitted read to the authored expression."
         },
         {
@@ -85,7 +85,7 @@
             "needle": "\"data-count\": __fictProp(() => doubled())",
             "offset": 31
           },
-          "rust": { "needle": "\"data-count\": doubled()", "offset": 14 },
+          "rust": { "needle": "\"data-count\": __fictProp(() => doubled())", "offset": 29 },
           "reason": "Babel coarsened both component props to one pre-attribute position; Rust preserves the second expression position."
         },
         {

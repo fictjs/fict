@@ -173,13 +173,29 @@ pub fn emit_program(
         Ok(declarations) => declarations,
         Err(findings) => return failed_output(findings),
     };
-    let jsx_getter_reads = identities.binding_reference_spans(&program, &emit.jsx_getter_bindings);
+    let mut jsx_getter_reads =
+        identities.binding_reference_spans(&program, &emit.jsx_getter_bindings);
+    jsx_getter_reads.extend(
+        emit.jsx_getter_calls
+            .iter()
+            .map(|span| (span.start(), span.end())),
+    );
     let mut rewriter = AstRewriter {
         allocator: &allocator,
         creations: &creations.expressions,
         derived_creations: &creations.derived_bindings,
         semantic_identities: &identities,
         jsx_getter_reads: &jsx_getter_reads,
+        vnode_prop_helper: emit
+            .imports
+            .iter()
+            .find(|intent| intent.helper == RuntimeHelper::PropGetter)
+            .map(|intent| intent.local.as_str()),
+        vnode_children_helper: emit
+            .imports
+            .iter()
+            .find(|intent| intent.helper == RuntimeHelper::Prop)
+            .map(|intent| intent.local.as_str()),
         props: &props_rewrites.parameters,
         prop_reads: &props_rewrites.reads,
         reads: &reads,
@@ -3629,6 +3645,8 @@ fn render_preview_module_statements(
 }
 struct AstRewriter<'a, 'emit> {
     jsx_getter_reads: &'emit BTreeSet<(u32, u32)>,
+    vnode_prop_helper: Option<&'emit str>,
+    vnode_children_helper: Option<&'emit str>,
     allocator: &'a Allocator,
     creations: &'emit BTreeMap<(u32, u32), CreationRewrite>,
     derived_creations: &'emit BTreeMap<BindingId, DerivedCreationRewrite>,
@@ -5468,6 +5486,7 @@ impl<'a> AstRewriter<'a, '_> {
                         self.reads
                             .keys()
                             .chain(self.prop_reads.iter())
+                            .chain(self.jsx_getter_reads.iter())
                             .any(|&(start, end)| branch.start <= start && end <= branch.end)
                     };
                     let track_branch_reads = branch_has_reads(&consequent)
@@ -6239,7 +6258,7 @@ impl<'a> AstRewriter<'a, '_> {
                     }
                     let mut value = spread.argument;
                     self.visit_expression(&mut value);
-                    if getter {
+                    if getter && !expression_contains_direct_await(&value) {
                         if let Some(helper) = &component.prop_helper {
                             let arrow =
                                 zero_parameter_expression_arrow(self.allocator, value, spread.span);
@@ -6332,7 +6351,7 @@ impl<'a> AstRewriter<'a, '_> {
                             self.lower_jsx_attribute_value(attribute.value, attribute.span, false)
                         }
                     };
-                    if getter {
+                    if getter && !expression_contains_direct_await(&value) {
                         if let Some(helper) = &component.prop_helper {
                             let arrow =
                                 zero_parameter_expression_arrow(self.allocator, value, name_span);
@@ -6432,7 +6451,9 @@ impl<'a> AstRewriter<'a, '_> {
                 component.non_reactive_helper.as_deref(),
             )),
         ) {
-            if let Some(helper) = &component.children_helper {
+            if let Some(helper) = &component.children_helper
+                && !expression_contains_direct_await(&children)
+            {
                 let getter = zero_parameter_expression_arrow(self.allocator, children, span);
                 let callee = Expression::new_identifier(
                     span,
@@ -6556,10 +6577,25 @@ impl<'a> AstRewriter<'a, '_> {
                             .get(&location)
                             .map(|handler| (location, handler.event.clone()))
                     });
-                    let reactive =
-                        name != "ref" && fict_emit::parse_event_attribute(&name).is_none();
-                    let value =
-                        self.lower_jsx_attribute_value(attribute.value, attribute.span, reactive);
+                    let reactive = !intrinsic
+                        || (name != "ref" && fict_emit::parse_event_attribute(&name).is_none());
+                    let value_span = jsx_attribute_source_span(&attribute.value);
+                    let mut value = self.lower_jsx_attribute_value(
+                        attribute.value,
+                        attribute.span,
+                        reactive && intrinsic,
+                    );
+                    if !intrinsic
+                        && reactive
+                        && let Some(value_span) = value_span
+                        && !matches!(
+                            value.get_inner_expression(),
+                            Expression::ArrowFunctionExpression(_)
+                                | Expression::FunctionExpression(_)
+                        )
+                    {
+                        value = self.wrap_vnode_value(value, value_span, self.vnode_prop_helper);
+                    }
                     if let Some((location, event)) = preview {
                         let prevent_default = handler_may_prevent_default(&value);
                         let Some(qrl) = self.prepare_preview_qrl(
@@ -6581,7 +6617,17 @@ impl<'a> AstRewriter<'a, '_> {
                 }
             }
         }
-        if let Some(children) = self.lower_jsx_children(element.children, span, None) {
+        let defer_children = !intrinsic
+            && element
+                .children
+                .iter()
+                .any(|child| self.jsx_child_needs_getter(child));
+        if let Some(mut children) =
+            self.lower_jsx_children(element.children, span, (!intrinsic).then_some((&[], None)))
+        {
+            if defer_children {
+                children = self.wrap_vnode_value(children, span, self.vnode_children_helper);
+            }
             properties.push(self.object_property(span, "children", children));
         }
         let builder = AstBuilder::new(self.allocator);
@@ -6764,7 +6810,7 @@ impl<'a> AstRewriter<'a, '_> {
                         let plan = planned.as_mut().and_then(Iterator::next);
                         let expression = self.lower_jsx_container_expression(
                             container.expression.into_expression(),
-                            true,
+                            component.is_none(),
                         );
                         lowered.push(VNodeChild::Value(self.wrap_non_reactive_component_child(
                             expression,

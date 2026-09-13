@@ -694,7 +694,7 @@ impl EmitOperation {
     }
 
     #[must_use]
-    pub const fn helper_slots(&self) -> [Option<RuntimeHelper>; 8] {
+    pub const fn helper_slots(&self) -> [Option<RuntimeHelper>; 9] {
         match self {
             Self::InvokeComponent {
                 prop_helper,
@@ -713,30 +713,35 @@ impl EmitOperation {
                 *reactive_function_helper,
                 *vnode_reactive_helper,
                 *fragment_helper,
-                None,
-            ],
-            Self::Conditional {
-                helper,
-                create_helper,
-                cleanup_helper,
-                fragment_helper,
-                ..
-            } => [
-                Some(*helper),
-                Some(*create_helper),
-                Some(*cleanup_helper),
-                *fragment_helper,
-                None,
-                None,
-                None,
-                None,
+                if vnode_reactive_helper.is_some() {
+                    Some(RuntimeHelper::PropGetter)
+                } else {
+                    None
+                },
+                if vnode_reactive_helper.is_some() {
+                    Some(RuntimeHelper::Prop)
+                } else {
+                    None
+                },
             ],
             _ => [
                 self.helper(),
                 self.auxiliary_helper(),
                 self.tertiary_helper(),
                 self.quaternary_helper(),
-                None,
+                // Generic VNode paths preserve component prop values with prop getters.
+                match self {
+                    Self::CreateVNode { .. } | Self::CloneTemplate { .. } => {
+                        Some(RuntimeHelper::PropGetter)
+                    }
+                    _ => None,
+                },
+                match self {
+                    Self::CreateVNode { .. } | Self::CloneTemplate { .. } => {
+                        Some(RuntimeHelper::Prop)
+                    }
+                    _ => None,
+                },
                 None,
                 None,
                 None,
@@ -1081,6 +1086,9 @@ pub struct EmitProgram {
     /// Sorted semantic identities whose JSX value reads need a deferred consumer.
     /// This includes transparent component props objects, which require no read rewrite.
     pub jsx_getter_bindings: Vec<BindingId>,
+    /// Calls evaluated by JSX consumers may read inputs through opaque bodies.
+    /// Callable values themselves retain their authored function identity.
+    pub jsx_getter_calls: Vec<SourceSpan>,
     pub module: EmitModulePlan,
     pub imports: Vec<RuntimeImportIntent>,
     pub functions: Vec<EmitFunction>,

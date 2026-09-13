@@ -8,6 +8,7 @@ import { pathToFileURL } from 'node:url'
 const root = path.resolve(import.meta.dirname, '..')
 const require = createRequire(path.join(root, 'package.json'))
 const native = require(path.join(root, 'target/release/fict_compiler_napi.node'))
+const { JSDOM } = require(path.join(root, 'packages/runtime/node_modules/jsdom'))
 const ssr = await import(pathToFileURL(path.join(root, 'packages/ssr/dist/index.node.js')))
 const files = []
 after(async () => {
@@ -162,8 +163,9 @@ test('current async rejection reaches the server error boundary', async () => {
   }))
   pending.reject('request-failed')
   const html = await response
-  assert.match(html, /<em>request-failed/)
-  assert.doesNotMatch(html, /<i>pending/)
+  const dom = JSDOM.fragment(html)
+  assert.equal(dom.querySelector('em')?.textContent, 'request-failed')
+  assert.equal(dom.querySelector('i'), null)
   assert.deepEqual(fixture.cleanups, [true])
 })
 
