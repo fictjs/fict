@@ -1,4 +1,4 @@
-import { $state, $effect, render } from 'fict'
+import { $state, $store, $effect, render } from 'fict'
 
 interface FormData {
   username: string
@@ -24,7 +24,7 @@ function validateEmail(email: string): boolean {
 }
 
 function FormExample() {
-  let formData: FormData = $state({
+  const formData: FormData = $store({
     username: '',
     email: '',
     password: '',
@@ -91,7 +91,7 @@ function FormExample() {
   }
 
   const handleReset = () => {
-    formData = {
+    Object.assign(formData, {
       username: '',
       email: '',
       password: '',
@@ -99,7 +99,7 @@ function FormExample() {
       country: '',
       newsletter: false,
       terms: false,
-    }
+    })
     errors = {}
     submitted = false
     isValidating = false

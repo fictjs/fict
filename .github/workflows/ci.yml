@@ -313,6 +313,18 @@ jobs:
       - run: pnpm test:strict-guarantee
       - run: pnpm build:strict-guarantee
       - run: pnpm test:bundlers:strict-guarantee
+      - run: pnpm exec playwright install --with-deps chromium
+      - name: Qualify strict application corpus and captured browser assets
+        run: pnpm test:strict-applications
+      - name: Upload strict application evidence
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: strict-application-evidence
+          path: |
+            test-results/strict-application-corpus.json
+            test-results/strict-application-corpus/
+          retention-days: 14
 
   perf-guardrails:
     name: Performance Guardrails

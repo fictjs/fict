@@ -1,5 +1,6 @@
 import { $state, render, Suspense, ErrorBoundary } from 'fict'
 import { resource } from 'fict/plus'
+import { reactive } from 'fict/advanced'
 
 // Simulated API types
 interface User {
@@ -153,8 +154,7 @@ function PostItems(props: { posts: Post[] }) {
 }
 
 function PostsList(props: { userId: number }) {
-  const userId = props.userId
-  const posts = postsResource.read(userId)
+  const posts = postsResource.read(reactive(() => props.userId))
 
   return (
     <div style={styles.postsContainer}>

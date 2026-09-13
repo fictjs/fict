@@ -1,4 +1,4 @@
-import { $state, render } from 'fict'
+import { $state, render, untrack } from 'fict'
 
 interface Todo {
   id: number
@@ -8,7 +8,7 @@ interface Todo {
 
 export function App() {
   let todos: Todo[] = $state([])
-  let inputText = $state('')
+  let inputText: string = $state('')
   let nextId = $state(1)
   let filter = $state<'all' | 'active' | 'completed'>('all')
 
@@ -33,11 +33,12 @@ export function App() {
     todos = todos.filter(todo => !todo.completed)
   }
 
-  const filteredTodos = () => {
-    if (filter === 'active') return todos.filter(t => !t.completed)
-    if (filter === 'completed') return todos.filter(t => t.completed)
-    return todos
-  }
+  const filteredTodos: Todo[] =
+    filter === 'active'
+      ? todos.filter(t => !t.completed)
+      : filter === 'completed'
+        ? todos.filter(t => t.completed)
+        : todos
 
   const activeCount = () => todos.filter(t => !t.completed).length
   const completedCount = () => todos.filter(t => t.completed).length
@@ -95,12 +96,12 @@ export function App() {
       </div>
 
       <ul style={styles.todoList}>
-        {filteredTodos().map(todo => (
+        {filteredTodos.map(todo => (
           <li key={todo.id} style={styles.todoItem}>
             <input
               type="checkbox"
               checked={todo.completed}
-              onChange={() => toggleTodo(todo.id)}
+              onChange={() => toggleTodo(untrack(() => todo.id))}
               style={styles.checkbox}
             />
             <span
@@ -111,7 +112,7 @@ export function App() {
             >
               {todo.text}
             </span>
-            <button onClick={() => removeTodo(todo.id)} style={styles.removeButton}>
+            <button onClick={() => removeTodo(untrack(() => todo.id))} style={styles.removeButton}>
               ✕
             </button>
           </li>

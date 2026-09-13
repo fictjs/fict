@@ -637,6 +637,7 @@ Key rules: nested component definitions (FICT-C003), missing list keys (FICT-J00
 - Set `strictGuarantee: false` only for non-production migration or benchmark builds.
 - CI can force strict mode with `FICT_STRICT_GUARANTEE=1` during build steps.
 - Guarantee boundary reference: `docs/reactivity-guarantee-matrix.md`.
+- `pnpm test:strict-applications` runs the maintained production build/browser corpus. See [application coverage, boundary counts and migration evidence](./docs/testing/strict-application-corpus.md).
 
 </details>
 

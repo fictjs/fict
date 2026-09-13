@@ -589,6 +589,35 @@ test('browser E2E includes native Vite HMR, production-shaped applications, and 
   assert.match(ciWorkflow, /180000/)
 })
 
+test('strict application qualification stays in CI and release with captured-build browser evidence', () => {
+  assert.match(rootPackage.scripts['test:strict-applications'], /^pnpm build:strict-guarantee && /)
+  assert.match(
+    rootPackage.scripts['test:strict-applications'],
+    /node --test scripts\/strict-application-corpus\.test\.mjs/,
+  )
+  assert.match(
+    rootPackage.scripts['test:strict-applications'],
+    /node scripts\/strict-application-corpus\.mjs$/,
+  )
+  assert.ok(
+    rootPackage.scripts['release:verify'].split(' && ').includes('pnpm test:strict-applications'),
+  )
+  assert.match(
+    ciWorkflow,
+    /name: Qualify strict application corpus and captured browser assets\n\s+run: pnpm test:strict-applications/,
+  )
+  assert.match(ciWorkflow, /name: Upload strict application evidence\n\s+if: always\(\)/)
+  assert.match(ciWorkflow, /test-results\/strict-application-corpus\.json/)
+  const withoutGate = structuredClone(rootPackage)
+  withoutGate.scripts['release:verify'] = withoutGate.scripts['release:verify']
+    .split(' && ')
+    .filter(command => command !== 'pnpm test:strict-applications')
+    .join(' && ')
+  assert.ok(
+    verifyReleaseContract(withoutGate, releaseWorkflow).includes('pnpm test:strict-applications'),
+  )
+})
+
 test('real-app E2E reserves per-run ports and preserves web-server startup output', () => {
   const realAppsConfig = readFileSync(
     new URL('../examples/real-apps/playwright.config.ts', import.meta.url),

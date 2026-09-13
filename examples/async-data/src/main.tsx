@@ -1,5 +1,6 @@
 import { $state, render, Suspense, ErrorBoundary } from 'fict'
 import { resource } from 'fict/plus'
+import { reactive } from 'fict/advanced'
 
 // Simulated API types
 interface User {
@@ -139,7 +140,7 @@ function UserCard(props: { user: User; selected: boolean; onSelect: () => void }
 
 // Posts list component
 function PostsList(props: { userId: number }) {
-  const posts = postsResource.read(() => props.userId)
+  const posts = postsResource.read(reactive(() => props.userId))
 
   return (
     <div style={styles.postsContainer}>
@@ -160,10 +161,11 @@ function PostsList(props: { userId: number }) {
 // Users list component
 function UsersList(props: { selectedId: number | null; onSelect: (id: number) => void }) {
   const users = usersResource.read(undefined)
+  const userRows: User[] = users.data ?? []
 
   return (
     <div style={styles.usersList}>
-      {users.data?.map(user => (
+      {userRows.map(user => (
         <UserCard
           key={user.id}
           user={user}

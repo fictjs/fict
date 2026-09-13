@@ -483,6 +483,7 @@ export function verifyReleaseContract(rootPackage, releaseWorkflow) {
     'pnpm test:package-tarballs',
     'pnpm test:ssr-matrix',
     'pnpm test:e2e',
+    'pnpm test:strict-applications',
   ]
   const missing = requiredGates.filter(gate => !releaseVerify.split(' && ').includes(gate))
   if (rootPackage.scripts?.['release:verify:clean'] !== 'node scripts/release-verify-clean.mjs') {

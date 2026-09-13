@@ -13,7 +13,7 @@ not only an analysis pass, an API sketch, or a passing unrelated test suite.
 | S2c  | JSX calls retain consumer tracking and component prop/children value contracts in direct DOM and VNode output.                                                        | Six output profiles; live helper calls, callback identity, snapshots, key evaluation, await/source-map and reviewed corpus checks.                                                            | Complete |
 | S3   | Collection/fresh-copy analysis and explicit per-row signal boundaries support the optimized keyed fixture with strict guarantees.                                     | Strict fixture compilation, precise alias/mutation regressions, same-key replacement and teardown behavior.                                                                                   | Complete |
 | S4   | Custom compiler host environment and metadata obligations are executable and documented.                                                                              | Facade/native integration contract tests, missing metadata cases, consumer package checks.                                                                                                    | Complete |
-| S5   | Representative application coverage measures strict boundary incidence and usable diagnostic repairs.                                                                 | Maintained corpus with source identity, diagnostics, boundary/LOC counts, migration evidence, strict production and browser gates; distinguish maintained fixtures from independent adoption. | Pending  |
+| S5   | Representative application coverage measures strict boundary incidence and usable diagnostic repairs.                                                                 | Maintained corpus with source identity, diagnostics, boundary/LOC counts, migration evidence, strict production and browser gates; distinguish maintained fixtures from independent adoption. | Complete |
 | S6   | Local build caches include the native compiler source and artifact identity used by each host.                                                                        | A changed compiler invalidates dependent build tasks; final qualification forces fresh application builds.                                                                                    | Complete |
 | S7   | Bundle-size gates resolve distributed modules without silently following workspace source aliases.                                                                    | Actual ESM/CJS package measurements, import-specific budgets, and an executable resolution check.                                                                                             | Complete |
 | G1   | Safe implicit memos with one logical JSX consumer can be removed without erasing observable computation or ownership semantics.                                       | Native output and browser/SSR behavior across safe/full/disabled options, explicit memo, multi-consumer, coercion, errors, and cleanup controls.                                              | Pending  |
@@ -467,3 +467,26 @@ coverage separately exercises refreshing one async source and switching between
 sources, subsequent value updates, retained component ownership and disposal.
 Production application qualification is tracked separately by S5. See the
 [evidence archive](./testing/async-memo-readiness-evidence-2026-09-14.json).
+
+## S5: maintained strict application corpus
+
+Eight maintained application fixtures now run through captured strict production
+builds and executable browser/server flows. A library publisher and the strict
+keyed benchmark compile fixture are reported separately. The gate records native
+source/artifact identity, final compiler requests, diagnostics, app and package
+hashes, source incidence and browser results; it rejects missing final transforms
+and artifact drift. CI and release verification require the same command.
+
+The dated run passes all 11 builds, five small application browser scenarios,
+four real-app/SSR browser cases and streaming production smoke. Twelve application
+source files contain two explicit snapshots across 2,693 lexical code lines
+(0.743/K), or 1,776 function-body lines (1.126/K), plus two marked Resource getters.
+Six advisory X003 warnings remain; no fallback or unsupported diagnostics pass
+this gate. Seven contract tests verify counting and fail-closed capture behavior.
+
+[The corpus report](./testing/strict-application-corpus.md) documents migrations,
+regressions, reproducible commands, counting definitions and the
+[dated artifact](./testing/strict-application-corpus-2026-09-14.json).
+These are maintained fixtures, including an async-data/Webpack variant pair,
+not independent external adoption evidence or a measured false-positive rate.
+CPU and memory qualification remain G4/G5/A8.
