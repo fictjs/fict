@@ -80,6 +80,13 @@ addon has not been built, non-native commands can run with caching disabled. An
 explicit missing addon path is an error. Use the workspace commands so this
 selection step also runs for tests, typechecking, and development builds.
 
+After building, `pnpm size` measures the distributed ESM/CJS modules with production
+constants and Brotli compression. It disables workspace TypeScript path aliases
+and checks esbuild's actual module inputs so a published-package budget cannot
+silently measure `src` files. Separate imports track synchronous and asynchronous
+memo costs. `pnpm test:size-boundaries` exercises this boundary against conflicting
+source aliases without requiring a repository build.
+
 ## Commit Convention
 
 ```bash

@@ -1,5 +1,8 @@
 const production = config => ({
   ...config,
+  // Measure the distributed JavaScript. Workspace paths otherwise redirect
+  // @fictjs/runtime imports to src and conceal CJS packaging overhead.
+  tsconfigRaw: { compilerOptions: {} },
   define: {
     ...config.define,
     __DEV__: 'false',
@@ -9,33 +12,35 @@ const production = config => ({
 
 export default [
   {
-    name: 'Fict workspace (ESM)',
+    name: 'Fict package (ESM)',
     path: 'packages/fict/dist/index.js',
-    // Production Brotli baseline after hydration, cleanup/selector ownership,
-    // deep-store correctness, and keyed-rendering optimizations. Isolated builds
-    // with the same dependencies: ecacec8b 21,573 B; 27dbe2d9 21,998 B;
-    // 64f2f083 22,076 B (+78 B for the latest performance optimizations).
-    // Async graph input invalidation: 22,119 B (+43 B). This legacy check
-    // follows workspace TypeScript aliases; packed artifacts are qualified separately.
-    limit: '22.2 KB',
+    // Distributed production Brotli: 3d763bfd 22,033 B; 877825bf 22,135 B.
+    // Source-aliased historical values are retained in the dated size archive.
+    limit: '22.3 KB',
     modifyEsbuildConfig: production,
   },
   {
-    name: 'Fict workspace (CJS)',
+    name: 'Fict package (CJS)',
     path: 'packages/fict/dist/index.cjs',
-    // The same production baseline with CJS interop overhead. Isolated builds:
-    // ecacec8b 23,527 B; 27dbe2d9 23,934 B; 64f2f083 24,021 B
-    // (+87 B for the latest performance optimizations).
-    // Explicit async advanced exports: 25,505 B (+1,484 B). CJS imports the
-    // advanced namespace used by the main facade. ESM omits unused async code.
-    limit: '25.6 KB',
+    // Distributed CJS: 3d763bfd 39,477 B; 877825bf 40,982 B. CommonJS
+    // namespace exports retain more code than the former source-aliased check.
+    limit: '41.1 KB',
     modifyEsbuildConfig: production,
   },
   {
-    name: 'Fict workspace async memo (ESM)',
+    name: 'Fict package async memo (ESM)',
     path: 'packages/fict/dist/advanced.js',
     import: '{ createAsyncMemo }',
-    limit: '6.5 KB',
+    // 877825bf: 6,905 B including the graph, lifecycle, and async protocol.
+    limit: '7 KB',
+    modifyEsbuildConfig: production,
+  },
+  {
+    name: 'Fict package sync memo (ESM)',
+    path: 'packages/fict/dist/index.js',
+    import: '{ createMemo }',
+    // Guard synchronous consumers independently of the new async primitive.
+    limit: '4.4 KB',
     modifyEsbuildConfig: production,
   },
 ]

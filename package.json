@@ -87,7 +87,7 @@
     "guardrails:typecheck-config": "node scripts/check-typecheck-config.mjs",
     "typecheck:tests": "pnpm -C packages/runtime typecheck:tests && pnpm -C packages/compiler typecheck:tests && pnpm -C packages/vite-plugin typecheck:tests && pnpm -C packages/webpack-plugin typecheck:tests && pnpm -C packages/ssr typecheck:tests",
     "typecheck:strict-candidate": "node scripts/typecheck-strict-candidate.mjs --fail-on-error",
-    "size": "size-limit",
+    "size": "pnpm test:size-boundaries && node scripts/verify-size-inputs.mjs && size-limit",
     "size:analyze": "size-limit --why",
     "commit": "cz",
     "changeset": "changeset",
@@ -117,7 +117,8 @@
     "stress:runtime": "pnpm --dir packages/runtime test:stress",
     "stress:runtime:long": "pnpm --dir packages/runtime test:stress:long",
     "release:compiler:verify": "pnpm test:compiler:capability-release-gate && pnpm --filter @fictjs/runtime build && pnpm --filter fict build && pnpm --dir packages/compiler lint && pnpm --dir packages/compiler typecheck && pnpm --dir packages/compiler test && pnpm test:compiler:native-host && pnpm test:compiler:native-runtime && pnpm test:vite:native && pnpm test:webpack:native && pnpm test:playground:native && pnpm test:vscode:native && pnpm guardrails:compiler-capabilities && pnpm guardrails:metadata-protocol && pnpm guardrails:runtime-abi && pnpm guardrails:compiler-complexity && pnpm verify:rust-workspace",
-    "test:compiler:build-cache": "node --test scripts/run-turbo.test.mjs"
+    "test:compiler:build-cache": "node --test scripts/run-turbo.test.mjs",
+    "test:size-boundaries": "node --test scripts/verify-size-inputs.test.mjs"
   },
   "devDependencies": {
     "@babel/core": "^7.29.7",

@@ -13,7 +13,7 @@ not only an analysis pass, an API sketch, or a passing unrelated test suite.
 | S4   | Custom compiler host environment and metadata obligations are executable and documented.                                                                              | Facade/native integration contract tests, missing metadata cases, consumer package checks.                                                                                                    | Pending  |
 | S5   | Representative application coverage measures strict boundary incidence and usable diagnostic repairs.                                                                 | Maintained corpus with source identity, diagnostics, boundary/LOC counts, migration evidence, strict production and browser gates; distinguish maintained fixtures from independent adoption. | Pending  |
 | S6   | Local build caches include the native compiler source and artifact identity used by each host.                                                                        | A changed compiler invalidates dependent build tasks; final qualification forces fresh application builds.                                                                                    | Complete |
-| S7   | Bundle-size gates resolve distributed modules without silently following workspace source aliases.                                                                    | Actual ESM/CJS package measurements, import-specific budgets, and an executable resolution check.                                                                                             | Pending  |
+| S7   | Bundle-size gates resolve distributed modules without silently following workspace source aliases.                                                                    | Actual ESM/CJS package measurements, import-specific budgets, and an executable resolution check.                                                                                             | Complete |
 | G1   | Safe implicit memos with one logical JSX consumer can be removed without erasing observable computation or ownership semantics.                                       | Native output and browser/SSR behavior across safe/full/disabled options, explicit memo, multi-consumer, coercion, errors, and cleanup controls.                                              | Pending  |
 | G2   | Reactive allocation and optimization decisions are traceable from source consumers through EmitIR to generated bindings and owners.                                   | Verified graph/decision information and final-output counters, including reasons for materialization, inlining, retention, and rejected fusion.                                               | Pending  |
 | G3   | Existing SSA simplification facts and lazy placement opportunities are either safely realized in emitted code or accurately reported as retained work.                | Semantic differential tests and final generated-code evidence; no claims based solely on unused analysis fields.                                                                              | Pending  |
@@ -148,3 +148,17 @@ those legacy checks resolve runtime source aliases: actual distributed modules
 measure 22,135 B ESM and 40,982 B CJS, versus baseline 22,033 and 39,477 B. S7
 separately corrects that measurement boundary. No CPU benchmark score is inferred
 from these bundle measurements. Composition and integration remain tracked by A3–A8.
+
+## S7: distributed package size boundaries
+
+Size checks now disable tsconfig path mapping and inspect esbuild's actual module
+inputs. Loading a workspace `packages/*/src` file fails the check. Three executable
+boundary tests cover all configured entry points, deliberately restore a conflicting
+source alias to verify rejection, and reject a direct source entry point. The gate
+runs inside `pnpm size`, including its existing CI, precommit, and release callers.
+
+The four production Brotli checks pass against distributed artifacts: complete
+ESM 22,135 B, complete CJS 40,982 B, the async memo import 6,905 B, and the sync memo
+import 4,309 B. Limits reflect those actual artifacts, with the earlier aliased
+measurements retained in the dated A2 archive rather than relabeled as package
+results. No runtime code or CPU performance measurement changes in this item.
