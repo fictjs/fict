@@ -33,6 +33,7 @@ not only an analysis pass, an API sketch, or a passing unrelated test suite.
 | A8   | Representative applications and documentation demonstrate the unified model and its migration boundaries.                                                             | End-to-end async application scenarios, usable examples, API/package checks and synchronous performance regression checks.                                                                    | Complete |
 | Q1a  | Normal CI executes the same complete native behavior suite as local and release qualification.                                                                        | Canonical root command, legacy domain coverage assertions and current compiler/CI contract checks.                                                                                            | Complete |
 | Q1b  | Async migration documentation preserves immutable legacy-removal approval evidence.                                                                                   | Original guidance digest retained; separate async guide and updated navigation; rollout-state and documentation checks.                                                                       | Complete |
+| Q1c  | Source-map probes cover live component-prop wrappers in both output paths.                                                                                            | Exact JSX origin and inner state-read positions; all ten source-map integration cases.                                                                                                        | Complete |
 | Q1   | The final stack satisfies each row against the current source and artifacts.                                                                                          | Full applicable compiler/runtime/SSR/bundler/strict/browser gates, per-item commits, fresh final audit, and explicit evidence for every completion claim.                                     | Pending  |
 
 Changes must preserve observable JavaScript behavior: reference/receiver semantics,
@@ -706,3 +707,12 @@ source hashes remain historical; final qualification records the current paths.
 The rollout-state gate and its 20 positive/adversarial tests pass with the original
 approval chain. This resolves the migration-digest failure discovered by the
 final `pnpm commit` preflight without weakening that gate.
+
+## Q1c: retain source-map precision for live props
+
+The source-map probe now checks the `__fictProp` wrapper introduced by S2c
+instead of searching for the obsolete snapshot prop output. Both direct-DOM
+and VNode occurrences must map the prop object to the authored child JSX and
+its inner state read to the exact authored expression. No compiler emission or
+mapping is changed; neither the original origin check nor mapping precision is
+relaxed. All ten source-map integration tests pass with all compiler features.
