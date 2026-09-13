@@ -3,8 +3,8 @@
 This contract defines the explicit async computation model. Implementation and
 qualification are tracked separately in
 [the reactivity checklist](./reactivity-implementation-plan.md). The readiness
-state protocol and its executable tests are the first implementation step;
-publishing the contract does not certify the later graph, compiler, or SSR work.
+state protocol and the explicit computed node are implemented. Publishing the
+contract does not certify the later composition, compiler, or SSR work.
 
 ## Compatibility and entry points
 
@@ -12,16 +12,18 @@ publishing the contract does not certify the later graph, compiler, or SSR work.
 Resolution does not itself invalidate a synchronous memo, and JavaScript `await`
 does not implicitly preserve reactive tracking or component ownership.
 
-The new opt-in entry point is `createAsyncMemo(produce)`. Its accessor reads a
+The opt-in runtime entry point is `createAsyncMemo(produce)` from `fict/advanced`
+or `@fictjs/runtime/advanced`. Its accessor reads a
 current value, with `state()` for an immutable readiness snapshot and `latest()`
 for explicit stale-value reads. `refresh()` invalidates the current generation;
-`dispose()` permanently ends its ownership. These entry points are introduced by
-the node implementation, not by the state protocol alone.
+`dispose()` permanently ends its ownership.
 
 The producer receives a context containing an `AbortSignal` and the prior
 successful value with a separate `hasValue` flag. It can return a synchronous
 value, a Promise-like value, or an async iterable. Synchronous source reads form
-the input dependencies. Read inputs before returning the Promise or iterator;
+the input dependencies. The node starts lazily on its first read. Once activated,
+it schedules dependency checks on input invalidation even if only an imperative
+token waiter remains. Equal inputs do not restart the producer. Read inputs before returning the Promise or iterator;
 reads after a native `await` or inside an iterator continuation are not tracked.
 Compiler-supported continuations must lower to this same explicit input/lifetime
 contract. Ordinary async components retain their existing synchronous-render ABI
@@ -51,6 +53,10 @@ Replacing an evaluation wakes its old waiters. A late completion cannot replace
 the new value, alter its error, finish a newer transition, or restore subscriptions.
 The node checks input invalidation before accepting a completion, including the
 race where a source write happens before the scheduled graph flush.
+
+The `pending` field of a pending/refreshing snapshot contains the readiness token;
+it is `undefined` in other states. Retained snapshots preserve their own token or
+value, including when read by cleanup before a new effect commit.
 
 Readiness tokens are branded, stable per generation, and resolve as wakeups. They
 do not reject: consumers retry and obtain the current state or original failure.

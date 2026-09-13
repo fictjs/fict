@@ -480,6 +480,12 @@ export function effectScope(fn: () => void): () => void
 // Render effect - synchronous effect for DOM updates
 export function createRenderEffect(fn: () => void | Cleanup): () => void
 
+// Explicit async computation; ordinary createMemo Promise values are unchanged.
+export function createAsyncMemo<T>(
+  produce: (context: AsyncContext<T>) => T | PromiseLike<T> | AsyncIterable<T>,
+  options?: AsyncMemoOptions,
+): AsyncMemo<T>
+
 // Mark manual low-level getter/callback intent
 export function reactive<T>(fn: () => T): () => T
 export function nonReactive<T extends (...args: unknown[]) => unknown>(fn: T): T
@@ -492,6 +498,15 @@ export function nonReactive<T extends (...args: unknown[]) => unknown>(fn: T): T
 > - Utility libraries / non-component code
 >
 > Prefer `$state` inside components; use `$store` for deep shared objects across components.
+
+`createAsyncMemo` is exported by `fict/advanced` and `@fictjs/runtime/advanced`.
+Its accessor reads a current value, `state()` reports readiness, and `latest()`
+explicitly permits a previous success. `refresh()` starts a new evaluation;
+`dispose()` ends its lifetime. `AsyncContext`, `AsyncMemoOptions`, `AsyncSnapshot`,
+`AsyncPending`, `AsyncDisposedError`, and `AsyncEmptyError` belong to the same
+advanced surface. See the [async contract](./async-graph-contract.md) for generation,
+cancellation, and composition requirements and the implementation checklist for
+integration qualification.
 
 ### 3.1 Binding Creation Helpers
 

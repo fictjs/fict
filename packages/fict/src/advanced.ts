@@ -49,6 +49,14 @@ export {
 
   // Low-level Primitives
   createRenderEffect,
+  createAsyncMemo,
+  AsyncDisposedError,
+  AsyncEmptyError,
+  type AsyncMemo,
+  type AsyncMemoOptions,
+  type AsyncContext,
+  type AsyncSnapshot,
+  type AsyncPending,
 
   // Context API (for subtree scoping / SSR isolation / multi-instance)
   createContext,

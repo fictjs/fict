@@ -1,0 +1,97 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-09-13",
+  "baselineRevision": "3d763bfd95bdafee71db6d32200c5780a4083f5f",
+  "candidate": "Async computation implementation on the baseline revision; identified by source and artifact digests below",
+  "tools": {
+    "node": "v24.16.0",
+    "sizeLimit": "12.0.0",
+    "esbuild": "0.27.0"
+  },
+  "measurement": {
+    "unit": "bytes",
+    "compression": "Brotli",
+    "minified": true,
+    "production": true,
+    "workspace": "Existing size-limit behavior, including tsconfig source aliases",
+    "package": "The same checks with tsconfigRaw.compilerOptions={} to use distributed modules"
+  },
+  "baselineEvidence": {
+    "cacheArchives": [
+      {
+        "sha256": "d2d29e2a552ad0055e4b68a64a3f980cc61ba1281ad072a597be9d64493282d6"
+      },
+      {
+        "sha256": "60fe40628b504312586e92ed92960f40299168b3f8e08904ca2e44b01b1d65fb"
+      }
+    ],
+    "verifiedSourceMapEntries": 86
+  },
+  "hashAlgorithm": "sha256 of each sorted relative file path, NUL, file bytes, NUL",
+  "baselineSources": {
+    "files": 58,
+    "sha256": "4f345e52ff87816bdb06d1e08b9b39acb497475ff42af8d721a553aba801fbc9"
+  },
+  "candidateSources": {
+    "files": 59,
+    "sha256": "aac9ef64fb38c10e678f31a4a6f0cf688bf8cc47f4c10bc9987116cce85b7078"
+  },
+  "baselineArtifacts": {
+    "files": 164,
+    "sha256": "e6074f2aeef1b4dbef39d9e746fd2671cd191b37b9cfb779cd067bb7e236dc05"
+  },
+  "candidateArtifacts": {
+    "files": 164,
+    "sha256": "2facbb49b3d86ebd3eb252ee98159cb9785920e598a88edbaa55e8d3cd0c3966"
+  },
+  "results": [
+    {
+      "name": "baseline workspace js",
+      "size": 22076
+    },
+    {
+      "name": "baseline workspace cjs",
+      "size": 24021
+    },
+    {
+      "name": "current workspace js",
+      "size": 22119
+    },
+    {
+      "name": "current workspace cjs",
+      "size": 25505
+    },
+    {
+      "name": "current memo ESM",
+      "size": 2157
+    },
+    {
+      "name": "current async ESM",
+      "size": 6395
+    },
+    {
+      "name": "baseline package js",
+      "size": 22033
+    },
+    {
+      "name": "baseline package cjs",
+      "size": 39477
+    },
+    {
+      "name": "current package js",
+      "size": 22135
+    },
+    {
+      "name": "current package cjs",
+      "size": 40982
+    },
+    {
+      "name": "current package memo ESM",
+      "size": 4309
+    },
+    {
+      "name": "current package async ESM",
+      "size": 6905
+    }
+  ]
+}

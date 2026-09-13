@@ -173,6 +173,10 @@ export interface ComputedNode<T = unknown> extends BaseNode {
   devToolsInternal?: boolean
   /** Boxed error from the last failed update; reads rethrow until deps change */
   thrownError?: { error: unknown } | undefined
+  /** Owned async computations retain inputs while suspended consumers retry. */
+  retainDependencies?: boolean
+  /** Queue an activated async producer when its inputs may have changed. */
+  onInvalidate?: () => void
 }
 
 /**
@@ -601,6 +605,7 @@ function unwatched(dep: ReactiveNode): void {
   if (!(dep.flags & Mutable)) {
     disposeNode(dep)
   } else if ('getter' in dep && dep.getter !== undefined) {
+    if (dep.retainDependencies) return
     dep.depsTail = undefined
     dep.flags = MutableDirty
     purgeDeps(dep)
@@ -653,6 +658,7 @@ function propagate(firstLink: Link): void {
     if (flags & Watching) notify(sub)
 
     if (flags & Mutable) {
+      ;(sub as ComputedNode).onInvalidate?.()
       const subSubs = sub.subs
       if (subSubs !== undefined) {
         const nextSub = subSubs.nextSub
@@ -1407,6 +1413,19 @@ export function computed<T>(
   getter: (oldValue?: T) => T,
   options?: MemoOptions<T>,
 ): ComputedAccessor<T> {
+  const c = createComputedNode(getter, options)
+  if (c.root) registerRootCleanup(() => disposeComputedPermanently(c))
+  const bound = (computedOper as (this: ComputedNode<T>) => T).bind(
+    c as any,
+  ) as ComputedAccessor<T> & Record<symbol, boolean>
+  bound[COMPUTED_MARKER] = true
+  return bound as ComputedAccessor<T>
+}
+
+function createComputedNode<T>(
+  getter: (oldValue?: T) => T,
+  options?: MemoOptions<T>,
+): ComputedNode<T> {
   const c: ComputedNode<T> = {
     value: undefined as unknown as T,
     subs: undefined,
@@ -1422,16 +1441,77 @@ export function computed<T>(
   if (options?.devToolsSource !== undefined) c.devToolsSource = options.devToolsSource
   if (options?.internal === true) c.devToolsInternal = true
   const root = getCurrentRoot()
-  if (root) {
-    c.root = root
-    registerRootCleanup(() => disposeComputedPermanently(c))
-  }
+  if (root) c.root = root
   if (isDev) registerComputedDevtools(c)
-  const bound = (computedOper as (this: ComputedNode<T>) => T).bind(
-    c as any,
-  ) as ComputedAccessor<T> & Record<symbol, boolean>
-  bound[COMPUTED_MARKER] = true
-  return bound as ComputedAccessor<T>
+  return c
+}
+
+/** Internal bridge: one computed node owns both input links and async snapshots. */
+export function createAsyncGraphNode<T>(
+  getter: () => T,
+  onDispose: () => T,
+  onError: (error: unknown) => T,
+  options?: MemoOptions<T>,
+): { read: () => T; publish: (value: T) => void; invalidate: () => void; dispose: () => void } {
+  const node = createComputedNode(getter, options)
+  node.retainDependencies = true
+  const read = (computedOper as (this: ComputedNode<T>) => T).bind(node)
+  const publish = (value: T) => {
+    if (node.disposed || node.value === value) return
+    if (node.subs) {
+      // The value is already committed. Mark direct consumers dirty so a pull
+      // does not treat this as an unchanged synchronous getter evaluation.
+      propagate(node.subs)
+      shallowPropagate(node.subs)
+      if (!batchDepth) scheduleFlush()
+    }
+    // Queue consumers before recording the snapshot: an async publication may
+    // itself be the first work of the next flush, whose cleanup needs this value.
+    recordCleanupSnapshot(node, node.value)
+    node.value = value
+    node.hasValue = true
+    if (isDev) updateComputedDevtools(node, value)
+  }
+  let scheduled = false
+  node.onInvalidate = () => {
+    if (scheduled || node.disposed) return
+    scheduled = true
+    enqueueMicrotask(() => {
+      scheduled = false
+      if (node.disposed) return
+      try {
+        untrack(read)
+      } catch (error) {
+        const value = withRootContext(node.root, () => onError(error))
+        node.flags = Mutable
+        node.thrownError = undefined
+        publish(value)
+      }
+    })
+  }
+  const dispose = () => {
+    if (node.disposed) return
+    try {
+      publish(onDispose())
+    } finally {
+      delete node.onInvalidate
+      disposeComputedPermanently(node)
+    }
+  }
+  if (node.root) registerRootCleanup(dispose)
+  return {
+    read,
+    publish,
+    invalidate: () => {
+      if (node.disposed) return
+      node.flags |= Dirty
+      if (node.subs) {
+        propagate(node.subs)
+        if (!batchDepth) scheduleFlush()
+      }
+    },
+    dispose,
+  }
 }
 function computedOper<T>(this: ComputedNode<T>): T {
   // fix: During cleanup, return previous value for this flush without triggering updates.

@@ -13,13 +13,14 @@ not only an analysis pass, an API sketch, or a passing unrelated test suite.
 | S4   | Custom compiler host environment and metadata obligations are executable and documented.                                                                              | Facade/native integration contract tests, missing metadata cases, consumer package checks.                                                                                                    | Pending  |
 | S5   | Representative application coverage measures strict boundary incidence and usable diagnostic repairs.                                                                 | Maintained corpus with source identity, diagnostics, boundary/LOC counts, migration evidence, strict production and browser gates; distinguish maintained fixtures from independent adoption. | Pending  |
 | S6   | Local build caches include the native compiler source and artifact identity used by each host.                                                                        | A changed compiler invalidates dependent build tasks; final qualification forces fresh application builds.                                                                                    | Complete |
+| S7   | Bundle-size gates resolve distributed modules without silently following workspace source aliases.                                                                    | Actual ESM/CJS package measurements, import-specific budgets, and an executable resolution check.                                                                                             | Pending  |
 | G1   | Safe implicit memos with one logical JSX consumer can be removed without erasing observable computation or ownership semantics.                                       | Native output and browser/SSR behavior across safe/full/disabled options, explicit memo, multi-consumer, coercion, errors, and cleanup controls.                                              | Pending  |
 | G2   | Reactive allocation and optimization decisions are traceable from source consumers through EmitIR to generated bindings and owners.                                   | Verified graph/decision information and final-output counters, including reasons for materialization, inlining, retention, and rejected fusion.                                               | Pending  |
 | G3   | Existing SSA simplification facts and lazy placement opportunities are either safely realized in emitted code or accurately reported as retained work.                | Semantic differential tests and final generated-code evidence; no claims based solely on unused analysis fields.                                                                              | Pending  |
 | G4   | Creation, replacement, and append costs are profiled and reduced where measurements support safe changes.                                                             | Controlled allocation/CPU profiles, complete repeated benchmark batches, memory and disposal checks, documented rejected experiments.                                                         | Pending  |
 | G5   | README performance claims correspond to the qualified strict build and identify versions, artifact hashes, normalization, uncertainty, and the unrounded 1.10 target. | Frozen source/build provenance, complete keyed/browser checks, reproducible archive and README data validation.                                                                               | Pending  |
 | A1   | An async graph contract specifies readiness, stale/current values, invalidation, errors, effect commit, ownership, and compatibility.                                 | Implementable state transitions and executable acceptance scenarios, not percentage scores.                                                                                                   | Complete |
-| A2   | An explicit async computation is a reactive graph node, including Promise and async iterable completion, invalidation, and cancellation.                              | Graph-level dependency/status behavior, stale-flight rejection, cancellation and disposal tests; preserve existing Promise-valued synchronous memo behavior.                                  | Pending  |
+| A2   | An explicit async computation is a reactive graph node, including Promise and async iterable completion, invalidation, and cancellation.                              | Graph-level dependency/status behavior, stale-flight rejection, cancellation and disposal tests; preserve existing Promise-valued synchronous memo behavior.                                  | Complete |
 | A3   | Pending/error states compose through synchronous derived nodes and effect/render consumers with defined commit semantics.                                             | Chains, diamonds, conditional subscriptions, independent boundaries, error recovery, no unintended partial commits, and cleanup ordering.                                                     | Pending  |
 | A4   | Resource uses the shared async computation protocol while retaining its data/cache policies.                                                                          | Existing resource/cache/TTL/SWR/LRU/sharing/optimistic/SSR regressions and new graph-composition coverage.                                                                                    | Pending  |
 | A5   | Transition readiness accounts for registered downstream async work caused by updates, including indirectly triggered requests.                                        | Overlapping transitions, unrelated roots, stale completions, callback failures, disposal, and the indirect-resource regression.                                                               | Pending  |
@@ -121,3 +122,29 @@ failure, disposed waiters, immutable snapshots, arbitrary rejection values, and
 ordinary Promise-valued synchronous memo behavior. Production and test typechecks
 cover the new protocol. This foundation does not claim that the remaining async
 integration work is complete.
+
+## A2: explicit async computed nodes
+
+`createAsyncMemo` in the advanced entries uses one computed node for both input
+subscriptions and readiness snapshots. It supports synchronous results, captured
+thenables, and async iterables; current and stale reads, refresh, cancellation,
+and terminal disposal share the A1 protocol. Activated nodes check invalidations
+even when only imperative readiness waiters remain. Each producer generation owns
+its cleanup root. Ordinary synchronous memo semantics stay unchanged.
+
+Thirty-five protocol/node tests cover publication races before a scheduled flush,
+conditional/equal inputs, temporary unsubscription, method getter/receiver semantics,
+per-generation cleanup, disposal from inside production, throwing cleanup, recursive
+reads, streams and empty streams, stale rejections, and cleanup snapshots when an
+async publication starts the next flush. Production/test typechecks, package ESM/CJS
+consumer probes, native compiler behavioral tests, and workspace builds pass.
+
+The [size comparison](./benchmarks/async-node-size-2026-09-13.json) identifies source
+and artifact trees. Cached baseline sourcemaps were checked against `3d763bfd`.
+The existing workspace checks grow from 22,076 to 22,119 B for ESM and from 24,021
+to 25,505 B for CJS (production Brotli). Their limits are updated to the measured
+new API cost, with a separate 6.5 KB async-import gate. The audit also found that
+those legacy checks resolve runtime source aliases: actual distributed modules
+measure 22,135 B ESM and 40,982 B CJS, versus baseline 22,033 and 39,477 B. S7
+separately corrects that measurement boundary. No CPU benchmark score is inferred
+from these bundle measurements. Composition and integration remain tracked by A3–A8.

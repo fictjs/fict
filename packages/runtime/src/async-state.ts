@@ -13,19 +13,43 @@ type AsyncValue<T> =
 /** A value of `undefined` and a rejection of `undefined` are both representable. */
 export type AsyncSnapshot<T> = { readonly generation: number } & (
   | {
-      readonly status: 'uninitialized' | 'pending'
+      readonly status: 'uninitialized'
       readonly hasValue: false
       readonly value: undefined
       readonly error: undefined
+      readonly pending: undefined
     }
   | {
-      readonly status: 'ready' | 'refreshing'
+      readonly status: 'pending'
+      readonly hasValue: false
+      readonly value: undefined
+      readonly error: undefined
+      readonly pending: AsyncPending
+    }
+  | {
+      readonly status: 'ready'
       readonly hasValue: true
       readonly value: T
       readonly error: undefined
+      readonly pending: undefined
     }
-  | ({ readonly status: 'errored'; readonly error: unknown } & AsyncValue<T>)
-  | ({ readonly status: 'disposed'; readonly error: undefined } & AsyncValue<T>)
+  | {
+      readonly status: 'refreshing'
+      readonly hasValue: true
+      readonly value: T
+      readonly error: undefined
+      readonly pending: AsyncPending
+    }
+  | ({
+      readonly status: 'errored'
+      readonly error: unknown
+      readonly pending: undefined
+    } & AsyncValue<T>)
+  | ({
+      readonly status: 'disposed'
+      readonly error: undefined
+      readonly pending: undefined
+    } & AsyncValue<T>)
 )
 
 export class AsyncDisposedError extends Error {
@@ -60,6 +84,22 @@ interface Flight {
   yielded: boolean
 }
 
+export function readAsyncSnapshot<T>(snapshot: AsyncSnapshot<T>): T {
+  switch (snapshot.status) {
+    case 'ready':
+      return snapshot.value
+    case 'pending':
+    case 'refreshing':
+      throw snapshot.pending
+    case 'errored':
+      throw snapshot.error
+    case 'disposed':
+      throw new AsyncDisposedError()
+    default:
+      throw new Error('[fict] Async computation has not started.')
+  }
+}
+
 /**
  * Contains no signals, effects, cache policy, or host callbacks. A graph node owns
  * this state and publishes changed snapshots through its existing subscriptions.
@@ -73,6 +113,7 @@ export class AsyncState<T> {
     hasValue: false,
     value: undefined,
     error: undefined,
+    pending: undefined,
   })
   private flight: Flight | undefined
 
@@ -104,8 +145,16 @@ export class AsyncState<T> {
             hasValue: true,
             value: this.current.value,
             error: undefined,
+            pending: token,
           }
-        : { generation, status: 'pending', hasValue: false, value: undefined, error: undefined },
+        : {
+            generation,
+            status: 'pending',
+            hasValue: false,
+            value: undefined,
+            error: undefined,
+            pending: token,
+          },
     )
     return token
   }
@@ -120,6 +169,7 @@ export class AsyncState<T> {
       hasValue: true,
       value,
       error: undefined,
+      pending: undefined,
     })
     flight.yielded = true
     flight.wake()
@@ -130,7 +180,7 @@ export class AsyncState<T> {
   reject(generation: number, error: unknown): boolean {
     const flight = this.flight
     if (!flight || flight.generation !== generation) return false
-    this.current = Object.freeze({ ...this.current, status: 'errored', error })
+    this.current = Object.freeze({ ...this.current, status: 'errored', error, pending: undefined })
     this.flight = undefined
     flight.wake()
     return true
@@ -150,25 +200,18 @@ export class AsyncState<T> {
     if (this.current.status === 'disposed') return false
     const flight = this.flight
     this.flight = undefined
-    this.current = Object.freeze({ ...this.current, status: 'disposed', error: undefined })
+    this.current = Object.freeze({
+      ...this.current,
+      status: 'disposed',
+      error: undefined,
+      pending: undefined,
+    })
     flight?.wake()
     return true
   }
 
   read(): T {
-    switch (this.current.status) {
-      case 'ready':
-        return this.current.value
-      case 'pending':
-      case 'refreshing':
-        throw this.flight!.token
-      case 'errored':
-        throw this.current.error
-      case 'disposed':
-        throw new AsyncDisposedError()
-      default:
-        throw new Error('[fict] Async computation has not started.')
-    }
+    return readAsyncSnapshot(this.current)
   }
 
   /** Explicit stale reads never turn an absent value into an invented value. */

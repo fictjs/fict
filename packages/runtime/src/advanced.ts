@@ -85,6 +85,19 @@ export {
 
 export { createRenderEffect } from './effect'
 
+export {
+  createAsyncMemo,
+  type AsyncMemo,
+  type AsyncMemoOptions,
+  type AsyncContext,
+} from './async-memo'
+export {
+  AsyncDisposedError,
+  AsyncEmptyError,
+  type AsyncSnapshot,
+  type AsyncPending,
+} from './async-state'
+
 // ============================================================================
 // Cross-component Signal (escape hatch for scalar/lightweight values)
 // ============================================================================
