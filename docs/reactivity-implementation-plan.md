@@ -12,7 +12,7 @@ not only an analysis pass, an API sketch, or a passing unrelated test suite.
 | S3   | Collection, fresh-copy, and per-row signal analysis supports the optimized keyed fixture with strict guarantees.                                                      | Strict fixture compilation, precise alias/mutation regressions, same-key replacement and teardown behavior.                                                                                   | Pending  |
 | S4   | Custom compiler host environment and metadata obligations are executable and documented.                                                                              | Facade/native integration contract tests, missing metadata cases, consumer package checks.                                                                                                    | Pending  |
 | S5   | Representative application coverage measures strict boundary incidence and usable diagnostic repairs.                                                                 | Maintained corpus with source identity, diagnostics, boundary/LOC counts, migration evidence, strict production and browser gates; distinguish maintained fixtures from independent adoption. | Pending  |
-| S6   | Local build caches include the native compiler source and artifact identity used by each host.                                                                        | A changed compiler invalidates dependent build tasks; final qualification forces fresh application builds.                                                                                    | Pending  |
+| S6   | Local build caches include the native compiler source and artifact identity used by each host.                                                                        | A changed compiler invalidates dependent build tasks; final qualification forces fresh application builds.                                                                                    | Complete |
 | G1   | Safe implicit memos with one logical JSX consumer can be removed without erasing observable computation or ownership semantics.                                       | Native output and browser/SSR behavior across safe/full/disabled options, explicit memo, multi-consumer, coercion, errors, and cleanup controls.                                              | Pending  |
 | G2   | Reactive allocation and optimization decisions are traceable from source consumers through EmitIR to generated bindings and owners.                                   | Verified graph/decision information and final-output counters, including reasons for materialization, inlining, retention, and rejected fusion.                                               | Pending  |
 | G3   | Existing SSA simplification facts and lazy placement opportunities are either safely realized in emitted code or accurately reported as retained work.                | Semantic differential tests and final generated-code evidence; no claims based solely on unused analysis fields.                                                                              | Pending  |
@@ -90,3 +90,18 @@ Both frozen replay suites pass, covering 3,172 inputs including the one Preview
 fixture, with deterministic checks twice per input. The complete `pnpm commit`
 preflight, build, corpus, bundle-size, review-regression, workspace-test, typecheck,
 format, and lint sequence passes.
+
+## S6: compiler-aware build caching
+
+Workspace Turbo commands pin the selected native addon and hash its actual bytes.
+The cache also includes Rust sources and build manifests, compiler capabilities,
+and diagnostics. The absolute addon path passes through to compiler hosts without
+making identical binaries machine-specific cache inputs. A missing default addon
+forces task execution; an explicit missing override fails before any task runs.
+
+Validation uses a real isolated Turbo workspace: unchanged inputs hit the cache,
+Rust edits invalidate it, replacing addon bytes at the same path invalidates it,
+and relocating identical bytes retains the cache hit. Both integration tests and
+all 55 release-verification checks pass. A fresh root `pnpm build --summarize`
+executes all 31 tasks successfully with zero cache hits. The cache test runs in CI,
+precommit, and release verification.

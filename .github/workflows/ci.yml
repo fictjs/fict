@@ -139,6 +139,9 @@ jobs:
       - name: Build and smoke host native compiler
         run: pnpm test:compiler:native-host
 
+      - name: Verify native compiler build cache invalidation
+        run: pnpm test:compiler:build-cache
+
       - name: Clean-install the host native package without Rust
         run: >-
           node scripts/native-compiler-package-smoke.mjs

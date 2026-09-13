@@ -1,6 +1,20 @@
 {
   "$schema": "https://turbo.build/schema.json",
-  "globalDependencies": [".env", "tsconfig.base.json"],
+  "globalDependencies": [
+    ".env",
+    "tsconfig.base.json",
+    "Cargo.toml",
+    "Cargo.lock",
+    "rust-toolchain.toml",
+    "crates/fict-*/Cargo.toml",
+    "crates/fict-*/build.rs",
+    "crates/fict-*/src/**",
+    "diagnostics/registry.json",
+    "packages/compiler/compiler-capabilities.json",
+    "scripts/run-turbo.mjs",
+    "scripts/prepare-native-compiler-addon.mjs",
+    "scripts/native-compiler-packages.mjs"
+  ],
   "tasks": {
     "build": {
       "dependsOn": ["^build", "typecheck"],
@@ -52,5 +66,7 @@
     "clean": {
       "cache": false
     }
-  }
+  },
+  "globalEnv": ["FICT_COMPILER_ARTIFACT_HASH"],
+  "globalPassThroughEnv": ["FICT_COMPILER_NATIVE_PATH"]
 }

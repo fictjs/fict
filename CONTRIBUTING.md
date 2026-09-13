@@ -66,6 +66,20 @@ pnpm build                    # Build all packages
 pnpm build --filter @fictjs/runtime  # Build specific package
 ```
 
+Workspace commands run Turbo through `scripts/run-turbo.mjs`. The wrapper selects
+the local native compiler and includes its binary digest in the cache key; Turbo
+also hashes the Rust sources, build manifests, diagnostic registry, and compiler
+capabilities. Replacing an addon at the same path invalidates dependent builds.
+
+To select a custom addon, set `FICT_COMPILER_NATIVE_PATH`. Relative paths resolve
+from the workspace root. Commands that first build the native compiler also
+replace the addon at that path; use `node scripts/run-turbo.mjs run build` to test
+an already prepared binary. The selected path is passed to compiler hosts, while
+the binary digest identifies it for caching. If the default
+addon has not been built, non-native commands can run with caching disabled. An
+explicit missing addon path is an error. Use the workspace commands so this
+selection step also runs for tests, typechecking, and development builds.
+
 ## Commit Convention
 
 ```bash
