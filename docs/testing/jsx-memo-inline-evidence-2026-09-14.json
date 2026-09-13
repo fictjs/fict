@@ -1,0 +1,885 @@
+{
+  "schemaVersion": 1,
+  "item": "G1 - single-consumer scalar JSX memo inlining",
+  "recordedAt": "2026-09-13T19:46:15.266Z",
+  "baselineRevision": "7641add24ae3966b51b014a09503bc52aa88d207",
+  "baselineCompiler": {
+    "backend": "rust",
+    "nativeTarget": "aarch64-apple-darwin",
+    "oxcVersion": "0.139.0",
+    "nodeApiVersion": 10,
+    "compilerBuildId": "fict-rust-p1-oxc0.139.0-m1-bb89a5499be26d01d918458e4fe4f666feb6d24a6c3aa5a3305f37e43e089528",
+    "compilerBuildRevision": null,
+    "compilerProtocolVersion": 1,
+    "metadataSchemaVersion": 1,
+    "compilerCapabilityManifestVersion": 2,
+    "compilerCapabilityManifestDigest": "sha256:8d85c68309d486fb1ac13747f35b2236f2893df69a1fae6f80edc065cb53c361",
+    "compilerCapabilityPackageVersion": "0.35.0"
+  },
+  "baselineNativeArtifactSha256": "98ff1455a02e1b6f97982e8efc7194b75768ff966fe66b591de559cb5609a066",
+  "compiler": {
+    "backend": "rust",
+    "nativeTarget": "aarch64-apple-darwin",
+    "oxcVersion": "0.139.0",
+    "nodeApiVersion": 10,
+    "compilerBuildId": "fict-rust-p1-oxc0.139.0-m1-b7fadddadcb27d8775487221ee8b03b3bfbe0c052f70bf01a56d9a123a398d8e",
+    "compilerBuildRevision": null,
+    "compilerProtocolVersion": 1,
+    "metadataSchemaVersion": 1,
+    "compilerCapabilityManifestVersion": 2,
+    "compilerCapabilityManifestDigest": "sha256:8d85c68309d486fb1ac13747f35b2236f2893df69a1fae6f80edc065cb53c361",
+    "compilerCapabilityPackageVersion": "0.35.0"
+  },
+  "nativeArtifactSha256": "a3d7229ce59113d5208334ee44d7855fbecccb2baf57adcb97488925dfb21d7b",
+  "sourceFiles": [
+    {
+      "file": "crates/fict-compiler-oxc/src/emit_codegen.rs",
+      "sha256": "ee2010df8c81505ca1712662c7d717baa4f962f00dfda57bc9c7063aacfba98d"
+    },
+    {
+      "file": "crates/fict-compiler-oxc/src/emit_codegen/derived_inline.rs",
+      "sha256": "cd164f97f1853a083a5492457f5494a6939c0a0581db6d56e53fed3d074d9988"
+    },
+    {
+      "file": "crates/fict-compiler-oxc/src/emit_codegen/jsx_derived_inline.rs",
+      "sha256": "4fc8688096a0b8d6aa6e38bfb8699e66b66ced3c25a77df4e8792e934ceb3520"
+    },
+    {
+      "file": "crates/fict-compiler-oxc/src/emit_codegen/semantic_identity.rs",
+      "sha256": "715ebe21f58938fba46cb2dd44c062e1fb06db2e70fcbea915060dadd53eafff"
+    },
+    {
+      "file": "scripts/native-compiler-jsx-memo-inline.test.mjs",
+      "sha256": "8d66c927bcb0ba7d914f788d6d17db51a50f45bf746c5069842ea488faaaad24"
+    },
+    {
+      "file": "scripts/native-compiler-jsx-memo-browser.test.mjs",
+      "sha256": "4f693747b1a2307ce580783b8f9679b447198c457b6d138bec5b4d9c00cb434d"
+    },
+    {
+      "file": "scripts/fixtures/jsx-memo-inline/App.tsx",
+      "sha256": "f17a651cadaec433d39a387f15b163af5d15cc4a52f87307e72b883c529efb88"
+    }
+  ],
+  "review": {
+    "method": "Reproduce all 3172 frozen inputs with the retained baseline addon; compare current output. Resolve removed memo declarations and their accessor calls by lexical symbols, substitute getter expressions, normalize runtime imports and compare generated ASTs. Manually inspect all 22 changed sources and output diffs.",
+    "unchanged": [
+      "all acceptance statuses",
+      "all diagnostic sequences",
+      "all source requests and options",
+      "all legacy Babel outputs and maps",
+      "acceptance-deviation policies",
+      "legacy capture provenance"
+    ],
+    "onlyMemoInlining": 22,
+    "removedMemos": 26,
+    "replacedReads": 51,
+    "currentOracleReference": "crates/fict-compiler/tests/babel_0_28_dom_semantic_oracle.json",
+    "limits": "Structural comparison supplements execution tests; it is not a general semantic equivalence proof. Counts describe emitted declarations and reads across fixture outputs, not dynamic allocations or CPU savings. The DOM oracle current corpus hash is rebound without recapturing Babel output. No benchmark timings are collected.",
+    "comparisonSha256": "8719a0302bb18d61057b6effac697e7904d1bce100062ddcb236f5ca618dd729",
+    "structuralReviewSha256": "86b7b2607224e6a3765b735337aa74c72aef625325c7ab362f77e9f0143795af"
+  },
+  "validation": [
+    {
+      "command": "node --test scripts/native-compiler-jsx-memo-inline.test.mjs",
+      "baseline": {
+        "passed": 25,
+        "failed": 15
+      },
+      "candidate": {
+        "passed": 40,
+        "failed": 0
+      }
+    },
+    {
+      "command": "pnpm test:compiler:native-runtime",
+      "passed": 566,
+      "failed": 0,
+      "includesFreshNativeBuild": true
+    },
+    {
+      "command": "cargo fmt --all --check && cargo clippy --workspace --all-targets --all-features -- -D warnings",
+      "status": "passed"
+    },
+    {
+      "command": "node --test scripts/rust-compiler-complexity-report.test.mjs scripts/release-verification.test.mjs",
+      "passed": 49,
+      "failed": 0
+    },
+    {
+      "command": "node scripts/rust-compiler-complexity-report.mjs",
+      "status": "passed"
+    },
+    {
+      "command": "cargo test -p fict-compiler --features preview --test rust_codegen_corpus --test legacy_unrepresented_callsite_replay",
+      "status": "passed",
+      "inputs": 3172,
+      "deterministicRunsPerInput": 2
+    },
+    {
+      "command": "pnpm guardrails:rust-crates",
+      "passed": 60,
+      "failed": 0,
+      "guards": "passed"
+    },
+    {
+      "command": "node --test scripts/babel-compiler-dom-semantic-oracle.test.mjs scripts/babel-compiler-source-map-oracle.test.mjs scripts/compiler-corpus-replay.test.mjs scripts/compiler-review-provenance.test.mjs",
+      "passed": 41,
+      "failed": 0
+    },
+    {
+      "command": "pnpm commit preflight",
+      "status": "passed",
+      "includes": [
+        "compiler build-cache and API contracts",
+        "release preflight",
+        "fresh workspace build",
+        "frozen corpus",
+        "distributed size limits",
+        "review regressions",
+        "workspace tests",
+        "production and test typechecks",
+        "format",
+        "lint"
+      ]
+    }
+  ],
+  "browser": {
+    "status": "passed",
+    "compiler": {
+      "backend": "rust",
+      "nativeTarget": "aarch64-apple-darwin",
+      "oxcVersion": "0.139.0",
+      "nodeApiVersion": 10,
+      "compilerBuildId": "fict-rust-p1-oxc0.139.0-m1-b7fadddadcb27d8775487221ee8b03b3bfbe0c052f70bf01a56d9a123a398d8e",
+      "compilerBuildRevision": null,
+      "compilerProtocolVersion": 1,
+      "metadataSchemaVersion": 1,
+      "compilerCapabilityManifestVersion": 2,
+      "compilerCapabilityManifestDigest": "sha256:8d85c68309d486fb1ac13747f35b2236f2893df69a1fae6f80edc065cb53c361",
+      "compilerCapabilityPackageVersion": "0.35.0"
+    },
+    "nativeSha256": "a3d7229ce59113d5208334ee44d7855fbecccb2baf57adcb97488925dfb21d7b",
+    "browser": "145.0.7632.6",
+    "sourceSha256": "f17a651cadaec433d39a387f15b163af5d15cc4a52f87307e72b883c529efb88",
+    "builds": [
+      {
+        "id": "0",
+        "equal": false,
+        "options": {
+          "dev": false,
+          "strictGuarantee": true,
+          "optimize": false,
+          "optimizeLevel": "safe",
+          "fineGrainedDom": true
+        },
+        "sourceSha256": "f17a651cadaec433d39a387f15b163af5d15cc4a52f87307e72b883c529efb88",
+        "codeSha256": "fd3fe65c1b49e9f89158133c3cca2cc1d1a53e122a25a9fe8de37d0361d319b8",
+        "bundleSha256": "14cf3e4700c10bc862a36e18e1828a0ace47c8965ced51d7b6168dc2ce6af1a5",
+        "inputs": [
+          "packages/runtime/dist/resume-B8Jb7kNT.js",
+          "packages/runtime/dist/dom-DSYbSTq4.js",
+          "packages/runtime/dist/suspense-CVeNXefL.js",
+          "packages/runtime/dist/list-helpers-Dg1KZpdN.js",
+          "packages/runtime/dist/scope-BS2msLVS.js",
+          "packages/runtime/dist/internal.js",
+          "packages/fict/dist/internal.js",
+          "packages/fict/dist/macro-diagnostics-biB8rKkw.js",
+          "packages/runtime/dist/context-BXEYok71.js",
+          "packages/runtime/dist/advanced.js",
+          "packages/fict/dist/store-DmzM9RIC.js",
+          "packages/runtime/dist/index.js",
+          "packages/fict/dist/index.js",
+          "packages/fict/jsx-inline.mjs"
+        ]
+      },
+      {
+        "id": "1",
+        "equal": true,
+        "options": {
+          "dev": false,
+          "strictGuarantee": true,
+          "optimize": false,
+          "optimizeLevel": "safe",
+          "fineGrainedDom": true
+        },
+        "sourceSha256": "0a8d8f2fd4fec09493aadfaed37f2053b4d0730f432346c8f8c64c0423f482fb",
+        "codeSha256": "40d37f0bb0637acd0fed9e439781ac1fc2994fdf847b1535815477d9a150800b",
+        "bundleSha256": "d8b7f3aedde6e49bfe0932b6bb8c1eb1260af99541d8f4ce34654374470a86bc",
+        "inputs": [
+          "packages/runtime/dist/resume-B8Jb7kNT.js",
+          "packages/runtime/dist/dom-DSYbSTq4.js",
+          "packages/runtime/dist/suspense-CVeNXefL.js",
+          "packages/runtime/dist/list-helpers-Dg1KZpdN.js",
+          "packages/runtime/dist/scope-BS2msLVS.js",
+          "packages/runtime/dist/internal.js",
+          "packages/fict/dist/internal.js",
+          "packages/fict/dist/macro-diagnostics-biB8rKkw.js",
+          "packages/runtime/dist/context-BXEYok71.js",
+          "packages/runtime/dist/advanced.js",
+          "packages/fict/dist/store-DmzM9RIC.js",
+          "packages/runtime/dist/index.js",
+          "packages/fict/dist/index.js",
+          "packages/fict/jsx-inline.mjs"
+        ]
+      },
+      {
+        "id": "2",
+        "equal": false,
+        "options": {
+          "dev": false,
+          "strictGuarantee": true,
+          "optimize": false,
+          "optimizeLevel": "safe",
+          "fineGrainedDom": false
+        },
+        "sourceSha256": "f17a651cadaec433d39a387f15b163af5d15cc4a52f87307e72b883c529efb88",
+        "codeSha256": "b8fbba5cd200dec6f1b2b06cf25a7dd822b02812fe41486430842353e6667844",
+        "bundleSha256": "fe7ddda904fe05092aea7deb582e1472dd9922c1377fa4785a2f342b6df65b22",
+        "inputs": [
+          "packages/runtime/dist/resume-B8Jb7kNT.js",
+          "packages/runtime/dist/dom-DSYbSTq4.js",
+          "packages/runtime/dist/suspense-CVeNXefL.js",
+          "packages/runtime/dist/list-helpers-Dg1KZpdN.js",
+          "packages/runtime/dist/scope-BS2msLVS.js",
+          "packages/runtime/dist/internal.js",
+          "packages/fict/dist/internal.js",
+          "packages/fict/dist/macro-diagnostics-biB8rKkw.js",
+          "packages/runtime/dist/context-BXEYok71.js",
+          "packages/runtime/dist/advanced.js",
+          "packages/fict/dist/store-DmzM9RIC.js",
+          "packages/runtime/dist/index.js",
+          "packages/fict/dist/index.js",
+          "packages/fict/jsx-inline.mjs"
+        ]
+      },
+      {
+        "id": "3",
+        "equal": true,
+        "options": {
+          "dev": false,
+          "strictGuarantee": true,
+          "optimize": false,
+          "optimizeLevel": "safe",
+          "fineGrainedDom": false
+        },
+        "sourceSha256": "0a8d8f2fd4fec09493aadfaed37f2053b4d0730f432346c8f8c64c0423f482fb",
+        "codeSha256": "e1dc1be6b3f108d8a9b95b6005af6e354b6ba42be04b5e61ab4b6939eecccfa0",
+        "bundleSha256": "6f10d5699b50a2818e35f0849fe625d61ae8238ce1e9adc4b7f621f53647bc36",
+        "inputs": [
+          "packages/runtime/dist/resume-B8Jb7kNT.js",
+          "packages/runtime/dist/dom-DSYbSTq4.js",
+          "packages/runtime/dist/suspense-CVeNXefL.js",
+          "packages/runtime/dist/list-helpers-Dg1KZpdN.js",
+          "packages/runtime/dist/scope-BS2msLVS.js",
+          "packages/runtime/dist/internal.js",
+          "packages/fict/dist/internal.js",
+          "packages/fict/dist/macro-diagnostics-biB8rKkw.js",
+          "packages/runtime/dist/context-BXEYok71.js",
+          "packages/runtime/dist/advanced.js",
+          "packages/fict/dist/store-DmzM9RIC.js",
+          "packages/runtime/dist/index.js",
+          "packages/fict/dist/index.js",
+          "packages/fict/jsx-inline.mjs"
+        ]
+      },
+      {
+        "id": "4",
+        "equal": false,
+        "options": {
+          "dev": false,
+          "strictGuarantee": true,
+          "optimize": true,
+          "optimizeLevel": "safe",
+          "fineGrainedDom": true
+        },
+        "sourceSha256": "f17a651cadaec433d39a387f15b163af5d15cc4a52f87307e72b883c529efb88",
+        "codeSha256": "2685e0ec78f8dc465a127a4ef6025a33a746ad0d4286938335b8c8bedfb134dc",
+        "bundleSha256": "05a6d8c1d660a3a96e1d476db785f12c5885ea2beef33f57f8b8e3fdea5cfc5d",
+        "inputs": [
+          "packages/runtime/dist/resume-B8Jb7kNT.js",
+          "packages/runtime/dist/dom-DSYbSTq4.js",
+          "packages/runtime/dist/suspense-CVeNXefL.js",
+          "packages/runtime/dist/list-helpers-Dg1KZpdN.js",
+          "packages/runtime/dist/scope-BS2msLVS.js",
+          "packages/runtime/dist/internal.js",
+          "packages/fict/dist/internal.js",
+          "packages/fict/dist/macro-diagnostics-biB8rKkw.js",
+          "packages/runtime/dist/context-BXEYok71.js",
+          "packages/runtime/dist/advanced.js",
+          "packages/fict/dist/store-DmzM9RIC.js",
+          "packages/runtime/dist/index.js",
+          "packages/fict/dist/index.js",
+          "packages/fict/jsx-inline.mjs"
+        ]
+      },
+      {
+        "id": "5",
+        "equal": true,
+        "options": {
+          "dev": false,
+          "strictGuarantee": true,
+          "optimize": true,
+          "optimizeLevel": "safe",
+          "fineGrainedDom": true
+        },
+        "sourceSha256": "0a8d8f2fd4fec09493aadfaed37f2053b4d0730f432346c8f8c64c0423f482fb",
+        "codeSha256": "1ef9e95b86892bcabb04d2ac2d34c273f4c9d8cbda2d69b88865950c0749fa67",
+        "bundleSha256": "6857cca83ee66bc69219ae836cc7dec7fc456fba05d15a210a8dc823cb8f8778",
+        "inputs": [
+          "packages/runtime/dist/resume-B8Jb7kNT.js",
+          "packages/runtime/dist/dom-DSYbSTq4.js",
+          "packages/runtime/dist/suspense-CVeNXefL.js",
+          "packages/runtime/dist/list-helpers-Dg1KZpdN.js",
+          "packages/runtime/dist/scope-BS2msLVS.js",
+          "packages/runtime/dist/internal.js",
+          "packages/fict/dist/internal.js",
+          "packages/fict/dist/macro-diagnostics-biB8rKkw.js",
+          "packages/runtime/dist/context-BXEYok71.js",
+          "packages/runtime/dist/advanced.js",
+          "packages/fict/dist/store-DmzM9RIC.js",
+          "packages/runtime/dist/index.js",
+          "packages/fict/dist/index.js",
+          "packages/fict/jsx-inline.mjs"
+        ]
+      },
+      {
+        "id": "6",
+        "equal": false,
+        "options": {
+          "dev": false,
+          "strictGuarantee": true,
+          "optimize": true,
+          "optimizeLevel": "safe",
+          "fineGrainedDom": false
+        },
+        "sourceSha256": "f17a651cadaec433d39a387f15b163af5d15cc4a52f87307e72b883c529efb88",
+        "codeSha256": "9b8e64ecf90c612fe10bacd1b2f7e501dd3836340a4c1e3913c7ed099f9a1dd5",
+        "bundleSha256": "81a15119b7aeba5fefaf2e911ca2271e6806b66bdf313f8749a7586cb7f83f0f",
+        "inputs": [
+          "packages/runtime/dist/resume-B8Jb7kNT.js",
+          "packages/runtime/dist/dom-DSYbSTq4.js",
+          "packages/runtime/dist/suspense-CVeNXefL.js",
+          "packages/runtime/dist/list-helpers-Dg1KZpdN.js",
+          "packages/runtime/dist/scope-BS2msLVS.js",
+          "packages/runtime/dist/internal.js",
+          "packages/fict/dist/internal.js",
+          "packages/fict/dist/macro-diagnostics-biB8rKkw.js",
+          "packages/runtime/dist/context-BXEYok71.js",
+          "packages/runtime/dist/advanced.js",
+          "packages/fict/dist/store-DmzM9RIC.js",
+          "packages/runtime/dist/index.js",
+          "packages/fict/dist/index.js",
+          "packages/fict/jsx-inline.mjs"
+        ]
+      },
+      {
+        "id": "7",
+        "equal": true,
+        "options": {
+          "dev": false,
+          "strictGuarantee": true,
+          "optimize": true,
+          "optimizeLevel": "safe",
+          "fineGrainedDom": false
+        },
+        "sourceSha256": "0a8d8f2fd4fec09493aadfaed37f2053b4d0730f432346c8f8c64c0423f482fb",
+        "codeSha256": "fe592b8f1e6e8d48aef3f899c6d3bb662cd79e76f94b48c2cd7516ee08cb0149",
+        "bundleSha256": "73fb158eb5d5324cea903ee18ca7be026b5b625f42eac8b42cc6f141226693ad",
+        "inputs": [
+          "packages/runtime/dist/resume-B8Jb7kNT.js",
+          "packages/runtime/dist/dom-DSYbSTq4.js",
+          "packages/runtime/dist/suspense-CVeNXefL.js",
+          "packages/runtime/dist/list-helpers-Dg1KZpdN.js",
+          "packages/runtime/dist/scope-BS2msLVS.js",
+          "packages/runtime/dist/internal.js",
+          "packages/fict/dist/internal.js",
+          "packages/fict/dist/macro-diagnostics-biB8rKkw.js",
+          "packages/runtime/dist/context-BXEYok71.js",
+          "packages/runtime/dist/advanced.js",
+          "packages/fict/dist/store-DmzM9RIC.js",
+          "packages/runtime/dist/index.js",
+          "packages/fict/dist/index.js",
+          "packages/fict/jsx-inline.mjs"
+        ]
+      },
+      {
+        "id": "8",
+        "equal": false,
+        "options": {
+          "dev": false,
+          "strictGuarantee": true,
+          "optimize": true,
+          "optimizeLevel": "full",
+          "fineGrainedDom": true
+        },
+        "sourceSha256": "f17a651cadaec433d39a387f15b163af5d15cc4a52f87307e72b883c529efb88",
+        "codeSha256": "2685e0ec78f8dc465a127a4ef6025a33a746ad0d4286938335b8c8bedfb134dc",
+        "bundleSha256": "05a6d8c1d660a3a96e1d476db785f12c5885ea2beef33f57f8b8e3fdea5cfc5d",
+        "inputs": [
+          "packages/runtime/dist/resume-B8Jb7kNT.js",
+          "packages/runtime/dist/dom-DSYbSTq4.js",
+          "packages/runtime/dist/suspense-CVeNXefL.js",
+          "packages/runtime/dist/list-helpers-Dg1KZpdN.js",
+          "packages/runtime/dist/scope-BS2msLVS.js",
+          "packages/runtime/dist/internal.js",
+          "packages/fict/dist/internal.js",
+          "packages/fict/dist/macro-diagnostics-biB8rKkw.js",
+          "packages/runtime/dist/context-BXEYok71.js",
+          "packages/runtime/dist/advanced.js",
+          "packages/fict/dist/store-DmzM9RIC.js",
+          "packages/runtime/dist/index.js",
+          "packages/fict/dist/index.js",
+          "packages/fict/jsx-inline.mjs"
+        ]
+      },
+      {
+        "id": "9",
+        "equal": true,
+        "options": {
+          "dev": false,
+          "strictGuarantee": true,
+          "optimize": true,
+          "optimizeLevel": "full",
+          "fineGrainedDom": true
+        },
+        "sourceSha256": "0a8d8f2fd4fec09493aadfaed37f2053b4d0730f432346c8f8c64c0423f482fb",
+        "codeSha256": "1ef9e95b86892bcabb04d2ac2d34c273f4c9d8cbda2d69b88865950c0749fa67",
+        "bundleSha256": "6857cca83ee66bc69219ae836cc7dec7fc456fba05d15a210a8dc823cb8f8778",
+        "inputs": [
+          "packages/runtime/dist/resume-B8Jb7kNT.js",
+          "packages/runtime/dist/dom-DSYbSTq4.js",
+          "packages/runtime/dist/suspense-CVeNXefL.js",
+          "packages/runtime/dist/list-helpers-Dg1KZpdN.js",
+          "packages/runtime/dist/scope-BS2msLVS.js",
+          "packages/runtime/dist/internal.js",
+          "packages/fict/dist/internal.js",
+          "packages/fict/dist/macro-diagnostics-biB8rKkw.js",
+          "packages/runtime/dist/context-BXEYok71.js",
+          "packages/runtime/dist/advanced.js",
+          "packages/fict/dist/store-DmzM9RIC.js",
+          "packages/runtime/dist/index.js",
+          "packages/fict/dist/index.js",
+          "packages/fict/jsx-inline.mjs"
+        ]
+      },
+      {
+        "id": "10",
+        "equal": false,
+        "options": {
+          "dev": false,
+          "strictGuarantee": true,
+          "optimize": true,
+          "optimizeLevel": "full",
+          "fineGrainedDom": false
+        },
+        "sourceSha256": "f17a651cadaec433d39a387f15b163af5d15cc4a52f87307e72b883c529efb88",
+        "codeSha256": "9b8e64ecf90c612fe10bacd1b2f7e501dd3836340a4c1e3913c7ed099f9a1dd5",
+        "bundleSha256": "81a15119b7aeba5fefaf2e911ca2271e6806b66bdf313f8749a7586cb7f83f0f",
+        "inputs": [
+          "packages/runtime/dist/resume-B8Jb7kNT.js",
+          "packages/runtime/dist/dom-DSYbSTq4.js",
+          "packages/runtime/dist/suspense-CVeNXefL.js",
+          "packages/runtime/dist/list-helpers-Dg1KZpdN.js",
+          "packages/runtime/dist/scope-BS2msLVS.js",
+          "packages/runtime/dist/internal.js",
+          "packages/fict/dist/internal.js",
+          "packages/fict/dist/macro-diagnostics-biB8rKkw.js",
+          "packages/runtime/dist/context-BXEYok71.js",
+          "packages/runtime/dist/advanced.js",
+          "packages/fict/dist/store-DmzM9RIC.js",
+          "packages/runtime/dist/index.js",
+          "packages/fict/dist/index.js",
+          "packages/fict/jsx-inline.mjs"
+        ]
+      },
+      {
+        "id": "11",
+        "equal": true,
+        "options": {
+          "dev": false,
+          "strictGuarantee": true,
+          "optimize": true,
+          "optimizeLevel": "full",
+          "fineGrainedDom": false
+        },
+        "sourceSha256": "0a8d8f2fd4fec09493aadfaed37f2053b4d0730f432346c8f8c64c0423f482fb",
+        "codeSha256": "fe592b8f1e6e8d48aef3f899c6d3bb662cd79e76f94b48c2cd7516ee08cb0149",
+        "bundleSha256": "73fb158eb5d5324cea903ee18ca7be026b5b625f42eac8b42cc6f141226693ad",
+        "inputs": [
+          "packages/runtime/dist/resume-B8Jb7kNT.js",
+          "packages/runtime/dist/dom-DSYbSTq4.js",
+          "packages/runtime/dist/suspense-CVeNXefL.js",
+          "packages/runtime/dist/list-helpers-Dg1KZpdN.js",
+          "packages/runtime/dist/scope-BS2msLVS.js",
+          "packages/runtime/dist/internal.js",
+          "packages/fict/dist/internal.js",
+          "packages/fict/dist/macro-diagnostics-biB8rKkw.js",
+          "packages/runtime/dist/context-BXEYok71.js",
+          "packages/runtime/dist/advanced.js",
+          "packages/fict/dist/store-DmzM9RIC.js",
+          "packages/runtime/dist/index.js",
+          "packages/fict/dist/index.js",
+          "packages/fict/jsx-inline.mjs"
+        ]
+      }
+    ],
+    "cases": [
+      {
+        "build": "0",
+        "svg": false,
+        "status": "passed"
+      },
+      {
+        "build": "0",
+        "svg": true,
+        "status": "passed"
+      },
+      {
+        "build": "1",
+        "svg": false,
+        "status": "passed"
+      },
+      {
+        "build": "1",
+        "svg": true,
+        "status": "passed"
+      },
+      {
+        "build": "2",
+        "svg": false,
+        "status": "passed"
+      },
+      {
+        "build": "2",
+        "svg": true,
+        "status": "passed"
+      },
+      {
+        "build": "3",
+        "svg": false,
+        "status": "passed"
+      },
+      {
+        "build": "3",
+        "svg": true,
+        "status": "passed"
+      },
+      {
+        "build": "4",
+        "svg": false,
+        "status": "passed"
+      },
+      {
+        "build": "4",
+        "svg": true,
+        "status": "passed"
+      },
+      {
+        "build": "5",
+        "svg": false,
+        "status": "passed"
+      },
+      {
+        "build": "5",
+        "svg": true,
+        "status": "passed"
+      },
+      {
+        "build": "6",
+        "svg": false,
+        "status": "passed"
+      },
+      {
+        "build": "6",
+        "svg": true,
+        "status": "passed"
+      },
+      {
+        "build": "7",
+        "svg": false,
+        "status": "passed"
+      },
+      {
+        "build": "7",
+        "svg": true,
+        "status": "passed"
+      },
+      {
+        "build": "8",
+        "svg": false,
+        "status": "passed"
+      },
+      {
+        "build": "8",
+        "svg": true,
+        "status": "passed"
+      },
+      {
+        "build": "9",
+        "svg": false,
+        "status": "passed"
+      },
+      {
+        "build": "9",
+        "svg": true,
+        "status": "passed"
+      },
+      {
+        "build": "10",
+        "svg": false,
+        "status": "passed"
+      },
+      {
+        "build": "10",
+        "svg": true,
+        "status": "passed"
+      },
+      {
+        "build": "11",
+        "svg": false,
+        "status": "passed"
+      },
+      {
+        "build": "11",
+        "svg": true,
+        "status": "passed"
+      }
+    ],
+    "errors": []
+  },
+  "suites": [
+    {
+      "file": "crates/fict-compiler/tests/rust_frozen_codegen_corpus.json",
+      "fixtures": 1950,
+      "changed": 14,
+      "beforeSha256": "6c450aa6037d6176f41ea6608046b55c44fcb4b79a09a73a4cd39e06fa38d765",
+      "afterSha256": "87f562e709654cfc49757bcbcd7d0662bd6f666e5077fdb12f2e24b83aae4152",
+      "changes": [
+        {
+          "id": "packages/compiler/test/alias-reactivity.test.ts:141:transform",
+          "sourceSha256": "d3d8270cf11289e8dcb70900f2388b8b75fd43a1ffc8851ea8c4bb052dbd4396",
+          "beforeCodeSha256": "f7103d8a1b5e636820dad0a0a423c7fd9ff59c812834aa0c75bdd45e686519a0",
+          "codeSha256": "d314e0d0a59380c7c9f375238f0dfe53c120a65ed3d78a32b6e60600ac52eaa7",
+          "removed": 1,
+          "replacements": 2,
+          "names": ["[\"App\",\"alias\"]"]
+        },
+        {
+          "id": "packages/compiler/test/optimizer-algebraic.test.ts:433:transform",
+          "sourceSha256": "6b7383b47183647c5f072bd6876643999a47f577fc6d6781ead4adc24b0e2769",
+          "beforeCodeSha256": "7413c3650892b263c9c236240a231b590d9d50bbee7fec75c3f2ddb88e3beb05",
+          "codeSha256": "03c08ecee896b5862c500791168f15543fb2fd7988da1283f37356baa2bb0d5f",
+          "removed": 1,
+          "replacements": 2,
+          "names": ["[\"Component\",\"used\"]"]
+        },
+        {
+          "id": "packages/compiler/test/optimizer-algebraic.test.ts:487:transform",
+          "sourceSha256": "843f2e888cbd2209e4ee17e5c953d5ad25b02a90516924438c36347e12c6c793",
+          "beforeCodeSha256": "60c92a5f55f30b869a5d962ea78175f805c2809f341d7490c15bae9723ed7a07",
+          "codeSha256": "925d090ada1c9b24a509d747f931ccd8dcc8654750b5af8ac94710ccf7a02908",
+          "removed": 1,
+          "replacements": 2,
+          "names": ["[\"Component\",\"doubled\"]"]
+        },
+        {
+          "id": "packages/compiler/test/region-name-collision.test.ts:82:transform",
+          "sourceSha256": "3cecb26724cdb4134cb31551b0d199b5cd9391aab97b3ab1e4fa6ccf4fea25ec",
+          "beforeCodeSha256": "b0b9bf31a845493122476e5879e27faaa004f47f73d12a4e35e114004689a03e",
+          "codeSha256": "81b7ff78460cfa64934dcaee6080e2c5e87b5499eceb3360920c4364e5dcf6aa",
+          "removed": 2,
+          "replacements": 4,
+          "names": ["[\"App\",\"doubled\"]", "[\"App\",\"tripled\"]"]
+        },
+        {
+          "id": "packages/compiler/test/sourcemap.test.ts:216:compileWithSourcemap",
+          "sourceSha256": "a6ceeb05deb1a45548b66099bb0755fbc8ab70094759cd08afa5cc55236d255a",
+          "beforeCodeSha256": "842743950785a98c65ad47f324e720d4e9bc92003788b5472ad4471cee642e88",
+          "codeSha256": "ad1b945be8a0b77232e15905f557f21c9c1017f7fd2493e50a63b09a9759c9ce",
+          "removed": 1,
+          "replacements": 2,
+          "names": ["[\"Calc\",\"total\"]"]
+        },
+        {
+          "id": "packages/compiler/test/spec-advanced.test.ts:363:transform",
+          "sourceSha256": "45176acf073a70fb7ca35e79f13b5e90c39d7ad08373103222ccd67cd56939fc",
+          "beforeCodeSha256": "3e4ad963aacdb13716e549f860d96bb3004c97c40cb0834c642596b038a3e8c0",
+          "codeSha256": "76598b3f20f7f6c5010fbbde2569c975f627341b898472a549fd03d20b5171bf",
+          "removed": 1,
+          "replacements": 2,
+          "names": ["[\"WeirdComponent\",\"doubled\"]"]
+        },
+        {
+          "id": "packages/compiler/test/spec-advanced.test.ts:378:transform",
+          "sourceSha256": "3ff6b158949f0d21edf9fd75f2922a7a1859b8c8aafa93901dd9d65e5e168295",
+          "beforeCodeSha256": "cc95181adc3aa5cb3235c550767d8b3f0bef47a49814c0af7256eb6401504b28",
+          "codeSha256": "b0763fc0f8c65f04e03b5fc44a5274701e979dc5f5c92a3b32a2a1b7d9cfd5c6",
+          "removed": 1,
+          "replacements": 2,
+          "names": ["[\"NormalComponent\",\"doubled\"]"]
+        },
+        {
+          "id": "packages/compiler/test/spec-complete.test.ts:110:transform",
+          "sourceSha256": "9babfb2c584cf5ab8261a32c7e4f5c6f38ae0fd067346c80295d4c88f2153b13",
+          "beforeCodeSha256": "60c92a5f55f30b869a5d962ea78175f805c2809f341d7490c15bae9723ed7a07",
+          "codeSha256": "925d090ada1c9b24a509d747f931ccd8dcc8654750b5af8ac94710ccf7a02908",
+          "removed": 1,
+          "replacements": 2,
+          "names": ["[\"Component\",\"doubled\"]"]
+        },
+        {
+          "id": "packages/compiler/test/spec-complete.test.ts:543:transform",
+          "sourceSha256": "ded10ac1c4c6c30b6334673916c6f3c695f158c42f8068e0a619f832fad0db9b",
+          "beforeCodeSha256": "f85b3826120cc5a0f9631d92e5f564e1404a3a2c8274781f13001d08e8abc4c2",
+          "codeSha256": "2bc2b3742f5205fdb2260fd6d15510ed7a0f9369877af6167fa9b927506873c8",
+          "removed": 1,
+          "replacements": 2,
+          "names": ["[\"Counter\",\"double\"]"]
+        },
+        {
+          "id": "packages/compiler/test/spec-rules.test.ts:3506:transformWithLazy",
+          "sourceSha256": "f0b73e4e6579034e8130b4b20f498aad091773416000c264e0c93f41117302fc",
+          "beforeCodeSha256": "d58558482c9913ebca204e660a9239480fd05645bdcb44574d2a8dfc47c4bab6",
+          "codeSha256": "9d2707380274e15aa016848dccdbd493d665eb7098662773014f565d47050730",
+          "removed": 1,
+          "replacements": 2,
+          "names": ["[\"Component\",\"simple\"]"]
+        },
+        {
+          "id": "packages/compiler/test/template-integration.test.ts:1426:compileAndLoad",
+          "sourceSha256": "94e0a246b62dd3c6d4187c61bb1951fe6a89c63169655bf327166f67b45849ee",
+          "beforeCodeSha256": "393d52d31693d4a5d070d923123f1432bef5c537c6ad6ce41210896a8d09039b",
+          "codeSha256": "5aff57339058c9d63903c4eef0de1d00ebcd718a98d5c08d40e465e27b030afd",
+          "removed": 1,
+          "replacements": 2,
+          "names": ["[\"App\",\"first\"]"]
+        },
+        {
+          "id": "packages/compiler/test/template-integration.test.ts:1426:compileAndLoad:strictGuarantee=true",
+          "sourceSha256": "94e0a246b62dd3c6d4187c61bb1951fe6a89c63169655bf327166f67b45849ee",
+          "beforeCodeSha256": "393d52d31693d4a5d070d923123f1432bef5c537c6ad6ce41210896a8d09039b",
+          "codeSha256": "5aff57339058c9d63903c4eef0de1d00ebcd718a98d5c08d40e465e27b030afd",
+          "removed": 1,
+          "replacements": 2,
+          "names": ["[\"App\",\"first\"]"]
+        },
+        {
+          "id": "packages/compiler/test/template-integration.test.ts:11834:compileAndLoad",
+          "sourceSha256": "c848340579710ef886d5e046c230710a08f968384aab4dd46d3636bd1dc37160",
+          "beforeCodeSha256": "e456d07b1362301791a16e59f9bd03cb7aa5fbf6a40df5907f9cc999801ec8ff",
+          "codeSha256": "f7d271e2aeaf141950689e2163ae6144397c2354b088f731833cd3fce2e4b842",
+          "removed": 2,
+          "replacements": 4,
+          "names": ["[\"App\",\"doubled\"]", "[\"App\",\"tripled\"]"]
+        },
+        {
+          "id": "packages/compiler/test/transform.test.ts:832:transform",
+          "sourceSha256": "6d0f1e792806ca7bda39e998f76539ced2f2c2117ad610defd78d55d190681a7",
+          "beforeCodeSha256": "0416b2785df27049da4d2057f356cb7c4588694eca0c107f20e3cba9d3f30819",
+          "codeSha256": "74a6636d90ea43cf565395ef4d853536825750295f4703763c7ac0de62131eda",
+          "removed": 1,
+          "replacements": 2,
+          "names": ["[\"Counter\",\"doubled\"]"]
+        }
+      ]
+    },
+    {
+      "file": "crates/fict-compiler/tests/legacy_unrepresented_callsite_replay.json",
+      "fixtures": 1222,
+      "changed": 8,
+      "beforeSha256": "a05fb46c63b68b09ea080cc75d93a98fd259c7c689f12a3179b9412360454568",
+      "afterSha256": "eb8607658dc092d3b65be6fab05c82ec65976a1d9f01d057c94c937568ef5188",
+      "changes": [
+        {
+          "id": "legacy-unrepresented-5ac13ad48cf2bdf192bf",
+          "sourceSha256": "6d0f1e792806ca7bda39e998f76539ced2f2c2117ad610defd78d55d190681a7",
+          "beforeCodeSha256": "557ecfa46fdfb84e74195618276815f308c13b89b3d5f6182a424e06b9651ae6",
+          "codeSha256": "64a7571828e73ae9ad0482bb1861b107d0d9437564e51962718e2e99fd4cbfa9",
+          "removed": 1,
+          "replacements": 1,
+          "names": ["[\"Counter\",\"doubled\"]"],
+          "beforeDeterministicResultSha256": "f15fc4d10526ad9d5f79800ed23acb0c7a0feb6619002b92802903b7c559a58d",
+          "deterministicResultSha256": "a01bc5e4104de978759a6a0a47ae70d0beb78fbb1a9ff72452a631a1af478230"
+        },
+        {
+          "id": "legacy-unrepresented-79443aace41deb01529b",
+          "sourceSha256": "a4fe17bdfef262fbde029cc1f759d3c57fd1574cc5a9722a530329bcbfcc7438",
+          "beforeCodeSha256": "42adab15e3a5d8130c2d25c69b95959f7cb34fd36c16e2426b22ab3d0846c97c",
+          "codeSha256": "49fd57b17e842aa93898d938086a73288ce8a888592543e738914db61501b07c",
+          "removed": 1,
+          "replacements": 2,
+          "names": ["[\"App\",\"doubled\"]"],
+          "beforeDeterministicResultSha256": "4672ed575bd1b35305dd75ce9a23604f2f5ed3e16d00699e7ef16580229d2eb6",
+          "deterministicResultSha256": "e2a9856593363b353e1152888d12b7cd96e068d72095b7e5d7af20a9392f2db3"
+        },
+        {
+          "id": "legacy-unrepresented-8a0fcde4768abccece83",
+          "sourceSha256": "b26cb511ea7014b7f9d0010ca43ad90eef448dd4cc94488ed3608405489aef1f",
+          "beforeCodeSha256": "2f4c63351b590675ac9888d442fd6b24fd9f1c6b4c7021211e5685df3786f7e9",
+          "codeSha256": "cdb76256012dcd30954bfaf99c54e7fbbf1a284c8d490c02daf6cc89e3a54951",
+          "removed": 1,
+          "replacements": 2,
+          "names": ["[\"Counter\",\"doubled\"]"],
+          "beforeDeterministicResultSha256": "ccfff70f53b217f3b3f7bbb0a0519086e9899ad82f77883a3e4e0ab212395730",
+          "deterministicResultSha256": "f80b2820e70396763f7526495b76ec0dea2e14d4e095adfd3d08fad65f008ac7"
+        },
+        {
+          "id": "legacy-unrepresented-90d2217c1082c5305e8c",
+          "sourceSha256": "423b99ce6c89070eb91fa70dbdc8a0a8ce2ab45358b65b030e97eac6c813b3a6",
+          "beforeCodeSha256": "58e82a0e88dc83eea9618ba44c6660556b7f034386b819fc671cc803a3645978",
+          "codeSha256": "f20e0e646355ce6275c8b2760bdb3841f17ec2b3987a623b0ff1a7ca48288380",
+          "removed": 2,
+          "replacements": 4,
+          "names": ["[\"App\",\"doubled\"]", "[\"App\",\"tripled\"]"],
+          "beforeDeterministicResultSha256": "356d997767b30b0c1373c1b6aa4edb9f1d11137b11626a1566c459afedc84b50",
+          "deterministicResultSha256": "309146f6260f67608839e9288c879eb8ceca3798c66ab08d6aca92e7d22a8fa3"
+        },
+        {
+          "id": "legacy-unrepresented-9af2e61480021675d468",
+          "sourceSha256": "94e0a246b62dd3c6d4187c61bb1951fe6a89c63169655bf327166f67b45849ee",
+          "beforeCodeSha256": "9bf5403ea6387ff842962984701de0cbd1139cd136b40dff5c5f5378e74d28be",
+          "codeSha256": "03a8aad24177c156fe522da18464856072a65de95d0532815326865882151bfa",
+          "removed": 1,
+          "replacements": 2,
+          "names": ["[\"App\",\"first\"]"],
+          "beforeDeterministicResultSha256": "0d636a8453bb8858ee54a22ac242905fee0faef3ea7f97a0a9ec1364dc36c778",
+          "deterministicResultSha256": "081ba6e14b71efc0c911ef9c7353339d5e6d34468e25894e6798725239f34ab5"
+        },
+        {
+          "id": "legacy-unrepresented-b0265290cf0a16ec2526",
+          "sourceSha256": "c848340579710ef886d5e046c230710a08f968384aab4dd46d3636bd1dc37160",
+          "beforeCodeSha256": "d375ee1ff151bb84a61a334cb93294217021872a9e25c42ce65a5d0bb2d6ed11",
+          "codeSha256": "7cd922729819f6cbb74d8fb8013c5e4e1b7bd52197c3a532831b781d811d22cc",
+          "removed": 2,
+          "replacements": 4,
+          "names": ["[\"App\",\"doubled\"]", "[\"App\",\"tripled\"]"],
+          "beforeDeterministicResultSha256": "30abee5f768a01e289fde1afb82990d0092f3f67ac42d863dfb0c6e7e4ec14a9",
+          "deterministicResultSha256": "0fcfd21481d7722eb0a3d812f053bf74f4c5f4f67f2b0ac0ee4a7ceef7e941d5"
+        },
+        {
+          "id": "legacy-unrepresented-be14706d02b7e7e7fe4e",
+          "sourceSha256": "9babfb2c584cf5ab8261a32c7e4f5c6f38ae0fd067346c80295d4c88f2153b13",
+          "beforeCodeSha256": "ec21753e1213b4c13d493807183eda204b6766429c8561265c08b1e0c04eacc1",
+          "codeSha256": "6d82291deaad35a3ffad61e8ba071538d8c6e0a6bf8306e647f82b9a0ecca8aa",
+          "removed": 1,
+          "replacements": 2,
+          "names": ["[\"Component\",\"doubled\"]"],
+          "beforeDeterministicResultSha256": "59fcd0a54f22b7f7a172478c4706e83bcdb934a7efff7d15944603317aa47bd6",
+          "deterministicResultSha256": "d32df0f15c5f21460fd35c7947a82418b5f8a97c7c931292e3dbd3a558587aee"
+        },
+        {
+          "id": "legacy-unrepresented-d765e661837a04555b52",
+          "sourceSha256": "f0b73e4e6579034e8130b4b20f498aad091773416000c264e0c93f41117302fc",
+          "beforeCodeSha256": "c8a67cb1f85c05e93dbc0e791a1254e66ca26598fbdae8b852a13ed2b697b2e4",
+          "codeSha256": "ca4e21dff8154e77a68ce4fc407a7e0a2d6b3fdbd0d8ba243b3d55a756423067",
+          "removed": 1,
+          "replacements": 2,
+          "names": ["[\"Component\",\"simple\"]"],
+          "beforeDeterministicResultSha256": "560d5293f8d02db99eb8014179d922e103e5734c23bc2f8a07ba686c9bcb59b6",
+          "deterministicResultSha256": "29f58f4c8eb146d891af24afbc149977f079dc578c462c771a9ac4de60922ef8"
+        }
+      ]
+    }
+  ]
+}

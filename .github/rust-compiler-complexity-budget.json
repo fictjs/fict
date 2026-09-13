@@ -12,9 +12,9 @@
     "fileOverrideRatchetReductionLines": 100
   },
   "total": {
-    "reviewedLines": 189299,
-    "maxLines": 190500,
-    "rationale": "Explicit async compilation adds source/accessor contracts, generation ownership, metadata and EmitIR validation. Shared analysis lives in focused HIR/reactivity modules; alias planning is extracted from lowering and repeated verifier matches are consolidated. Existing file ceilings remain unchanged; retain 1201 lines of total reserve."
+    "reviewedLines": 190972,
+    "maxLines": 192000,
+    "rationale": "G1 adds a focused source consumer and scalar-write proof, then reconciles generated namespace copies by binding and name. Review the accumulated async/JSX correctness work and this bounded optimization module; restore at least 1000 lines of policy reserve. Central builder, codegen, verifier and default per-file ceilings are unchanged."
   },
   "defaultFileMaxLines": 2000,
   "crates": {
@@ -28,9 +28,9 @@
       "maxLines": 1500
     },
     "fict-compiler-oxc": {
-      "reviewedLines": 122066,
-      "maxLines": 122400,
-      "rationale": "Collection receiver and factory-result proofs are isolated in focused builder modules. Factory exposure, marked Resource getters, and immutable accessor/method/container identities feed verified HIR facts. Retain 334 lines of crate reserve; the central builder and total workspace ceilings remain unchanged."
+      "reviewedLines": 122616,
+      "maxLines": 123000,
+      "rationale": "Logical JSX consumer inlining adds a focused scalar and write-dependency proof. Existing inliner ownership checks remain intact for unproved expressions; generated-copy lookup verifies source binding and name. No increase to orchestration or individual file ceilings."
     },
     "fict-compiler-preview": {
       "reviewedLines": 2333,

@@ -25,6 +25,7 @@ use std::collections::{BTreeMap, BTreeSet};
 pub(super) struct SemanticIdentities {
     symbols: BTreeMap<SymbolId, BindingId>,
     references: BTreeMap<ReferenceId, BindingId>,
+    writes: BTreeSet<ReferenceId>,
     reserved_names: BTreeSet<String>,
 }
 
@@ -62,6 +63,13 @@ impl SemanticIdentities {
                     .iter()
                     .map(|reference| (*reference, binding)),
             );
+            identities.writes.extend(
+                scoping
+                    .get_resolved_reference_ids(symbol)
+                    .iter()
+                    .copied()
+                    .filter(|reference| scoping.get_reference(*reference).is_write()),
+            );
         }
         Ok(identities)
     }
@@ -78,6 +86,17 @@ impl SemanticIdentities {
 
     pub(super) fn binding_for_symbol(&self, symbol: SymbolId) -> Option<BindingId> {
         self.symbols.get(&symbol).copied()
+    }
+
+    pub(super) fn reference_is_write(&self, identifier: &IdentifierReference<'_>) -> bool {
+        identifier
+            .reference_id
+            .get()
+            .is_some_and(|id| self.writes.contains(&id))
+    }
+
+    pub(super) fn has_reserved_name(&self, name: &str) -> bool {
+        self.reserved_names.contains(name)
     }
 
     /// Record original spans before namespace fallbacks clone AST nodes and erase

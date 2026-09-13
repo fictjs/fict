@@ -1,4 +1,7 @@
-use super::{DerivedCreationRewrite, emit_error, semantic_identity::SemanticIdentities};
+use super::{
+    DerivedCreationRewrite, emit_error, jsx_derived_inline::JsxInlineReads,
+    semantic_identity::SemanticIdentities,
+};
 use fict_diagnostics::{Diagnostic, GuaranteeClass, SourceSpan};
 use fict_hir::BindingId;
 use oxc::{
@@ -42,21 +45,23 @@ struct InlineTarget<'a> {
     replacement: Expression<'a>,
 }
 
-/// Inline a derived accessor only when its declaration and sole accessor read occupy the same
-/// straight-line statement list. Generated `__*` names remain eligible when user-name inlining is
-/// disabled, matching the Babel 0.28 optimizer contract.
+/// Inline within the same straight-line owner, or at a source-proven intrinsic JSX text read.
+/// Generated `__*` names remain eligible when user-name inlining is disabled, matching the
+/// Babel 0.28 optimizer contract. Generated functions alone never license moving an expression.
 pub(super) fn rewrite<'a>(
     allocator: &'a Allocator,
     program: &mut Program<'a>,
     identities: &SemanticIdentities,
     creations: &BTreeMap<BindingId, DerivedCreationRewrite>,
     reactive_reads: &BTreeSet<SourceLocation>,
+    jsx_reads: &JsxInlineReads,
 ) -> Result<BTreeSet<BindingId>, Vec<Diagnostic>> {
     let mut collector = CandidateCollector {
         allocator,
         identities,
         creations,
         reactive_reads,
+        jsx_reads,
         definitions: BTreeMap::new(),
         references: BTreeMap::new(),
         accessor_callees: BTreeSet::new(),
@@ -66,6 +71,7 @@ pub(super) fn rewrite<'a>(
         statement_depth: 0,
     };
     collector.visit_program(program);
+
     let targets = collector.targets();
     if targets.is_empty() {
         return Ok(BTreeSet::new());
@@ -74,6 +80,7 @@ pub(super) fn rewrite<'a>(
     let mut rewriter = InlineRewriter {
         allocator,
         identities,
+        jsx_reads,
         targets: &targets,
         declarations: BTreeSet::new(),
         references: BTreeSet::new(),
@@ -107,6 +114,7 @@ struct CandidateCollector<'a, 'plan> {
     identities: &'plan SemanticIdentities,
     creations: &'plan BTreeMap<BindingId, DerivedCreationRewrite>,
     reactive_reads: &'plan BTreeSet<SourceLocation>,
+    jsx_reads: &'plan JsxInlineReads,
     definitions: BTreeMap<BindingId, Definition<'a>>,
     references: BTreeMap<BindingId, Vec<ReferenceSite>>,
     accessor_callees: BTreeSet<(BindingId, SourceLocation)>,
@@ -129,9 +137,35 @@ impl<'a> CandidateCollector<'a, '_> {
     fn targets(self) -> BTreeMap<BindingId, InlineTarget<'a>> {
         let mut targets = BTreeMap::new();
         for (binding, definition) in self.definitions {
-            let Some([reference]) = self.references.get(&binding).map(Vec::as_slice) else {
+            let Some(references) = self.references.get(&binding) else {
                 continue;
             };
+            let Some(reference) = references.first() else {
+                continue;
+            };
+            // Namespace alternatives duplicate one authored consumer. The source proof alone
+            // licenses crossing their generated functions; all copies must remain accessor reads.
+            if self
+                .jsx_reads
+                .get(&reference.location)
+                .is_some_and(|read| read.binding == binding)
+                && references
+                    .iter()
+                    .all(|site| site.accessor_call && site.location == reference.location)
+            {
+                targets.insert(
+                    binding,
+                    InlineTarget {
+                        declarator: definition.declarator,
+                        reference: reference.location,
+                        replacement: definition.replacement,
+                    },
+                );
+                continue;
+            }
+            if references.len() != 1 {
+                continue;
+            }
             let Some(declaration_statement) = definition.site.statement else {
                 continue;
             };
@@ -262,11 +296,15 @@ impl<'a> Visit<'a> for CandidateCollector<'a, '_> {
     fn visit_call_expression(&mut self, call: &CallExpression<'a>) {
         if call.arguments.is_empty()
             && let Expression::Identifier(identifier) = &call.callee
-            && let Some(binding) = self.identities.binding_for_reference(identifier)
+            && let Some(binding) = reference_binding(self.identities, self.jsx_reads, identifier)
             && self.creations.contains_key(&binding)
-            && self
+            && (self
                 .reactive_reads
                 .contains(&(identifier.span.start, identifier.span.end))
+                || self
+                    .jsx_reads
+                    .get(&(identifier.span.start, identifier.span.end))
+                    .is_some_and(|read| read.binding == binding))
         {
             self.accessor_callees
                 .insert((binding, (identifier.span.start, identifier.span.end)));
@@ -275,7 +313,7 @@ impl<'a> Visit<'a> for CandidateCollector<'a, '_> {
     }
 
     fn visit_identifier_reference(&mut self, identifier: &oxc::ast::ast::IdentifierReference<'a>) {
-        let Some(binding) = self.identities.binding_for_reference(identifier) else {
+        let Some(binding) = reference_binding(self.identities, self.jsx_reads, identifier) else {
             return;
         };
         if !self.creations.contains_key(&binding) {
@@ -297,6 +335,7 @@ impl<'a> Visit<'a> for CandidateCollector<'a, '_> {
 struct InlineRewriter<'a, 'plan> {
     allocator: &'a Allocator,
     identities: &'plan SemanticIdentities,
+    jsx_reads: &'plan JsxInlineReads,
     targets: &'plan BTreeMap<BindingId, InlineTarget<'a>>,
     declarations: BTreeSet<BindingId>,
     references: BTreeSet<BindingId>,
@@ -363,14 +402,12 @@ impl<'a> VisitMut<'a> for InlineRewriter<'a, '_> {
                     walk_mut::walk_expression(self, expression);
                     return;
                 };
-                self.identities
-                    .binding_for_reference(identifier)
-                    .and_then(|binding| {
-                        self.targets.get(&binding).and_then(|target| {
-                            (target.reference == (identifier.span.start, identifier.span.end))
-                                .then_some((binding, &target.replacement))
-                        })
+                reference_binding(self.identities, self.jsx_reads, identifier).and_then(|binding| {
+                    self.targets.get(&binding).and_then(|target| {
+                        (target.reference == (identifier.span.start, identifier.span.end))
+                            .then_some((binding, &target.replacement))
                     })
+                })
             }
             _ => None,
         };
@@ -478,4 +515,19 @@ fn inlineable_expression(
 fn statement_location(statement: &Statement<'_>) -> SourceLocation {
     let span: Span = statement.span();
     (span.start, span.end)
+}
+
+fn reference_binding(
+    identities: &SemanticIdentities,
+    jsx_reads: &JsxInlineReads,
+    identifier: &oxc::ast::ast::IdentifierReference<'_>,
+) -> Option<BindingId> {
+    identities.binding_for_reference(identifier).or_else(|| {
+        // Runtime helper identifiers can share a source read's span. Only the original
+        // binding name identifies a cloned accessor; a matching span alone is insufficient.
+        jsx_reads
+            .get(&(identifier.span.start, identifier.span.end))
+            .filter(|read| read.name == identifier.name.as_str())
+            .map(|read| read.binding)
+    })
 }

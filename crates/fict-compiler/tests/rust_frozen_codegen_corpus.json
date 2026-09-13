@@ -15,7 +15,7 @@
       "@babel/plugin-transform-typescript": "7.28.5"
     },
     "rustAuditRelease": "0.35.0",
-    "rustAuditRevision": "774397e14927f714bea49d27143b4ae4c877a94c",
+    "rustAuditRevision": "7641add24ae3966b51b014a09503bc52aa88d207",
     "auditInputSha256": "676b022516c01b525d7e2a316e5b072eae2ee1532b2bb103573543900f13b67f",
     "requestPolicySha256": "6b459d227b9b70c163861d31104547f8e1569526ae5fb78c36cb7a11f313bec8",
     "legacyTestSourceSha256": "65e6c3961af46d92d88d40d4ee0bb50901538ea15b4468dc8c79c73eef9da8bb",
@@ -25,8 +25,8 @@
     "corpusFixtures": 1950,
     "scannedLegacyTestFiles": 107,
     "legacyTestFilesWithAuditRows": 73,
-    "reviewedRevision": "774397e14927f714bea49d27143b4ae4c877a94c",
-    "reviewedCompilerBuildId": "fict-rust-p1-oxc0.139.0-m1-bb89a5499be26d01d918458e4fe4f666feb6d24a6c3aa5a3305f37e43e089528"
+    "reviewedRevision": "7641add24ae3966b51b014a09503bc52aa88d207",
+    "reviewedCompilerBuildId": "fict-rust-p1-oxc0.139.0-m1-b7fadddadcb27d8775487221ee8b03b3bfbe0c052f70bf01a56d9a123a398d8e"
   },
   "deviationPolicies": {
     "genuine-capability-expansion": "Rust accepts a Babel-rejected input and an executable oracle proves the newly supported behavior.",
@@ -205,7 +205,7 @@
       "expected": {
         "status": "ok",
         "diagnostics": [],
-        "codeSha256": "f7103d8a1b5e636820dad0a0a423c7fd9ff59c812834aa0c75bdd45e686519a0"
+        "codeSha256": "d314e0d0a59380c7c9f375238f0dfe53c120a65ed3d78a32b6e60600ac52eaa7"
       },
       "deviationPolicy": null
     },
@@ -24860,7 +24860,7 @@
       "expected": {
         "status": "ok",
         "diagnostics": [],
-        "codeSha256": "7413c3650892b263c9c236240a231b590d9d50bbee7fec75c3f2ddb88e3beb05"
+        "codeSha256": "03c08ecee896b5862c500791168f15543fb2fd7988da1283f37356baa2bb0d5f"
       },
       "deviationPolicy": null
     },
@@ -24936,7 +24936,7 @@
       "expected": {
         "status": "ok",
         "diagnostics": [],
-        "codeSha256": "60c92a5f55f30b869a5d962ea78175f805c2809f341d7490c15bae9723ed7a07"
+        "codeSha256": "925d090ada1c9b24a509d747f931ccd8dcc8654750b5af8ac94710ccf7a02908"
       },
       "deviationPolicy": null
     },
@@ -26104,7 +26104,7 @@
       "expected": {
         "status": "ok",
         "diagnostics": [],
-        "codeSha256": "b0b9bf31a845493122476e5879e27faaa004f47f73d12a4e35e114004689a03e"
+        "codeSha256": "81b7ff78460cfa64934dcaee6080e2c5e87b5499eceb3360920c4364e5dcf6aa"
       },
       "deviationPolicy": null
     },
@@ -30835,7 +30835,7 @@
       "expected": {
         "status": "ok",
         "diagnostics": [],
-        "codeSha256": "842743950785a98c65ad47f324e720d4e9bc92003788b5472ad4471cee642e88"
+        "codeSha256": "ad1b945be8a0b77232e15905f557f21c9c1017f7fd2493e50a63b09a9759c9ce"
       },
       "deviationPolicy": null
     },
@@ -33307,7 +33307,7 @@
       "expected": {
         "status": "ok",
         "diagnostics": [],
-        "codeSha256": "3e4ad963aacdb13716e549f860d96bb3004c97c40cb0834c642596b038a3e8c0"
+        "codeSha256": "76598b3f20f7f6c5010fbbde2569c975f627341b898472a549fd03d20b5171bf"
       },
       "deviationPolicy": null
     },
@@ -33331,7 +33331,7 @@
       "expected": {
         "status": "ok",
         "diagnostics": [],
-        "codeSha256": "cc95181adc3aa5cb3235c550767d8b3f0bef47a49814c0af7256eb6401504b28"
+        "codeSha256": "b0763fc0f8c65f04e03b5fc44a5274701e979dc5f5c92a3b32a2a1b7d9cfd5c6"
       },
       "deviationPolicy": null
     },
@@ -33505,7 +33505,7 @@
       "expected": {
         "status": "ok",
         "diagnostics": [],
-        "codeSha256": "60c92a5f55f30b869a5d962ea78175f805c2809f341d7490c15bae9723ed7a07"
+        "codeSha256": "925d090ada1c9b24a509d747f931ccd8dcc8654750b5af8ac94710ccf7a02908"
       },
       "deviationPolicy": null
     },
@@ -34237,7 +34237,7 @@
             "guaranteeClass": "fallback"
           }
         ],
-        "codeSha256": "f85b3826120cc5a0f9631d92e5f564e1404a3a2c8274781f13001d08e8abc4c2"
+        "codeSha256": "2bc2b3742f5205fdb2260fd6d15510ed7a0f9369877af6167fa9b927506873c8"
       },
       "deviationPolicy": null
     },
@@ -38677,7 +38677,7 @@
             "guaranteeClass": "fallback"
           }
         ],
-        "codeSha256": "d58558482c9913ebca204e660a9239480fd05645bdcb44574d2a8dfc47c4bab6"
+        "codeSha256": "9d2707380274e15aa016848dccdbd493d665eb7098662773014f565d47050730"
       },
       "deviationPolicy": null
     },
@@ -43165,7 +43165,7 @@
       "expected": {
         "status": "ok",
         "diagnostics": [],
-        "codeSha256": "393d52d31693d4a5d070d923123f1432bef5c537c6ad6ce41210896a8d09039b"
+        "codeSha256": "5aff57339058c9d63903c4eef0de1d00ebcd718a98d5c08d40e465e27b030afd"
       },
       "deviationPolicy": null
     },
@@ -43191,7 +43191,7 @@
       "expected": {
         "status": "ok",
         "diagnostics": [],
-        "codeSha256": "393d52d31693d4a5d070d923123f1432bef5c537c6ad6ce41210896a8d09039b"
+        "codeSha256": "5aff57339058c9d63903c4eef0de1d00ebcd718a98d5c08d40e465e27b030afd"
       },
       "deviationPolicy": null
     },
@@ -48627,7 +48627,7 @@
       "expected": {
         "status": "ok",
         "diagnostics": [],
-        "codeSha256": "e456d07b1362301791a16e59f9bd03cb7aa5fbf6a40df5907f9cc999801ec8ff"
+        "codeSha256": "f7d271e2aeaf141950689e2163ae6144397c2354b088f731833cd3fce2e4b842"
       },
       "deviationPolicy": null
     },
@@ -50185,7 +50185,7 @@
       "expected": {
         "status": "ok",
         "diagnostics": [],
-        "codeSha256": "0416b2785df27049da4d2057f356cb7c4588694eca0c107f20e3cba9d3f30819"
+        "codeSha256": "74a6636d90ea43cf565395ef4d853536825750295f4703763c7ac0de62131eda"
       },
       "deviationPolicy": null
     },

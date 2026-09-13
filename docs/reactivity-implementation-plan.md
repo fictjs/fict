@@ -16,7 +16,7 @@ not only an analysis pass, an API sketch, or a passing unrelated test suite.
 | S5   | Representative application coverage measures strict boundary incidence and usable diagnostic repairs.                                                                 | Maintained corpus with source identity, diagnostics, boundary/LOC counts, migration evidence, strict production and browser gates; distinguish maintained fixtures from independent adoption. | Complete |
 | S6   | Local build caches include the native compiler source and artifact identity used by each host.                                                                        | A changed compiler invalidates dependent build tasks; final qualification forces fresh application builds.                                                                                    | Complete |
 | S7   | Bundle-size gates resolve distributed modules without silently following workspace source aliases.                                                                    | Actual ESM/CJS package measurements, import-specific budgets, and an executable resolution check.                                                                                             | Complete |
-| G1   | Safe implicit memos with one logical JSX consumer can be removed without erasing observable computation or ownership semantics.                                       | Native output and browser/SSR behavior across safe/full/disabled options, explicit memo, multi-consumer, coercion, errors, and cleanup controls.                                              | Pending  |
+| G1   | Safe implicit memos with one logical JSX consumer can be removed without erasing observable computation or ownership semantics.                                       | Native output and browser/SSR behavior across safe/full/disabled options, explicit memo, multi-consumer, coercion, errors, and cleanup controls.                                              | Complete |
 | G2   | Reactive allocation and optimization decisions are traceable from source consumers through EmitIR to generated bindings and owners.                                   | Verified graph/decision information and final-output counters, including reasons for materialization, inlining, retention, and rejected fusion.                                               | Pending  |
 | G3   | Existing SSA simplification facts and lazy placement opportunities are either safely realized in emitted code or accurately reported as retained work.                | Semantic differential tests and final generated-code evidence; no claims based solely on unused analysis fields.                                                                              | Pending  |
 | G4   | Creation, replacement, and append costs are profiled and reduced where measurements support safe changes.                                                             | Controlled allocation/CPU profiles, complete repeated benchmark batches, memory and disposal checks, documented rejected experiments.                                                         | Pending  |
@@ -212,6 +212,40 @@ and relocating identical bytes retains the cache hit. Both integration tests and
 all 55 release-verification checks pass. A fresh root `pnpm build --summarize`
 executes all 31 tasks successfully with zero cache hits. The cache test runs in CI,
 precommit, and release verification.
+
+## G1: single-consumer scalar JSX memos
+
+Implicit derived values used once as intrinsic JSX text can now inline through
+generated consumer getters and namespace alternatives. The proof runs on authored
+bindings before cloning: component-owned numeric/boolean/nullish state must start
+in the same straight-line owner and retain that domain through every write.
+Generated reads must match both the original binding and spelling. Existing
+same-owner inlining retains its original checks.
+
+Explicit memos, multi-consumer values, component props, uncertain calls/coercions,
+object or externally owned state, conditional initialization, async accessors,
+and mutable string recurrence retain materialization. The
+[inlining guide](./derived-memo-inlining.md) specifies the supported boundary;
+its source example is compiled by the regression suite.
+
+Validation: all 566 native compiler tests pass after a fresh build, including
+40 focused cases across disabled/safe/full optimization and both DOM backends.
+The retained baseline passes 25 of those cases and fails the 15 new optimization
+expectations. Twenty-four Chromium scenarios cover HTML/SVG structure, updates,
+equal-result DOM identity, hide/remount and disposal using distributed packages.
+SSR, exception and cleanup checks pass separately in the native suite.
+
+Both frozen replay suites pass: all 3,172 inputs retain their acceptance and
+diagnostics. Manual and binding-aware AST review limits the 22 changed outputs to
+26 removed implicit memo declarations, 51 accessor substitutions and associated
+imports. Source requests, Babel outputs, maps and capture policies are unchanged.
+All-target/all-feature Clippy, Rust boundaries and 101 corpus/oracle/guard checks
+pass. The [evidence archive](./testing/jsx-memo-inline-evidence-2026-09-14.json)
+records compiler/source identities and browser build hashes. These are static
+output and correctness results; no CPU improvement or 1.10 score is inferred.
+The complete `pnpm commit` preflight also passes, including the fresh workspace
+build, frozen corpus, distributed size limits, review regressions, workspace
+tests, production/test typechecks, formatting and lint.
 
 ## A1: executable async readiness contract
 

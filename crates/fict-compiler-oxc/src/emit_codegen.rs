@@ -60,6 +60,7 @@ mod control_flow_region;
 mod derived_inline;
 mod full_optimizer;
 mod getter_cache;
+mod jsx_derived_inline;
 mod named_evaluation;
 mod operation_support;
 mod polymorphic_root;
@@ -180,6 +181,8 @@ pub fn emit_program(
             .iter()
             .map(|span| (span.start(), span.end())),
     );
+    let jsx_inline_reads =
+        jsx_derived_inline::analyze(&program, &identities, emit, &creations.derived_bindings);
     let mut rewriter = AstRewriter {
         allocator: &allocator,
         creations: &creations.expressions,
@@ -455,6 +458,7 @@ pub fn emit_program(
         &identities,
         &creations.derived_bindings,
         &reactive_read_locations,
+        &jsx_inline_reads,
     ) {
         Ok(inlined) => inlined,
         Err(findings) => return failed_output(findings),
