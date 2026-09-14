@@ -13,6 +13,8 @@
     "test/async-state.test.ts",
     "test/async-memo.test.ts",
     "test/async-composition.test.ts",
+    "test/async-consumer-control-flow.test.ts",
+    "test/async-keyed-list.test.ts",
     "test/async-suspense.test.ts",
     "test/async-source.test.ts",
     "test/async-transition.test.ts",

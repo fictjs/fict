@@ -957,17 +957,17 @@ describe('signal runtime robustness', () => {
 
     mode(true)
     await tick()
-    expect(runs).toBe(1)
+    expect(runs).toBe(2)
     expect(errors).toBe(1)
 
     stale(1)
     await tick()
-    expect(runs).toBe(1)
+    expect(runs).toBe(2)
     expect(errors).toBe(1)
 
     active(1)
     await tick()
-    expect(runs).toBe(1)
+    expect(runs).toBe(3)
     expect(errors).toBe(2)
 
     root.dispose()

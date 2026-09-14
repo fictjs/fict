@@ -130,3 +130,69 @@ it.each([false, true])(
     expect(cleaned.sort()).toEqual([1, 2, 3])
   },
 )
+
+it.each([false, true])(
+  'a keyed source can abandon an unresolved branch (initial pending: %s)',
+  async initialPending => {
+    const request = deferred<Row[]>()
+    const shown = signal(true)
+    const refresh = signal(initialPending)
+    const container = document.createElement('div')
+    document.body.append(container)
+    disposers.push(() => container.remove())
+    const created: number[] = []
+    const cleaned: number[] = []
+    const Child = () => {
+      const data = createAsyncMemo(() =>
+        refresh() ? request.promise : [{ id: 1, label: 'ready' }],
+      )
+      const parent = document.createElement('section')
+      const start = document.createComment('start'),
+        end = document.createComment('end')
+      parent.append(start, end)
+      const list = createKeyedList(
+        () => (shown() ? data() : []),
+        row => row.id,
+        item => {
+          const id = item().id
+          created.push(id)
+          onCleanup(() => {
+            cleaned.push(id)
+          })
+          const span = document.createElement('span')
+          bindTextContent(span, () => item().label)
+          return [span]
+        },
+        false,
+        start,
+        end,
+      )
+      onCleanup(list.dispose)
+      return parent
+    }
+    const stop = render(
+      () => ({
+        type: Suspense as unknown as (props: Record<string, unknown>) => FictNode,
+        props: { fallback: 'loading', children: { type: Child, props: {} } },
+      }),
+      container,
+    )
+    disposers.push(stop)
+    await drain()
+    expect(container.textContent).toBe(initialPending ? 'loading' : 'ready')
+    refresh(true)
+    await drain()
+    expect(container.textContent).toBe('loading')
+    shown(false)
+    await drain()
+    expect(container.textContent).toBe('')
+    expect(cleaned).toEqual(initialPending ? [] : [1])
+    // No resolution is needed to leave fallback or dispose the abandoned rows.
+    request.resolve([{ id: 2, label: 'obsolete' }])
+    await drain()
+    expect(container.textContent).toBe('')
+    expect(created).toEqual(initialPending ? [] : [1])
+    stop()
+    expect(cleaned).toEqual(created)
+  },
+)

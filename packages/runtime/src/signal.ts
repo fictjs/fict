@@ -4,8 +4,6 @@ import { getSafeDevtoolsHook as getDevtoolsHook } from './devtools'
 import { __fictGetCurrentComponentId } from './hooks'
 import {
   getCurrentRoot,
-  handleError,
-  handleSuspend,
   registerManagedEffectCleanup,
   registerRootCleanup,
   withRootContext,
@@ -19,7 +17,6 @@ import {
   type TransitionContext,
   type TransitionScope,
 } from './transition-scope'
-import type { SuspenseToken } from './types'
 
 const isDev =
   typeof __DEV__ !== 'undefined'
@@ -807,16 +804,7 @@ function checkDirty(firstLink: Link, sub: ReactiveNode): boolean {
     if (sub.flags & Dirty) {
       dirty = true
     } else if ((depFlags & MutableDirty) === MutableDirty) {
-      let changed: boolean
-      try {
-        changed = update(dep)
-      } catch (error) {
-        const failure = 'thrownError' in dep ? dep.thrownError : undefined
-        if (isAsyncPending(error) || failure?.async) {
-          retainAsyncFailurePath(sub, stack, checkDepth, error, failure?.rejection)
-        }
-        throw error
-      }
+      const changed = updateDependency(dep)
       if (changed) {
         const subs = dep.subs
         if (subs !== undefined && subs.nextSub !== undefined) shallowPropagate(subs)
@@ -861,16 +849,7 @@ function checkDirty(firstLink: Link, sub: ReactiveNode): boolean {
       }
 
       if (dirty) {
-        let changed: boolean
-        try {
-          changed = update(sub)
-        } catch (error) {
-          const failure = 'thrownError' in sub ? sub.thrownError : undefined
-          if (isAsyncPending(error) || failure?.async) {
-            retainAsyncFailurePath(link.sub, stack, checkDepth, error, failure?.rejection)
-          }
-          throw error
-        }
+        const changed = updateDependency(sub)
         if (changed) {
           if (hasMultipleSubs) shallowPropagate(firstSub)
           sub = link.sub
@@ -892,30 +871,18 @@ function checkDirty(firstLink: Link, sub: ReactiveNode): boolean {
     return dirty
   }
 }
-/** Preserve a blocked path so the next async publication can invalidate it. */
-function retainAsyncFailurePath(
-  node: ReactiveNode,
-  stack: StackFrame | undefined,
-  depth: number,
-  error: unknown,
-  rejection = false,
-): void {
-  for (;;) {
-    if (rejection && ('getter' in node || 'fn' in node)) node.asyncFailure = { error }
-    if ('getter' in node && node.getter !== undefined && !node.disposed) {
-      node.thrownError = { error, async: true, rejection }
-      node.flags = Mutable
-    }
-    if (depth-- === 0) return
-    const first = node.subs
-    if (!first) return
-    if (first.nextSub) {
-      if (!stack?.value) return
-      node = stack.value.sub
-      stack = stack.prev
-    } else {
-      node = first.sub
-    }
+/** A failed dependency invalidates consumers without skipping their own bodies. */
+function updateDependency(node: ReactiveNode): boolean {
+  try {
+    return update(node)
+  } catch (error) {
+    // A computed node caches its own failure. Continue the iterative traversal
+    // so each ancestor gets to handle that failure at its actual read, rather
+    // than assigning the error to unexecuted bodies or recursively retrying a
+    // whole dirty chain. Signal/comparator failures without a cached read still
+    // propagate to the caller's dependency-check fallback.
+    if ('thrownError' in node && node.thrownError !== undefined) return true
+    throw error
   }
 }
 
@@ -1142,7 +1109,7 @@ function updateSignal(s: SignalNode): boolean {
 function updateComputed<T>(c: ComputedNode<T>): boolean {
   ++cycle
   const oldValue = c.value
-  const wasAsyncBlocked = c.thrownError?.async === true
+  const wasBlocked = c.thrownError !== undefined
   c.depsTail = undefined
   c.asyncReads?.clear()
   if (c.asyncFailure) c.asyncFailure = undefined
@@ -1168,7 +1135,7 @@ function updateComputed<T>(c: ComputedNode<T>): boolean {
     }
     // Readiness is observable even when the last successful value is equal.
     // Consumers that suspended before their other reads must resume and re-subscribe.
-    return wasAsyncBlocked
+    return wasBlocked
   } catch (e) {
     activeSub = prevSub
     c.flags &= ~Running
@@ -1218,23 +1185,6 @@ function runEffectInRoot(e: EffectNode): void {
   const flags = e.flags
   const isDisposed = () => e.disposed === true
   if (isDisposed()) return
-  if (!e.prepare && flags & (Dirty | Pending) && e.asyncReads?.size) {
-    try {
-      withAsyncErrorScope(e, () =>
-        untrack(() => {
-          for (const read of e.asyncReads!) read()
-        }),
-      )
-    } catch (error) {
-      if (!isDisposed()) e.flags = Watching
-      if (isAsyncPending(error) && !isAsyncRejection(error, e)) {
-        withAsyncErrorScope(e, () => handleSuspend(error, e.root))
-        return
-      }
-      if (handleError(error, { source: 'effect' }, e.root)) return
-      throw error
-    }
-  }
   if (!e.prepare) e.asyncSuspension?.release()
   const runCleanup = () => {
     if (!e.runCleanup) return
@@ -1307,24 +1257,11 @@ function runEffectInRoot(e: EffectNode): void {
     let isDirty: boolean
     try {
       isDirty = checkDirty(e.deps, e)
-    } catch (err) {
-      if (
-        !isAsyncRejection(err, e) &&
-        (isAsyncPending(err) || handleSuspend(err as SuspenseToken, e.root))
-      ) {
-        if (isAsyncPending(err)) withAsyncErrorScope(e, () => handleSuspend(err, e.root))
-        if (!isDisposed()) {
-          e.flags = Watching
-        }
-        return
-      }
-      if (handleError(err, { source: 'effect' }, e.root)) {
-        if (!isDisposed()) {
-          e.flags = Watching
-        }
-        return
-      }
-      throw err
+    } catch {
+      // Dependency checking may encounter a cached error or pending read before
+      // reaching this consumer's current branch. Let its own callback (or pure
+      // preparation) decide whether to read it and how to handle the exception.
+      isDirty = true
     }
     if (isDisposed()) return
     if (isDirty) {
@@ -1772,7 +1709,15 @@ function computedOper<T>(this: ComputedNode<T>): T {
         if (subs !== undefined) shallowPropagate(subs)
       }
     } else if (flags & Pending) {
-      if (this.deps && checkDirty(this.deps, this)) {
+      let dirty: boolean
+      try {
+        dirty = !!this.deps && checkDirty(this.deps, this)
+      } catch {
+        // Re-enter the getter so its conditional reads and local catch execute.
+        // A failed upstream memo rethrows its cached error at the actual read.
+        dirty = true
+      }
+      if (dirty) {
         if (updateComputed(this)) {
           const subs = this.subs
           if (subs !== undefined) shallowPropagate(subs)
@@ -1825,6 +1770,11 @@ function computedOper<T>(this: ComputedNode<T>): T {
     if (isAsyncRejection(error, this) || this.thrownError?.rejection) registerAsyncRejection(error)
     throw error
   } finally {
+    // A cached synchronous failure is also an observable dependency. A local
+    // catch must remain subscribed so recovery to the previous value can retry.
+    if (!isComputedDisposed(this) && this.thrownError !== undefined && activeSub) {
+      link(this, activeSub, cycle)
+    }
     // Failed async reads still establish the edge needed to retry. Status reads
     // on an async node are deliberately nonblocking; its value accessor opts in.
     if (!isComputedDisposed(this) && !this.retainDependencies && this.asyncReads?.size) {

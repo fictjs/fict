@@ -94,20 +94,28 @@ current inputs. A refresh failure remains observable until explicit invalidation
 or a relevant input change. `latest()` deliberately permits mixed-age data; it is
 an application policy, never an implicit fallback for a current-value read.
 
-Reactive dependency checking must finish before a previously committed effect is
-cleaned up or replaced. For new or conditional dependency discovery, the explicit
-`createAsyncEffect(prepare, commit)` API evaluates a pure preparation first. Only
-a successful current preparation runs cleanup and then commits the new value.
+`createAsyncEffect(prepare, commit)` evaluates a pure preparation before a
+previously committed effect is cleaned up or replaced. This applies to existing,
+new and conditional dependencies alike. Only a successful current preparation
+runs cleanup and then commits the new value.
 Pending preparations preserve the prior committed effect; disposal cleans it up
 once. Failures route to the owning error boundary and remain retryable.
 
-The contract does not claim to roll back arbitrary side effects performed before a
-throwing read in an ordinary `createEffect` callback. Application effects needing
-atomic preparation use the two-phase API. Compiler-created DOM bindings must
-evaluate their data before writes, and any binding fusion must preserve that
+An ordinary `createEffect` cleans up its previous attempt before executing its
+callback, including an attempt that encounters pending data. The callback's
+current branch and local `try/catch` decide whether to read or handle unavailable
+data. Runtime dependency checking must not substitute an old read set for that
+control flow or assign an upstream exception to an unexecuted memo body. Side
+effects performed before a throwing read cannot be rolled back. Application
+effects needing to preserve committed work while pending use the two-phase API.
+Compiler-created DOM bindings must evaluate their data before writes, and any binding fusion must preserve that
 property. A Suspense boundary may display fallback; stale display requires an
 explicit stale read or a defined transition policy. Independent boundaries do not
 hold unrelated ready work.
+
+Keyed lists read the current source before diffing or destroying rows. Switching
+to a ready branch releases a previous pending wait immediately, even if the
+abandoned request never settles; the old committed rows survive pending preparation.
 
 For graph pending tokens, Suspense keeps the computation owner and parks the
 rendered DOM while showing a separately owned fallback. It reveals the retained

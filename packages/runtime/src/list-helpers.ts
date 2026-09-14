@@ -7,7 +7,7 @@
 
 import { createElement, createElementInNamespace, createElementInParentNamespace } from './dom'
 import { isNodeLike } from './dom-guards'
-import { createRenderEffect } from './effect'
+import { createRenderTransaction } from './effect'
 import { isHydratingActive, withHydrationRange } from './hydration'
 import {
   createRootContext,
@@ -770,6 +770,7 @@ function createFineGrainedKeyedList<T>(
       const prevOrderedBlocks = container.orderedBlocks
       const nextOrderedBlocks = container.nextOrderedBlocks
       const orderedIndexByKey = container.orderedIndexByKey
+      // Read the current branch before mutating any row or reconciliation buffer.
       const newItems = getItems()
       const newEntries = collectListEntries(newItems, skipHoles)
       const newCount = newEntries.length
@@ -1235,7 +1236,9 @@ function createFineGrainedKeyedList<T>(
       : getUsableParent()
     if (!parent) return false
     const start = () => {
-      effectDispose = createRenderEffect(performDiff)
+      // Row roots own committed work. The transaction discovers current source
+      // dependencies while preserving cleanup registered by a source callback.
+      effectDispose = createRenderTransaction(performDiff)
       effectStarted = true
     }
     if (hostRoot) {

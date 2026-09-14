@@ -128,6 +128,11 @@ function createManagedEffect<T = void>(
   return teardown
 }
 
+/**
+ * Run a tracked callback, cleaning up the previous attempt before each rerun.
+ * Local branches and catches own unavailable reads. Use createAsyncEffect when
+ * committed work must survive until a complete preparation succeeds.
+ */
 export function createEffect(fn: Effect, options?: EffectOptions): () => void {
   return createManagedEffect(fn, options)
 }

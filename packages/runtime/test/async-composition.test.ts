@@ -58,7 +58,7 @@ describe('async readiness through synchronous computations', () => {
     expect(values).toEqual([9])
   })
 
-  it('preserves committed cleanup across refresh through a chain and then recovers', async () => {
+  it('prepared effects preserve committed cleanup across refresh through a chain and recover', async () => {
     const id = signal(1)
     const request = deferred<number>()
     const events: string[] = []
@@ -66,8 +66,7 @@ describe('async readiness through synchronous computations', () => {
       const data = createAsyncMemo(() => (id() === 1 ? 10 : request.promise))
       const doubled = createMemo(() => data() * 2)
       const label = createMemo(() => doubled() + 1)
-      createEffect(() => {
-        const value = label()
+      createAsyncEffect(label, value => {
         events.push(`run:${value}`)
         return () => {
           events.push(`cleanup:${value}`)
@@ -82,20 +81,22 @@ describe('async readiness through synchronous computations', () => {
     expect(events).toEqual(['run:21', 'cleanup:21', 'run:41'])
   })
 
-  it('holds direct async consumers before cleanup, including dirty effects', async () => {
+  it('prepares direct async consumers before cleanup, including dirty effects', async () => {
     const id = signal(1)
     const side = signal('first')
     const request = deferred<number>()
     const events: string[] = []
     root(() => {
       const data = createAsyncMemo(() => (id() === 1 ? 10 : request.promise))
-      createEffect(() => {
-        const value = `${side()}:${data()}`
-        events.push(`run:${value}`)
-        return () => {
-          events.push(`cleanup:${value}`)
-        }
-      })
+      createAsyncEffect(
+        () => `${side()}:${data()}`,
+        value => {
+          events.push(`run:${value}`)
+          return () => {
+            events.push(`cleanup:${value}`)
+          }
+        },
+      )
     })
     id(2)
     side('second')
