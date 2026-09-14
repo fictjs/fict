@@ -540,28 +540,32 @@ throttling. Two complete rounds provide 30 samples per case; selection has 50.
 
 <!-- runtime-benchmark:start -->
 
+The latest strict comparison uses two complete five-framework rounds, with all
+1,450 CPU samples retained. CPU case values are milliseconds; geometric scores
+are normalized per case to the fastest of these five entries (lower is better).
+[Method, creation costs and memory](docs/runtime-benchmark.md) ·
+[Raw samples and build provenance](docs/benchmarks/runtime-review-fixed-2026-09-14.json).
+
 | Benchmark                       | Vue Vapor |  Solid | Svelte 5 |   Fict | React Compiler |
 | :------------------------------ | --------: | -----: | -------: | -----: | -------------: |
-| Create rows (1k)                |     31.10 |  30.38 |    31.04 |  36.15 |          36.81 |
-| Replace all rows (1k)           |     35.33 |  34.97 |    36.10 |  41.57 |          44.43 |
-| Partial update (every 10th row) |     19.39 |  18.86 |    19.69 |  20.37 |          25.33 |
-| Select row                      |      5.86 |   6.69 |     9.17 |   6.49 |          13.90 |
-| Swap rows                       |     22.07 |  22.33 |    22.67 |  23.11 |         145.21 |
-| Remove row                      |     16.87 |  16.89 |    17.24 |  17.36 |          19.58 |
-| Create many rows (10k)          |    336.37 | 332.41 |   335.00 | 369.25 |         626.91 |
-| Append rows (1k to 1k)          |     36.69 |  36.55 |    36.77 |  41.98 |          43.83 |
-| Clear rows (1k)                 |     15.14 |  18.42 |    17.13 |  17.07 |          27.28 |
-| **CPU geometric mean**          |     1.009 |  1.039 |    1.084 |  1.113 |          1.748 |
+| Create rows (1k)                |     31.16 |  30.31 |    30.98 |  35.66 |          36.93 |
+| Replace all rows (1k)           |     35.30 |  35.24 |    36.34 |  41.74 |          45.12 |
+| Partial update (every 10th row) |     19.67 |  19.01 |    20.09 |  20.51 |          25.32 |
+| Select row                      |      5.71 |   6.68 |     9.45 |   6.48 |          13.77 |
+| Swap rows                       |     22.23 |  22.86 |    22.80 |  23.33 |         146.93 |
+| Remove row                      |     16.89 |  16.87 |    17.43 |  17.73 |          19.56 |
+| Create many rows (10k)          |    336.99 | 333.35 |   336.80 | 368.97 |         628.96 |
+| Append rows (1k to 1k)          |     37.18 |  36.99 |    37.06 |  41.66 |          43.63 |
+| Clear rows (1k)                 |     15.61 |  18.80 |    17.30 |  17.50 |          27.55 |
+| **CPU geometric mean**          |     1.009 |  1.042 |    1.091 |  1.113 |          1.746 |
 
-Each case is normalized to its fastest mean among these five implementations;
-the geometric mean gives equal weight to the nine CPU cases. Case means are
-pooled before normalization; the pooled score is not an average of round scores.
-
-Fict's pooled score is **1.113164**. Complete round scores are **1.113658** and **1.114213**.
+Fict's pooled score is **1.113341**. Complete round scores are **1.116696** and **1.110706**.
 The strict **≤1.10** check uses unrounded values: pooled **FAIL**; rounds **FAIL / FAIL**.
 
 **Versions:** Vue Vapor 3.6.0-alpha.2 · Solid 1.9.3 · Svelte 5 5.42.1 · Fict 0.35.0 · React 19.0.0; babel-plugin-react-compiler 19.0.0-beta-37ed2a7-20241206.
-Fict compiler/runtime revision: `6a716534`; strict compilation with zero diagnostics.
+Fict compiler/runtime revision: `b8598af2`; strict compilation with zero diagnostics.
+
+Create 1k script time: **8.71 ms** for Fict and **3.54 ms** for Solid; paint time: **26.16 ms** and **26.17 ms**, respectively.
 
 <!-- runtime-benchmark:end -->
 
@@ -572,13 +576,13 @@ or isolate async overhead from the historical 0.34.0 measurements.
 
 The fixture uses an explicit selector, per-row label signals, `textContent`,
 and stable row captures. The compiler does not infer that representation for
-arbitrary applications. Creation remains the largest gap: 1k script time is
-9.09 ms for Fict versus 3.59 ms for Solid, while paint is nearly equal. The new
-binding allocation optimization reduces live page memory with mixed CPU tradeoffs.
+arbitrary applications. The measured creation cases still spend more time in
+JavaScript than the frozen Solid implementation. The earlier binding allocation
+experiment and its mixed CPU results remain documented in the benchmark history.
 
 All five frozen entries pass the official keyed checks; Fict also passes 15 model
-checks through 11,000 rows. See the [current results and remaining costs](./docs/runtime-benchmark.md#current-strict-comparison-2026-09-14)
-and [all samples, frozen artifacts and provenance](./docs/benchmarks/runtime-qualified-2026-09-14.json).
+checks through 11,000 rows. See the [current results and remaining costs](./docs/runtime-benchmark.md#current-strict-comparison-after-review-fixes-2026-09-14)
+and [all samples, frozen artifacts and provenance](./docs/benchmarks/runtime-review-fixed-2026-09-14.json).
 Run `node scripts/runtime-benchmark-report.mjs --check-readme` to verify this table,
 its versions and the unrounded target directly from the archived samples.
 The [benchmark history](./docs/runtime-benchmark.md#implemented-optimizations-2026-09-13)
@@ -615,33 +619,33 @@ retains the earlier 0.34.0 results and optimization experiments.
 
 ## Documentation
 
-| Doc                                                                       | Description                                                    |
-| :------------------------------------------------------------------------ | :------------------------------------------------------------- |
-| [Architecture](./docs/architecture.md)                                    | How the compiler and runtime work                              |
-| [API Reference](./docs/api-reference.md)                                  | Complete API documentation                                     |
-| [Compiler Spec](./docs/compiler-spec.md)                                  | Formal semantics                                               |
-| [Reactive Graph Trace](./docs/reactive-graph-trace.md)                    | Source plans and final helper calls                            |
-| [Reactivity Qualification](./docs/reactivity-qualification-2026-09-14.md) | Implementation status and local validation evidence            |
-| [Async Declarations](./docs/async-declarations.md)                        | Owned resolved values and continuations                        |
-| [Async Graph Contract](./docs/async-graph-contract.md)                    | Readiness, stale values and cleanup                            |
-| [Async SSR and Hydration](./docs/async-ssr-hydration.md)                  | Request ownership and client handoff                           |
-| [Migration Guide](./docs/migration-guide.md)                              | React/Vue/Svelte/Solid migration                               |
-| [Async Migration](./docs/async-migration-guide.md)                        | Owned async nodes, Resource policy and continuation boundaries |
-| [Strict Guarantee Cookbook](./docs/strict-guarantee-cookbook.md)          | Fail-closed diagnostic rewrites                                |
-| [Store API](./docs/store-api.md)                                          | `$state` vs `$store` ownership                                 |
-| [Release Policy](./docs/release-policy.md)                                | SemVer and changelog standards                                 |
-| [Scope Contract](./SCOPE.md)                                              | Core/Satellite/Preview/Internal tiers                          |
-| [Preview Policy](./docs/PREVIEW.md)                                       | Preview surface + degradation contract                         |
-| [ESLint Rules](./docs/eslint-rules.md)                                    | Linting configuration                                          |
-| [Diagnostic Codes](./docs/diagnostic-codes.md)                            | Compiler warnings reference                                    |
-| [Config Profiles](./docs/config-profiles.md)                              | Recommended dev/CI/prod settings                               |
-| [Compiler Maintenance](./docs/compiler-maintenance.md)                    | Compiler complexity guardrails                                 |
-| [Cycle Protection](./docs/cycle-protection.md)                            | Dev-mode infinite loop detection                               |
-| [SSR SEO Guide](./docs/ssr-seo.md)                                        | SEO best practices for SSR pages                               |
-| [SSR Performance](./docs/ssr-performance.md)                              | Snapshot size & render-mode tuning                             |
-| [SSR Deployment](./docs/ssr-deployment.md)                                | Vercel/Cloudflare/edge deployment                              |
-| [Security Boundaries](./docs/architecture/security-boundaries.md)         | HTML/snapshot/CSP/isolation review                             |
-| [DevTools](./packages/devtools/README.md)                                 | Vite plugin usage & auto-injection                             |
+| Doc                                                                      | Description                                                    |
+| :----------------------------------------------------------------------- | :------------------------------------------------------------- |
+| [Architecture](./docs/architecture.md)                                   | How the compiler and runtime work                              |
+| [API Reference](./docs/api-reference.md)                                 | Complete API documentation                                     |
+| [Compiler Spec](./docs/compiler-spec.md)                                 | Formal semantics                                               |
+| [Reactive Graph Trace](./docs/reactive-graph-trace.md)                   | Source plans and final helper calls                            |
+| [Reactivity Qualification](./docs/reactivity-review-fixes-2026-09-14.md) | Implementation status and local validation evidence            |
+| [Async Declarations](./docs/async-declarations.md)                       | Owned resolved values and continuations                        |
+| [Async Graph Contract](./docs/async-graph-contract.md)                   | Readiness, stale values and cleanup                            |
+| [Async SSR and Hydration](./docs/async-ssr-hydration.md)                 | Request ownership and client handoff                           |
+| [Migration Guide](./docs/migration-guide.md)                             | React/Vue/Svelte/Solid migration                               |
+| [Async Migration](./docs/async-migration-guide.md)                       | Owned async nodes, Resource policy and continuation boundaries |
+| [Strict Guarantee Cookbook](./docs/strict-guarantee-cookbook.md)         | Fail-closed diagnostic rewrites                                |
+| [Store API](./docs/store-api.md)                                         | `$state` vs `$store` ownership                                 |
+| [Release Policy](./docs/release-policy.md)                               | SemVer and changelog standards                                 |
+| [Scope Contract](./SCOPE.md)                                             | Core/Satellite/Preview/Internal tiers                          |
+| [Preview Policy](./docs/PREVIEW.md)                                      | Preview surface + degradation contract                         |
+| [ESLint Rules](./docs/eslint-rules.md)                                   | Linting configuration                                          |
+| [Diagnostic Codes](./docs/diagnostic-codes.md)                           | Compiler warnings reference                                    |
+| [Config Profiles](./docs/config-profiles.md)                             | Recommended dev/CI/prod settings                               |
+| [Compiler Maintenance](./docs/compiler-maintenance.md)                   | Compiler complexity guardrails                                 |
+| [Cycle Protection](./docs/cycle-protection.md)                           | Dev-mode infinite loop detection                               |
+| [SSR SEO Guide](./docs/ssr-seo.md)                                       | SEO best practices for SSR pages                               |
+| [SSR Performance](./docs/ssr-performance.md)                             | Snapshot size & render-mode tuning                             |
+| [SSR Deployment](./docs/ssr-deployment.md)                               | Vercel/Cloudflare/edge deployment                              |
+| [Security Boundaries](./docs/architecture/security-boundaries.md)        | HTML/snapshot/CSP/isolation review                             |
+| [DevTools](./packages/devtools/README.md)                                | Vite plugin usage & auto-injection                             |
 
 <details>
 <summary><strong>🔍 Linting & diagnostics</strong></summary>

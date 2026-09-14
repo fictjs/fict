@@ -5,6 +5,13 @@ review of `af3d5fc0`. Each independent item receives its own commit, implementat
 evidence, and applicable validation. A checked item must describe working behavior,
 not only an analysis pass, an API sketch, or a passing unrelated test suite.
 
+The [post-review qualification](./reactivity-review-fixes-2026-09-14.md) is the
+current validation record at `b8598af2`, including shared call-prop caching,
+initial rejection identity, current consumer branches/catches, no-cache ownership,
+and executable receiver contracts. The dated implementation sections below retain
+their original evidence; current CPU measurements are in the
+[review-fix benchmark archive](./benchmarks/runtime-review-fixed-2026-09-14.json).
+
 | Item | Required result                                                                                                                                                       | Completion evidence                                                                                                                                                                           | Status   |
 | ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- |
 | S1   | Explicit snapshot semantics and diagnostic fixes agree under default strict compilation. Retained reactive closures and unsafe lifetime escapes remain diagnosed.     | Executable cookbook examples, adversarial native compiler tests, disabled/safe/full behavioral checks.                                                                                        | Complete |
@@ -317,9 +324,9 @@ DOM and SSR cases, source/test typechecks and runtime lint pass. Both frozen
 entries pass 15 browser model checks through 11,000 rows and all three official
 keyed checks. Profiles, tests, builds and CPU/memory batches run separately.
 
-## G5: current strict five-framework results
+## G5: earlier strict five-framework results
 
-README now reports the qualified 0.35.0 compiler/runtime at `6a716534`, including
+At G5, README reported the qualified 0.35.0 compiler/runtime at `6a716534`, including
 the async graph. Both complete nine-case CPU rounds retain all 1,450 reported
 samples. Round B reverses case and framework order. The pooled Fict score is
 1.1131642824390815, versus 1.1136580376192835 and 1.1142133406712187 per round.
@@ -675,8 +682,8 @@ not independent external adoption.
 Distributed ESM/CJS package probes verify shared root/advanced graph behavior,
 derivations, causal transitions, stale rejection, cancellation, cleanup and public
 async declarations. They run in the existing runtime package gate. G4/G5 provide
-separate current synchronous CPU/allocation/memory qualification: the five-framework
-score is 1.113164 and the 1.10 target remains unmet. No zero-cost async or universal
+separate synchronous CPU/allocation/memory qualification for that implementation:
+the historical five-framework score is 1.113164 and its 1.10 target remains unmet. No zero-cost async or universal
 optimal-graph claim is made from those results.
 
 ## Q1a: one native behavior suite for CI and release
@@ -728,7 +735,7 @@ dedicated governance change, preserves the prior 23/8/6-line maintenance reserve
 and leaves every percentage, ratchet and unrelated limit unchanged. The reviewed
 complexity report and both existing reporter tests pass.
 
-## Q1: final stack qualification
+## Q1: earlier stack qualification
 
 The [final audit](./reactivity-qualification-2026-09-14.md) and
 [machine-readable evidence](./testing/reactivity-final-evidence-2026-09-14.json)
@@ -745,8 +752,9 @@ application/library source hashes match the successful application qualification
 The portable archive preserves 27 logs, including the three corrected failures.
 Historical approvals remain intact; Q1a–Q1d have focused commits.
 
-This completes the stated implementation checklist and local qualification.
-The pooled CPU score is 1.1131642824390815, so the strict unrounded 1.10 target
+That run completed the then-current checklist and local qualification; the
+post-review record above supersedes it for the corrected source tree.
+The historical pooled CPU score is 1.1131642824390815, so the strict unrounded 1.10 target
 is not met. General cost-based graph optimization, arbitrary SSA/lazy placement,
 native-await continuation ownership, async components and Preview async ownership
 serialization remain the documented boundaries. No remote CI, other-platform

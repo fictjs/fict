@@ -11,7 +11,7 @@ const { values } = parseArgs({
   options: {
     archive: {
       type: 'string',
-      default: path.join(root, 'docs/benchmarks/runtime-qualified-2026-09-14.json'),
+      default: path.join(root, 'docs/benchmarks/runtime-review-fixed-2026-09-14.json'),
     },
     'check-readme': { type: 'boolean', default: false },
   },
@@ -142,6 +142,18 @@ const resultLine = `Fict's pooled score is **${pooledScores[fictIndex].toFixed(6
 const targetLine = `The strict **≤1.10** check uses unrounded values: pooled **${archive.aggregation.pooledTargetPassed ? 'PASS' : 'FAIL'}**; rounds **${archive.aggregation.roundTargetsPassed.map(passed => (passed ? 'PASS' : 'FAIL')).join(' / ')}**.`
 const versionLine = `**Versions:** ${frameworks.map(framework => (framework.label === 'React Compiler' ? framework.version : `${framework.label} ${framework.version}`)).join(' · ')}.`
 const revisionLine = `Fict compiler/runtime revision: \`${fict.provenance.revision.slice(0, 8)}\`; strict compilation with zero diagnostics.`
+const create1kMean = (label, metric) => {
+  const framework = frameworks.find(item => item.label === label)
+  return mean(
+    archive.rounds.map(
+      round =>
+        round.results.find(
+          result => result.framework === framework.resultName && result.benchmark === '01_run1k',
+        ).values[metric].mean,
+    ),
+  ).toFixed(2)
+}
+const creationLine = `Create 1k script time: **${create1kMean('Fict', 'script')} ms** for Fict and **${create1kMean('Solid', 'script')} ms** for Solid; paint time: **${create1kMean('Fict', 'paint')} ms** and **${create1kMean('Solid', 'paint')} ms**, respectively.`
 if (values['check-readme']) {
   const readme = await readFile(path.join(root, 'README.md'), 'utf8')
   const block = readme
@@ -169,7 +181,15 @@ if (values['check-readme']) {
   assert.ok(normalized.includes(targetLine), 'README must report the unrounded target result')
   assert.ok(normalized.includes(versionLine), 'README must identify all measured versions')
   assert.ok(normalized.includes(revisionLine), 'README must identify the qualified strict build')
-  console.log('README benchmark: both complete batches, sample means, scores and target verified')
+  assert.ok(
+    normalized.includes(creationLine),
+    'README creation costs must derive from both batches',
+  )
+  console.log(
+    'README benchmark: both complete batches, sample means, scores, target and creation costs verified',
+  )
 } else {
-  console.log(`${table}\n\n${resultLine}\n${targetLine}\n\n${versionLine}\n${revisionLine}`)
+  console.log(
+    `${table}\n\n${resultLine}\n${targetLine}\n\n${versionLine}\n${revisionLine}\n\n${creationLine}`,
+  )
 }

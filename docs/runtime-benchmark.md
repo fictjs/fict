@@ -28,9 +28,72 @@ sections retain the archived 0.34.0 implementation and its experiments. The
 [implementation checklist](./reactivity-implementation-plan.md) separates
 compiler, runtime, application and final qualification evidence.
 
-## Current strict comparison: 2026-09-14
+## Current strict comparison after review fixes: 2026-09-14
 
-The [complete archive](./benchmarks/runtime-qualified-2026-09-14.json) records the
+The [new complete archive](./benchmarks/runtime-review-fixed-2026-09-14.json)
+measures compiler/runtime revision `b8598af2` after the call-prop, consumer
+control-flow and Resource ownership fixes. Compilation uses
+`strictGuarantee: true` with zero diagnostics. The four reference bundles and
+versions are unchanged from the earlier archive; Fict is rebuilt from the clean
+qualified tree. This supersedes the earlier measurements as the current result.
+
+| Framework      |  Round A | Reverse-order round B | Pooled case means |
+| -------------- | -------: | --------------------: | ----------------: |
+| Vue Vapor      | 1.009513 |              1.009246 |          1.009031 |
+| Solid          | 1.045849 |              1.038513 |          1.041863 |
+| Svelte 5       | 1.091156 |              1.091519 |          1.090958 |
+| Fict           | 1.116696 |              1.110706 |          1.113341 |
+| React Compiler | 1.741289 |              1.751686 |          1.745870 |
+
+Fict's exact pooled score is **1.113341327503323**. The unrounded **≤1.10** check is **FAIL** after pooling and **FAIL / FAIL** for the individual rounds.
+The score pools case means before normalization. Both complete rounds retain
+15 samples per case, except selection with 25, for 1,450 CPU samples. Round B
+reverses case and framework order. All five entries pass the official keyed
+create/remove/swap checks; Fict passes 15 model checks through 11,000 rows.
+
+The environment remains Chrome 152.0.7977.83, headless macOS arm64. No task
+builds, tests or profiles overlap either CPU round or the following memory run.
+Normal desktop and operating-system activity is not disabled. Round variation
+is descriptive and is not a confidence interval; historical timings do not
+isolate the cost of an individual correctness fix.
+
+| Case       | Fict script (ms) | Solid script (ms) | Fict paint (ms) | Solid paint (ms) |
+| ---------- | ---------------: | ----------------: | --------------: | ---------------: |
+| Create 1k  |            8.713 |             3.537 |          26.163 |           26.167 |
+| Replace 1k |           14.010 |             7.223 |          26.873 |           27.143 |
+| Create 10k |           67.760 |            33.823 |         290.550 |          288.667 |
+| Append 1k  |            9.283 |             4.030 |          30.800 |           31.590 |
+
+The measured creation work still includes additional Fict script cost compared
+with the frozen Solid implementation. Script and paint need not sum to total
+elapsed time. Explicit selectors, per-row signals and stable captures remain
+fixture choices; these results do not establish general compiler graph fusion.
+
+With reference means and other cases fixed, reaching 1.10 still requires a 1.198% reduction in the aggregate geometric ratio, or equal 2.676% reductions in total time across the four creation/replacement/append cases. This is arithmetic, not a demonstrated optimization.
+
+Memory uses three forced-GC whole-page MiB samples per entry/case (45 samples),
+separate from CPU timing and excluded from the CPU score:
+
+| Framework      |    Ready | Create 1k | Create and clear 1k |
+| -------------- | -------: | --------: | ------------------: |
+| Vue Vapor      | 0.689200 |  2.959201 |            1.007796 |
+| Solid          | 0.590933 |  2.681660 |            0.770293 |
+| Svelte 5       | 0.679962 |  2.896971 |            1.019563 |
+| Fict           | 0.891624 |  4.541910 |            1.316774 |
+| React Compiler | 1.171323 |  4.605731 |            1.963831 |
+
+The [compressed artifact snapshot](./benchmarks/runtime-review-fixed-artifacts-2026-09-14.tar.gz)
+retains sources, locks, production bundles, CSS and the executed harness. The
+archive records every invocation, sample and hash. `node
+scripts/runtime-benchmark-report.mjs --check-readme` recomputes the published
+README table, both round scores, pooled score, unrounded target results and
+creation-cost figures.
+The [review-fix qualification](./reactivity-review-fixes-2026-09-14.md) records
+correctness and package/application verification for the same source tree.
+
+## Earlier strict comparison: 2026-09-14
+
+This historical [complete archive](./benchmarks/runtime-qualified-2026-09-14.json) records the
 0.35.0 workspace compiler/runtime at `6a716534`, strict compilation with zero
 diagnostics, the four frozen reference implementations, their exact versions and
 hashes, and all 1,450 reported CPU samples. Every entry passes the official keyed
@@ -110,9 +173,11 @@ ordering. The first round's successful measurements were recovered after the
 collector initially confused a package manifest version with the harness's
 framework version; no CPU invocation or sample was replaced.
 
-`node scripts/runtime-benchmark-report.mjs --check-readme` recomputes every sample
-mean, round score, pooled score and unrounded target check, verifies the compressed
-artifact hash, and compares the README table, versions and build revision. The
+`node scripts/runtime-benchmark-report.mjs --archive
+docs/benchmarks/runtime-qualified-2026-09-14.json` recomputes this historical
+archive. The default `--check-readme` command checks the newer current archive,
+including every sample mean, round score, pooled score, unrounded target result,
+compressed artifact hash, README table, versions and build revision. The
 same check runs through `pnpm test:review-regressions` in precommit, CI and release
 qualification. The archived versions are local reference builds, not a claim
 about the latest available framework releases or remote CI results.
