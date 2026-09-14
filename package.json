@@ -56,7 +56,7 @@
     "test:compiler:expression-deps": "pnpm build:compiler:native-host && node --test scripts/native-compiler-expression-deps.test.mjs",
     "test:compiler:legacy-options-audit": "pnpm --filter @fictjs/runtime build && pnpm build:compiler:native-host && node --test scripts/native-compiler-legacy-options-audit.test.mjs",
     "test:compiler:legacy-unrepresented-replay": "node --test scripts/legacy-unrepresented-callsite-replay.test.mjs && cargo test -p fict-compiler --features preview --test legacy_unrepresented_callsite_replay",
-    "test:compiler:frozen-corpus": "cargo test -p fict-compiler --features preview --test rust_codegen_corpus --test legacy_unrepresented_callsite_replay",
+    "test:compiler:frozen-corpus": "node --test scripts/compiler-compatibility-corpus.test.mjs && cargo test -p fict-compiler --features preview --test rust_codegen_corpus --test legacy_unrepresented_callsite_replay",
     "test:compiler:optimizer-diff": "pnpm build:compiler:native-host && node --test scripts/native-compiler-optimizer-diff.test.mjs",
     "test:compiler:metadata-safety": "pnpm --dir packages/compiler exec vitest run test/module-metadata-safety.test.ts",
     "test:compiler:reactive-accessors": "pnpm build:compiler:native-host && node --test scripts/native-compiler-reactive-accessors.test.mjs",
