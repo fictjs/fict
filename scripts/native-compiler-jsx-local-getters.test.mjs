@@ -216,3 +216,119 @@ for (const profile of profiles) {
     })
   })
 }
+
+for (const profile of profiles) {
+  test(`call props share an updated result without invoking function values: ${JSON.stringify(profile)}`, async () => {
+    const result = binding.transformSync({
+      code: `import { $state, render, untrack } from 'fict'
+        let calls = 0
+        let invoked = 0
+        function Child(props) {
+          return <output id="result">{props.value}:{props.value}:{props.fn === props.fn ? 'same' : 'different'}</output>
+        }
+        function App() {
+          let count = $state(0)
+          const read = () => { calls++; return count }
+          const makeCallback = () => { const snapshot = untrack(() => count); return () => { invoked++; return snapshot } }
+          return <main><button id="inc" onClick={() => count++}>inc</button>
+            <Child value={read()} fn={makeCallback()} /></main>
+        }
+        export function mount(el) { return render(() => <App />, el) }
+        export function observe() { return { text: document.querySelector('#result')?.textContent ?? null, calls, invoked } }`,
+      filename: '/jsx-prop-shared-update.tsx',
+      moduleKind: 'commonjs',
+      options: { dev: false, strictGuarantee: true, ...profile },
+    })
+    assert.deepEqual(result.diagnostics, [])
+    assert.deepEqual(
+      await executeDomCommonJs(result.code, {
+        mountExport: 'mount',
+        observeExport: 'observe',
+        steps: [
+          { kind: 'record', label: 'initial' },
+          { kind: 'click', selector: '#inc' },
+          { kind: 'record', label: 'update' },
+          { kind: 'dispose' },
+          { kind: 'record', label: 'disposed' },
+        ],
+      }),
+      [
+        { label: 'initial', value: { text: '0:0:same', calls: 1, invoked: 0 } },
+        { label: 'update', value: { text: '1:1:same', calls: 2, invoked: 0 } },
+        { label: 'disposed', value: { text: null, calls: 2, invoked: 0 } },
+      ],
+    )
+  })
+
+  test(`call props evaluate in order and share values across consumers: ${JSON.stringify(profile)}`, async () => {
+    const result = binding.transformSync({
+      code: `import { render } from 'fict'
+        const events = []
+        function make(name) { events.push(name); return events.length }
+        function object() { events.push('object'); return {} }
+        function callback() { events.push('callback'); return () => 'callback result' }
+        function Child(props) {
+          events.push('child')
+          return <output>{props.value}:{props.value}:{props.object === props.object ? 'same' : 'different'}:{props.callback === props.callback ? 'same' : 'different'}</output>
+        }
+        function App() {
+          return <Child value={make('value')} unused={make('unused')} object={object()} callback={callback()} />
+        }
+        let root
+        export function mount(el) { root = el; return render(() => <App />, el) }
+        export function observe() { return { text: root.textContent, events: [...events] } }`,
+      filename: '/jsx-prop-evaluation.tsx',
+      moduleKind: 'commonjs',
+      options: { dev: false, strictGuarantee: true, ...profile },
+    })
+    assert.deepEqual(result.diagnostics, [])
+    assert.deepEqual(
+      await executeDomCommonJs(result.code, {
+        mountExport: 'mount',
+        observeExport: 'observe',
+        steps: [{ kind: 'record', label: 'initial' }, { kind: 'dispose' }],
+      }),
+      [
+        {
+          label: 'initial',
+          value: {
+            text: '1:1:same:same',
+            events: ['value', 'unused', 'object', 'callback', 'child'],
+          },
+        },
+      ],
+    )
+  })
+
+  test(`an unread throwing prop keeps its exception and evaluation position: ${JSON.stringify(profile)}`, async () => {
+    const result = binding.transformSync({
+      code: `import { render } from 'fict'
+        const events = []
+        const failure = { message: 'prop failure' }
+        function before() { events.push('before'); return 1 }
+        function fail() { events.push('fail'); throw failure }
+        function after() { events.push('after'); return 3 }
+        function Child() { events.push('child'); return null }
+        let result
+        function Scenario() {
+          try { const vnode = <Child before={before()} unused={fail()} after={after()} /> }
+          catch (error) { return { same: error === failure, events } }
+          return { same: false, events }
+        }
+        export function mount(el) { return render(() => { result = Scenario(); return null }, el) }
+        export function observe() { return result }`,
+      filename: '/jsx-prop-exception.tsx',
+      moduleKind: 'commonjs',
+      options: { dev: false, strictGuarantee: true, ...profile },
+    })
+    assert.deepEqual(result.diagnostics, [])
+    assert.deepEqual(
+      await executeDomCommonJs(result.code, {
+        mountExport: 'mount',
+        observeExport: 'observe',
+        steps: [{ kind: 'record', label: 'initial' }, { kind: 'dispose' }],
+      }),
+      [{ label: 'initial', value: { same: true, events: ['before', 'fail'] } }],
+    )
+  })
+}

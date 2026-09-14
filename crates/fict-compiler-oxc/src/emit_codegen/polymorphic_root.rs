@@ -207,12 +207,32 @@ impl<'a> AstRewriter<'a, '_> {
         if expression_contains_direct_await(&value) || !self.span_needs_jsx_getter(source_span) {
             return value;
         }
+        self.wrap_jsx_getter(value, source_span, helper)
+    }
+    pub(super) fn wrap_jsx_getter(
+        &self,
+        value: Expression<'a>,
+        source_span: Span,
+        helper: &str,
+    ) -> Expression<'a> {
         let builder = AstBuilder::new(self.allocator);
         let callee =
             Expression::new_identifier(source_span, self.allocator.alloc_str(helper), &builder);
         let getter = zero_parameter_expression_arrow(self.allocator, value, source_span);
         let mut arguments = ArenaVec::new_in(&self.allocator);
         arguments.push(Argument::from(getter));
+        if Some(helper) == self.vnode_prop_helper
+            && self
+                .jsx_getter_calls
+                .iter()
+                .any(|call| source_span.start <= call.start() && call.end() <= source_span.end)
+        {
+            arguments.push(Argument::from(Expression::new_boolean_literal(
+                source_span,
+                true,
+                &builder,
+            )));
+        }
         Expression::new_call_expression(source_span, callee, NONE, arguments, false, &builder)
     }
 }

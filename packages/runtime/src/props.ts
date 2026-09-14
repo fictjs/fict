@@ -1,5 +1,6 @@
 import { createMemo } from './memo'
-import { isComputed, isEffect, isEffectScope, isSignal } from './signal'
+import { isAsyncPending } from './async-state'
+import { isComputed, isEffect, isEffectScope, isSignal, untrack } from './signal'
 
 const PROP_GETTER_MARKER = Symbol.for('fict:prop-getter')
 const NON_REACTIVE_FN_MARKER = Symbol.for('fict:non-reactive-fn')
@@ -52,10 +53,24 @@ function getPropGetterRegistry(): WeakSet<(...args: unknown[]) => unknown> {
 
 /**
  * @internal
- * Marks a prop getter so props proxy and runtime value paths can lazily evaluate it.
+ * Marks a prop getter so props proxy and runtime value paths can evaluate it.
+ * Call expressions use an initialized memo: all consumers share one result until
+ * its dependencies change, including object/function identity. Initial evaluation
+ * preserves prop order and calls in unread props. An unavailable graph value is
+ * retained in the memo and suspends the eventual consumer, not component setup.
  * Users normally never call this directly; the compiler injects it.
  */
-export function __fictProp<T>(getter: () => T): () => T {
+export function __fictProp<T>(getter: () => T, initialize = false): () => T {
+  if (initialize) {
+    getter = createMemo(getter)
+    untrack(() => {
+      try {
+        getter()
+      } catch (error) {
+        if (!isAsyncPending(error)) throw error
+      }
+    })
+  }
   if (typeof getter === 'function' && getter.length === 0) {
     getPropGetterRegistry().add(getter as (...args: unknown[]) => unknown)
     if (Object.isExtensible(getter)) {
@@ -520,10 +535,8 @@ export function keyed<T, K extends string | number | symbol>(
  *
  * @example
  * ```tsx
- * // Without prop - recomputes on every access
- * <Child data={expensiveComputation(list, filter)} />
- *
- * // With prop - cached until dependencies change, auto-unwrapped by props proxy
+ * // Explicitly construct a lazy cached value for manually assembled props.
+ * // Compiled JSX call props already share a cached result between consumers.
  * const memoizedData = prop(() => expensiveComputation(list, filter))
  * <Child data={memoizedData} />
  * ```

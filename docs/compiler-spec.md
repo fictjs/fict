@@ -325,6 +325,15 @@ export function Greeting({ name, age = 18, onClick }: Props) {
 - **Rest destructuring** is lowered to a runtime helper so that lazy prop getters stay intact.
 - **Spread into components** preserves reactivity by wrapping reactive entries as getters.
 
+Named component prop expressions containing calls have a shared memo boundary.
+The compiler initializes that memo in prop evaluation order, including unread
+props; multiple consumers receive the same object or function result. Later reads
+recompute only when a tracked dependency changes. Ordinary initialization errors
+keep their authored exception position. An unavailable async graph read is cached
+and suspends the consuming binding when read, preserving the synchronous component
+setup ABI. Direct reactive reads keep their getter path, and passing a function
+value does not invoke it. The public `prop(() => expression)` helper remains lazy.
+
 ### Processing Steps
 
 1. "Desugar" destructuring in function parameters into internal variable bindings, and keep a `props` source reference (visible only during compilation).

@@ -204,6 +204,7 @@ pub fn emit_program_with_trace(
         derived_creations: &creations.derived_bindings,
         semantic_identities: &identities,
         jsx_getter_reads: &jsx_getter_reads,
+        jsx_getter_calls: &emit.jsx_getter_calls,
         vnode_prop_helper: emit
             .imports
             .iter()
@@ -3694,6 +3695,7 @@ fn render_preview_module_statements(
 struct AstRewriter<'a, 'emit> {
     jsx_getter_reads: &'emit BTreeSet<(u32, u32)>,
     vnode_prop_helper: Option<&'emit str>,
+    jsx_getter_calls: &'emit [SourceSpan],
     vnode_children_helper: Option<&'emit str>,
     allocator: &'a Allocator,
     creations: &'emit BTreeMap<(u32, u32), CreationRewrite>,
@@ -6308,23 +6310,7 @@ impl<'a> AstRewriter<'a, '_> {
                     self.visit_expression(&mut value);
                     if getter && !expression_contains_direct_await(&value) {
                         if let Some(helper) = &component.prop_helper {
-                            let arrow =
-                                zero_parameter_expression_arrow(self.allocator, value, spread.span);
-                            let callee = Expression::new_identifier(
-                                spread.span,
-                                self.allocator.alloc_str(helper),
-                                &AstBuilder::new(self.allocator),
-                            );
-                            let mut arguments = ArenaVec::new_in(&self.allocator);
-                            arguments.push(Argument::from(arrow));
-                            value = Expression::new_call_expression(
-                                spread.span,
-                                callee,
-                                NONE,
-                                arguments,
-                                false,
-                                &AstBuilder::new(self.allocator),
-                            );
+                            value = self.wrap_jsx_getter(value, spread.span, helper);
                         } else {
                             self.diagnostics.push(emit_error(
                                 "FICT-OXC-EMIT-COMPONENT",
@@ -6382,6 +6368,8 @@ impl<'a> AstRewriter<'a, '_> {
                             (false, false, false)
                         }
                     };
+                    let value_span =
+                        jsx_attribute_source_span(&attribute.value).unwrap_or(name_span);
                     let keyed_runtime_value = (name == "key")
                         .then(|| jsx_attribute_source_span(&attribute.value))
                         .flatten()
@@ -6401,23 +6389,7 @@ impl<'a> AstRewriter<'a, '_> {
                     };
                     if getter && !expression_contains_direct_await(&value) {
                         if let Some(helper) = &component.prop_helper {
-                            let arrow =
-                                zero_parameter_expression_arrow(self.allocator, value, name_span);
-                            let callee = Expression::new_identifier(
-                                name_span,
-                                self.allocator.alloc_str(helper),
-                                &AstBuilder::new(self.allocator),
-                            );
-                            let mut arguments = ArenaVec::new_in(&self.allocator);
-                            arguments.push(Argument::from(arrow));
-                            value = Expression::new_call_expression(
-                                name_span,
-                                callee,
-                                NONE,
-                                arguments,
-                                false,
-                                &AstBuilder::new(self.allocator),
-                            );
+                            value = self.wrap_jsx_getter(value, value_span, helper);
                         } else {
                             self.diagnostics.push(emit_error(
                                 "FICT-OXC-EMIT-COMPONENT",
