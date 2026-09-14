@@ -411,6 +411,7 @@ test('native bundler typechecks wait for compiler declarations in clean checkout
 })
 
 test('CI and release verification share the complete pinned Rust workspace gate', () => {
+  assert.match(rootPackage.scripts.precommit, /pnpm test:strict-guarantee/)
   assert.equal(
     rootPackage.scripts['verify:rust-workspace'],
     'cargo fmt --all --check && cargo clippy --workspace --all-targets --all-features -- -D warnings && cargo test --workspace --all-features && pnpm guardrails:rust-crates',

@@ -4779,17 +4779,16 @@ mod tests {
         ));
         assert!(!safe.has_errors(), "{:?}", safe.diagnostics);
         assert!(safe.diagnostics.is_empty(), "{:?}", safe.diagnostics);
-        assert_eq!(
-            safe.code.matches("__fictProp(() => props())").count(),
-            2,
-            "{}",
-            safe.code
-        );
-        assert!(
-            safe.code.contains("__fictProp(() => props?.())"),
-            "{}",
-            safe.code
-        );
+        // Direct accessor reads stay lazy, while authored calls initialize a
+        // shared memo so spreading their result does not repeat the call.
+        for expression in [
+            "__fictProp(() => props())",
+            "__fictProp(() => props(), true)",
+            "__fictProp(() => props?.(), true)",
+            "__fictProp(() => props)",
+        ] {
+            assert_eq!(safe.code.matches(expression).count(), 1, "{}", safe.code);
+        }
         assert!(!safe.code.contains("props()()"), "{}", safe.code);
         assert!(!safe.code.contains("props()?.()"), "{}", safe.code);
     }
