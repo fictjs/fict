@@ -13,8 +13,8 @@
       "@babel/plugin-transform-typescript": "7.28.5"
     },
     "oracleInputsSha256": "da6f9e7a18c9d2be46ca1fc6bcdb34d8a6e569d6cc5fbbe817c5f25afd01e2bb",
-    "rustCodegenCorpusSha256": "a1ce14cc36172c7702c524840b1807c73dfc716954045e440a53f757efd25ab2",
-    "sharedRuntimePackage": "@fictjs/runtime@0.35.0",
+    "rustCodegenCorpusSha256": "5cf5b6b6f0a18e89faf5e3198c80b3c0d71da4f4feaa5c11b858f596b4fc2972",
+    "sharedRuntimePackage": "@fictjs/runtime@0.36.0",
     "runtimeExecutionModel": "frozen-babel-and-live-rust-output-share-current-runtime"
   },
   "fixtures": [

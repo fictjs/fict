@@ -1,5 +1,11 @@
 # @fictjs/compiler-linux-arm64-musl
 
+## 0.36.0
+
+### Minor Changes
+
+- fix
+
 ## 0.35.0
 
 ### Minor Changes

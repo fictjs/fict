@@ -5,6 +5,6 @@ pub const COMPILER_CAPABILITY_MANIFEST_VERSION: u32 = 2;
 /// Scope of the option claims recorded by the capability manifest.
 pub const COMPILER_CAPABILITY_MANIFEST_SCOPE: &str = "certified-behavior-variant-options";
 /// Package version whose behavior the capability manifest describes.
-pub const COMPILER_CAPABILITY_PACKAGE_VERSION: &str = "0.35.0";
+pub const COMPILER_CAPABILITY_PACKAGE_VERSION: &str = "0.36.0";
 /// SHA-256 of the canonical compiler capability manifest.
-pub const COMPILER_CAPABILITY_MANIFEST_DIGEST: &str = "sha256:8d85c68309d486fb1ac13747f35b2236f2893df69a1fae6f80edc065cb53c361";
+pub const COMPILER_CAPABILITY_MANIFEST_DIGEST: &str = "sha256:1fa42abc746d6c9dab2e6e68cfaecda5e0d0635abfee798b47598e5b1f623c84";

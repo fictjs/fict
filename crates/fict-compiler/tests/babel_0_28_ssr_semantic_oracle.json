@@ -13,8 +13,8 @@
     },
     "oracleInputsSha256": "71b1d645a481bf7d8ed2d193b6f27ba6015a162455f99b4730301c7774f51325",
     "semanticHarnessSha256": "801736500155d18ee153d920586b7885cd22afca141d7bebfb36a21c96e1add5",
-    "sharedRuntimePackage": "@fictjs/runtime@0.35.0",
-    "sharedSsrPackage": "@fictjs/ssr@0.35.0",
+    "sharedRuntimePackage": "@fictjs/runtime@0.36.0",
+    "sharedSsrPackage": "@fictjs/ssr@0.36.0",
     "runtimeExecutionModel": "frozen-babel-and-live-rust-output-share-current-ssr-runtime-and-client-runtime"
   },
   "fixtures": [
