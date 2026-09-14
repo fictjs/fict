@@ -4,7 +4,7 @@ This contract defines the implemented explicit async computation model: owned
 nodes, synchronous derived consumers, render preparation, Resource readiness,
 causal transitions, compiler declarations and eager SSR/hydration. The
 [reactivity checklist](./reactivity-implementation-plan.md) records the evidence
-and remaining qualification work for each part. The
+and qualification status for each part. The
 [migration guide](./async-migration-guide.md) and
 [async data example](../examples/async-data) show the supported application model.
 Native continuations, async component functions and Preview ownership
@@ -227,5 +227,8 @@ stream readiness, and returned-Promise composition.
 `scripts/native-compiler-async.test.mjs` executes the explicit compiler declaration,
 generation ownership, callable values, import identities, metadata consumers,
 source maps and strict continuation boundaries across all optimizer/DOM profiles.
-Real SSR/streaming/hydration and application qualification remain A7–A8 items;
-state, node, compiler or composition tests alone do not satisfy those requirements.
+Real SSR/streaming/hydration behavior is exercised by the native SSR and browser
+gates listed in the [SSR guide](./async-ssr-hydration.md). The
+[application evidence](./testing/async-application-evidence-2026-09-14.json)
+records the fresh strict builds, async-data browser flow and real-app/streaming
+checks that complete A7–A8 qualification.

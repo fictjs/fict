@@ -35,7 +35,7 @@ not only an analysis pass, an API sketch, or a passing unrelated test suite.
 | Q1b  | Async migration documentation preserves immutable legacy-removal approval evidence.                                                                                   | Original guidance digest retained; separate async guide and updated navigation; rollout-state and documentation checks.                                                                       | Complete |
 | Q1c  | Source-map probes cover live component-prop wrappers in both output paths.                                                                                            | Exact JSX origin and inner state-read positions; all ten source-map integration cases.                                                                                                        | Complete |
 | Q1d  | Compiler host complexity reflects reviewed async metadata and trace declarations.                                                                                     | Exact 82-line accounting, unchanged maintenance reserves and ratchet policy, passing complexity/report tests.                                                                                 | Complete |
-| Q1   | The final stack satisfies each row against the current source and artifacts.                                                                                          | Full applicable compiler/runtime/SSR/bundler/strict/browser gates, per-item commits, fresh final audit, and explicit evidence for every completion claim.                                     | Pending  |
+| Q1   | The final stack satisfies each row against the current source and artifacts.                                                                                          | Full applicable compiler/runtime/SSR/bundler/strict/browser gates, per-item commits, fresh final audit, and explicit evidence for every completion claim.                                     | Complete |
 
 Changes must preserve observable JavaScript behavior: reference/receiver semantics,
 coercion, evaluation and cleanup ordering, exceptions, explicit memo caching,
@@ -727,3 +727,27 @@ Compiler passes and graph construction remain native. The budget update is a
 dedicated governance change, preserves the prior 23/8/6-line maintenance reserves
 and leaves every percentage, ratchet and unrelated limit unchanged. The reviewed
 complexity report and both existing reporter tests pass.
+
+## Q1: final stack qualification
+
+The [final audit](./reactivity-qualification-2026-09-14.md) and
+[machine-readable evidence](./testing/reactivity-final-evidence-2026-09-14.json)
+record 24 successful local command gates. The complete Rust workspace passes
+all 55 test programs and eight doc-test groups (893 cases), all-target/all-feature
+Clippy, fmt and 60 Rust guardrail tests. The final `pnpm commit` preflight passes
+its complete build, frozen-corpus, size, regression, workspace-test, type, format
+and lint sequence. Native behavior (621 cases), tarball consumers, strict
+applications, bundlers, SSR and full browser E2E also pass.
+
+All 386 recorded production inputs match the measured `6a716534` source tree.
+The final native addon has the exact same SHA-256 as G5 and A8, and all 15
+application/library source hashes match the successful application qualification.
+The portable archive preserves 27 logs, including the three corrected failures.
+Historical approvals remain intact; Q1a–Q1d have focused commits.
+
+This completes the stated implementation checklist and local qualification.
+The pooled CPU score is 1.1131642824390815, so the strict unrounded 1.10 target
+is not met. General cost-based graph optimization, arbitrary SSA/lazy placement,
+native-await continuation ownership, async components and Preview async ownership
+serialization remain the documented boundaries. No remote CI, other-platform
+execution, registry publication or deployment is inferred from these local checks.

@@ -615,32 +615,33 @@ retains the earlier 0.34.0 results and optimization experiments.
 
 ## Documentation
 
-| Doc                                                               | Description                                                    |
-| :---------------------------------------------------------------- | :------------------------------------------------------------- |
-| [Architecture](./docs/architecture.md)                            | How the compiler and runtime work                              |
-| [API Reference](./docs/api-reference.md)                          | Complete API documentation                                     |
-| [Compiler Spec](./docs/compiler-spec.md)                          | Formal semantics                                               |
-| [Reactive Graph Trace](./docs/reactive-graph-trace.md)            | Source plans and final helper calls                            |
-| [Async Declarations](./docs/async-declarations.md)                | Owned resolved values and continuations                        |
-| [Async Graph Contract](./docs/async-graph-contract.md)            | Readiness, stale values and cleanup                            |
-| [Async SSR and Hydration](./docs/async-ssr-hydration.md)          | Request ownership and client handoff                           |
-| [Migration Guide](./docs/migration-guide.md)                      | React/Vue/Svelte/Solid migration                               |
-| [Async Migration](./docs/async-migration-guide.md)                | Owned async nodes, Resource policy and continuation boundaries |
-| [Strict Guarantee Cookbook](./docs/strict-guarantee-cookbook.md)  | Fail-closed diagnostic rewrites                                |
-| [Store API](./docs/store-api.md)                                  | `$state` vs `$store` ownership                                 |
-| [Release Policy](./docs/release-policy.md)                        | SemVer and changelog standards                                 |
-| [Scope Contract](./SCOPE.md)                                      | Core/Satellite/Preview/Internal tiers                          |
-| [Preview Policy](./docs/PREVIEW.md)                               | Preview surface + degradation contract                         |
-| [ESLint Rules](./docs/eslint-rules.md)                            | Linting configuration                                          |
-| [Diagnostic Codes](./docs/diagnostic-codes.md)                    | Compiler warnings reference                                    |
-| [Config Profiles](./docs/config-profiles.md)                      | Recommended dev/CI/prod settings                               |
-| [Compiler Maintenance](./docs/compiler-maintenance.md)            | Compiler complexity guardrails                                 |
-| [Cycle Protection](./docs/cycle-protection.md)                    | Dev-mode infinite loop detection                               |
-| [SSR SEO Guide](./docs/ssr-seo.md)                                | SEO best practices for SSR pages                               |
-| [SSR Performance](./docs/ssr-performance.md)                      | Snapshot size & render-mode tuning                             |
-| [SSR Deployment](./docs/ssr-deployment.md)                        | Vercel/Cloudflare/edge deployment                              |
-| [Security Boundaries](./docs/architecture/security-boundaries.md) | HTML/snapshot/CSP/isolation review                             |
-| [DevTools](./packages/devtools/README.md)                         | Vite plugin usage & auto-injection                             |
+| Doc                                                                       | Description                                                    |
+| :------------------------------------------------------------------------ | :------------------------------------------------------------- |
+| [Architecture](./docs/architecture.md)                                    | How the compiler and runtime work                              |
+| [API Reference](./docs/api-reference.md)                                  | Complete API documentation                                     |
+| [Compiler Spec](./docs/compiler-spec.md)                                  | Formal semantics                                               |
+| [Reactive Graph Trace](./docs/reactive-graph-trace.md)                    | Source plans and final helper calls                            |
+| [Reactivity Qualification](./docs/reactivity-qualification-2026-09-14.md) | Implementation status and local validation evidence            |
+| [Async Declarations](./docs/async-declarations.md)                        | Owned resolved values and continuations                        |
+| [Async Graph Contract](./docs/async-graph-contract.md)                    | Readiness, stale values and cleanup                            |
+| [Async SSR and Hydration](./docs/async-ssr-hydration.md)                  | Request ownership and client handoff                           |
+| [Migration Guide](./docs/migration-guide.md)                              | React/Vue/Svelte/Solid migration                               |
+| [Async Migration](./docs/async-migration-guide.md)                        | Owned async nodes, Resource policy and continuation boundaries |
+| [Strict Guarantee Cookbook](./docs/strict-guarantee-cookbook.md)          | Fail-closed diagnostic rewrites                                |
+| [Store API](./docs/store-api.md)                                          | `$state` vs `$store` ownership                                 |
+| [Release Policy](./docs/release-policy.md)                                | SemVer and changelog standards                                 |
+| [Scope Contract](./SCOPE.md)                                              | Core/Satellite/Preview/Internal tiers                          |
+| [Preview Policy](./docs/PREVIEW.md)                                       | Preview surface + degradation contract                         |
+| [ESLint Rules](./docs/eslint-rules.md)                                    | Linting configuration                                          |
+| [Diagnostic Codes](./docs/diagnostic-codes.md)                            | Compiler warnings reference                                    |
+| [Config Profiles](./docs/config-profiles.md)                              | Recommended dev/CI/prod settings                               |
+| [Compiler Maintenance](./docs/compiler-maintenance.md)                    | Compiler complexity guardrails                                 |
+| [Cycle Protection](./docs/cycle-protection.md)                            | Dev-mode infinite loop detection                               |
+| [SSR SEO Guide](./docs/ssr-seo.md)                                        | SEO best practices for SSR pages                               |
+| [SSR Performance](./docs/ssr-performance.md)                              | Snapshot size & render-mode tuning                             |
+| [SSR Deployment](./docs/ssr-deployment.md)                                | Vercel/Cloudflare/edge deployment                              |
+| [Security Boundaries](./docs/architecture/security-boundaries.md)         | HTML/snapshot/CSP/isolation review                             |
+| [DevTools](./packages/devtools/README.md)                                 | Vite plugin usage & auto-injection                             |
 
 <details>
 <summary><strong>🔍 Linting & diagnostics</strong></summary>
