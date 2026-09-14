@@ -225,6 +225,42 @@ test('the maintained optimized benchmark compiles without guarantee opt-outs', a
   for (const profile of profiles) assert.deepEqual(compile(fixture, profile).diagnostics, [])
 })
 
+test('normative receiver proof examples match every compiler profile', async () => {
+  const document = await readFile(path.join(root, 'docs/collection-receiver-contract.md'), 'utf8')
+  const examples = [
+    ...document.matchAll(/<!-- receiver-proof: ([\w-]+) ([\w-]+) -->\s+```tsx\n([\s\S]*?)\n```/g),
+  ]
+  assert.deepEqual(
+    examples.map(example => example[1]),
+    [
+      'type-argument',
+      'binding-annotation',
+      'parameter-annotation',
+      'rhs-assertion',
+      'type-alias',
+      'shadowed-builtin',
+      'parameter-through-state',
+      'unknown-parameter',
+    ],
+  )
+  for (const [, id, expected, source] of examples) {
+    for (const profile of profiles) {
+      const result = compile(source, profile)
+      const context = `${id} ${JSON.stringify(profile)} ${JSON.stringify(result.diagnostics)}`
+      if (expected === 'guaranteed') {
+        assert.deepEqual(result.diagnostics, [], context)
+        assert.ok(result.code.length > 0, context)
+      } else {
+        assert.ok(
+          result.diagnostics.some(d => d.code === expected && d.severity === 'error'),
+          context,
+        )
+        assert.equal(result.code, '', context)
+      }
+    }
+  }
+})
+
 test('collection proofs retain nested mutation, unknown receiver and escape boundaries', () => {
   const cases = [
     [

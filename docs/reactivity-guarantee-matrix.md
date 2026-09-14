@@ -62,6 +62,9 @@ and async component return values are not implicitly made reactive.
 
 ## Notes
 
+- The [executable receiver contract](./collection-receiver-contract.md) covers
+  direct annotations, assertions, aliases and shadowed names. A parameter family
+  proof does not automatically transfer through an unannotated `$state(seed)`.
 - Direct `T[]`, tuple, and built-in receiver annotations carry the same family
   contract as `$state<T>`. Immutable aliases retain that family. A root array
   does not prove that an arbitrary nested property is another array. Replaced
