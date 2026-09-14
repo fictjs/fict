@@ -4,9 +4,11 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 
 export function extractHostRecipe(document) {
-  const example = document.match(
-    /<!-- executable-host-example:start -->\s*```js\n([\s\S]*?)\n```\s*<!-- executable-host-example:end -->/,
-  )
+  const example = document
+    .replace(/\r\n/g, '\n')
+    .match(
+      /<!-- executable-host-example:start -->\s*```js\n([\s\S]*?)\n```\s*<!-- executable-host-example:end -->/,
+    )
   assert.ok(example, 'Missing executable custom host example')
   return example[1]
 }

@@ -23,7 +23,7 @@
     "format:check": "prettier --check .",
     "test:api-boundaries": "node --test scripts/check-api-boundaries.test.mjs && node scripts/check-api-boundaries.mjs",
     "test:preview-boundaries": "node --test scripts/preview-boundary-helpers.test.mjs scripts/check-preview-boundaries.test.mjs && node scripts/check-preview-boundaries.mjs",
-    "test:review-regressions": "node scripts/review-regression-suite.mjs && node --test scripts/runtime-async-consumer.test.mjs scripts/resource-ownership.test.mjs && node scripts/runtime-benchmark-report.mjs --check-readme",
+    "test:review-regressions": "node scripts/review-regression-suite.mjs && node --test scripts/compiler-host-contract.test.mjs scripts/runtime-async-consumer.test.mjs scripts/resource-ownership.test.mjs && node scripts/runtime-benchmark-report.mjs --check-readme",
     "test:release-publish-plan": "node --test scripts/release-publish-plan.test.mjs scripts/verify-compiler-release-unit.test.mjs scripts/compiler-corpus-replay.test.mjs scripts/compiler-review-provenance.test.mjs && node scripts/release-publish-plan.mjs --offline",
     "test:release-verification": "node --test scripts/release-verification.test.mjs scripts/compiler-release-evidence.test.mjs scripts/compiler-consumer-evidence.test.mjs scripts/run-real-app-e2e.test.mjs scripts/strict-application-corpus.test.mjs",
     "test:package-tarballs": "node scripts/package-tarball-smoke.mjs",
