@@ -193,6 +193,20 @@ existing readers retain its snapshot; active shared requests outlive individual
 readers. Invalidation and non-cache transport cleanup explicitly cancel their
 generation. No request token or generation is exposed as public Resource API.
 
+With `cache: { mode: 'none' }`, each active reader or prefetch owns a transport
+lease. The last release aborts pending work, disposes its source and removes its
+cache lookup, including an initially pending graph read. Another active reader
+keeps shared work alive. A prefetch without a reactive owner releases its lease
+when it settles; explicit invalidation can cancel it earlier.
+
+Legacy setup reads transfer an additional lease to the capturing Suspense
+boundary before the failed render attempt is destroyed. The boundary retains
+resolved values across subsequent suspended retries, then releases those leases
+after a successful replay attaches its readers, or on reset/disposal. This keeps
+temporary retry cleanup from aborting the fetch while ensuring that abandoning
+the boundary cancels work with no remaining owner. Memory-cache policy continues
+to own its requests independently of individual reader lifetimes.
+
 ## Server and compiler obligations
 
 Server rendering preserves the request owner across registered completions.

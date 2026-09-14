@@ -30,6 +30,7 @@ import { resetKeysChanged } from './reset-keys'
 import { createSignal, hasAsyncReadConsumer, registerAsyncSuspension, untrack } from './signal'
 import { __fictGetCurrentSSRSession, __fictRunWithSSRSession } from './ssr-session'
 import { __fictGetSSRStreamHooks, __fictPopSSRBoundary, __fictPushSSRBoundary } from './ssr-stream'
+import { retainSuspenseToken } from './suspense-lease'
 import type { BaseProps, FictNode, SuspenseToken } from './types'
 
 export interface SuspenseProps extends BaseProps {
@@ -299,6 +300,12 @@ export function Suspense(props: SuspenseProps): FictNode {
       }
     | undefined
   const graphTokens = new Map<PromiseLike<unknown>, number>()
+  let legacyLeases: Set<() => void> | undefined
+  const releaseLegacyLeases = () => {
+    const leases = legacyLeases
+    legacyLeases = undefined
+    if (leases) for (const release of leases) release()
+  }
   const mountBoundary = {
     parent: hostRoot?.mountBoundary,
     deferred: new Set<ReturnType<typeof createRootContext>>(),
@@ -425,6 +432,8 @@ export function Suspense(props: SuspenseProps): FictNode {
       }
 
       const tokenEpoch = epoch
+      const releaseLease = retainSuspenseToken(thenable)
+      if (releaseLease) (legacyLeases ??= new Set()).add(releaseLease)
       if (!streamPending && streamBoundaryId && streamHooks?.boundaryPending) {
         streamPending = true
         streamHooks.boundaryPending(streamBoundaryId)
@@ -456,10 +465,13 @@ export function Suspense(props: SuspenseProps): FictNode {
               pending(newPending)
               if (newPending === 0) {
                 // Directly render children instead of using switchView
+                // Retain completed requests across another suspended replay.
+                // Release only after the entire view has attached live readers.
                 renderView(props.children ?? null)
                 // Rendering can immediately reveal another token. Only settle the
                 // boundary after checking the live state produced by that render.
                 if (isSettledInEpoch(tokenEpoch)) {
+                  releaseLegacyLeases()
                   if (!onResolveMaybe()) return
                   // onResolve can synchronously flush a reset (for example through
                   // batch), which may register a new token before it returns.
@@ -516,6 +528,7 @@ export function Suspense(props: SuspenseProps): FictNode {
   registerRootCleanup(() => {
     disposed = true
     try {
+      releaseLegacyLeases()
       if (streamBoundaryId && streamHooks?.boundaryAbandoned) {
         streamPending = false
         streamHooks.boundaryAbandoned(streamBoundaryId)
@@ -548,6 +561,7 @@ export function Suspense(props: SuspenseProps): FictNode {
       if (resetKeysChanged(prev, next)) {
         prev = next
         const resetEpoch = ++epoch
+        releaseLegacyLeases()
         graphTokens.clear()
         cleanupParked()
         pending(0)

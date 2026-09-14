@@ -3,6 +3,7 @@
   "include": [
     "src",
     "test/resource-graph.test.ts",
+    "test/resource-ownership.test.ts",
     "test/async-macro.test.ts",
     "test/resource-transition.test.ts",
     "../runtime/src/dev.d.ts"

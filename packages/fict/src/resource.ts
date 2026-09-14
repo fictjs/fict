@@ -2,7 +2,7 @@
  * @fileoverview Async data fetching with caching and Suspense support.
  *
  * The `resource` function creates a reactive data fetcher that:
- * - Automatically cancels in-flight requests when args change
+ * - Cancels no-cache requests when their last owner leaves
  * - Supports Suspense for loading states
  * - Provides caching with TTL and stale-while-revalidate
  * - Handles errors gracefully
@@ -15,6 +15,7 @@ import {
   __fictIsSSRSessionActive,
   __fictCreateAsyncSource,
   __fictIsAsyncConsumer,
+  __fictOwnSuspenseToken,
   type AsyncSource,
 } from '@fictjs/runtime/internal'
 
@@ -44,7 +45,7 @@ export interface ResourceCacheOptions {
   /**
    * Caching mode:
    * - `'memory'`: Cache responses in memory (default)
-   * - `'none'`: No caching, always refetch
+   * - `'none'`: No persistent cache; active readers and Suspense retries share work
    * @default 'memory'
    */
   mode?: 'memory' | 'none'
@@ -184,6 +185,10 @@ export type ResourceStatus = 'idle' | 'pending' | 'success' | 'error'
 interface ResourceEntry<T, Args> {
   /** Async graph state; cache policy owns its transport and lifetime. */
   source: AsyncSource<T>
+  /** No-cache work is owned by readers, prefetches and suspended replay. */
+  retain?: () => () => void
+  /** Suspended setup retries retain resolved values until the boundary commits. */
+  replayOwners: number
   dataProjection?: () => T | undefined
   loadingProjection?: () => boolean
   errorProjection?: () => unknown
@@ -433,6 +438,7 @@ export function resource<T, Args = void>(
     }
     state = {
       source: __fictCreateAsyncSource<T>(),
+      replayOwners: 0,
       version: createSignal(0),
       revalidating: false,
       legacyPending: undefined,
@@ -443,6 +449,27 @@ export function resource<T, Args = void>(
       inFlight: undefined,
       inFlightArgs: undefined,
       controller: undefined,
+    }
+    if (resolvedCacheOptions.mode === 'none') {
+      const entry = state
+      let owners = 0
+      entry.retain = () => {
+        owners++
+        let released = false
+        return () => {
+          if (released) return
+          released = true
+          if (--owners) return
+          // An abort listener may synchronously start a new reader for this key.
+          // Remove lookup ownership before invoking user transport callbacks.
+          if (cache.get(key) === entry) cache.delete(key)
+          try {
+            entry.controller?.abort()
+          } finally {
+            entry.source.dispose()
+          }
+        }
+      }
     }
     cache.set(key, state)
     // The caller may start work on this new entry immediately after return.
@@ -491,17 +518,29 @@ export function resource<T, Args = void>(
           .then(resolve, reject),
     }
     entry.legacyPending = { generation: snapshot.generation, token }
+    if (entry.retain) {
+      const retain = entry.retain
+      __fictOwnSuspenseToken(token, () => {
+        const release = retain()
+        entry.replayOwners++
+        let released = false
+        return () => {
+          if (released) return
+          released = true
+          entry.replayOwners--
+          release()
+        }
+      })
+    }
     return token
   }
 
   const startFetch = (
     cache: Cache,
     entry: ResourceEntry<T, Args>,
-    key: unknown,
     args: Args,
-    options: { isRevalidating?: boolean; createToken?: boolean; clearValue?: boolean } = {},
+    options: { isRevalidating?: boolean; clearValue?: boolean } = {},
   ) => {
-    const createToken = options.createToken !== false
     const isRevalidating = options.isRevalidating === true
     // The entry is keyed by request identity, so any in-flight fetch already
     // serves these args - reuse it instead of abort/restart churn. Callers
@@ -513,7 +552,6 @@ export function resource<T, Args = void>(
     const controller = new AbortController()
     entry.controller = controller
     entry.revalidating = isRevalidating
-    const shouldSuspend = createToken && useSuspense && (!hasData(entry) || options.clearValue)
     const currentGen = entry.source.begin(!options.clearValue)
     entry.legacyPending = undefined
 
@@ -551,16 +589,6 @@ export function resource<T, Args = void>(
 
     entry.inFlight = fetchPromise
     entry.inFlightArgs = args
-
-    if (!shouldSuspend) {
-      onCleanup(() => {
-        if (resolvedCacheOptions.mode === 'none') {
-          controller.abort()
-          entry.source.dispose()
-          if (cache.get(key) === entry) cache.delete(key)
-        }
-      })
-    }
   }
 
   const invalidate = (key?: unknown) => {
@@ -595,7 +623,10 @@ export function resource<T, Args = void>(
     if (!usableData) {
       entry.lastArgs = args
       entry.lastVersion = entry.version()
-      startFetch(cache, entry, key, args, { createToken: false })
+      const release = entry.retain?.()
+      if (release) onCleanup(release)
+      startFetch(cache, entry, args)
+      if (release) void entry.inFlight?.then(release, release)
     }
   }
 
@@ -641,10 +672,14 @@ export function resource<T, Args = void>(
       createEffect(() => {
         const key = computeKey(argsAccessor)
         const entry = ensureEntry(cache, key)
+        const release = entry.retain?.()
+        if (release) onCleanup(release)
         entryRef(entry)
         const args = readArgs(argsAccessor)
         const currentVersion = entry.version()
-        const expired = isExpired(entry)
+        // Legacy setup retries keep their resolved request values until the
+        // whole boundary commits, including waterfalls of pending reads.
+        const expired = isExpired(entry) && !(entry.replayOwners && hasData(entry))
         // The cache key is the request identity: a fresh args object that maps
         // to the same key is the same request, so default-keyed resources never
         // treat it as a change. Custom-keyed resources can see different args
@@ -681,11 +716,11 @@ export function resource<T, Args = void>(
           if (resetChanged) {
             entry.expiresAt = Date.now() - 1
           }
-          startFetch(cache, entry, key, args as Args, { clearValue: resetChanged })
+          startFetch(cache, entry, args as Args, { clearValue: resetChanged })
         } else if (canUseStaleData && entry.inFlight === undefined) {
           // stale-while-revalidate: return stale data immediately, refresh in background
           // Pass isRevalidating=true to avoid showing loading state
-          startFetch(cache, entry, key, args as Args, { isRevalidating: true })
+          startFetch(cache, entry, args as Args, { isRevalidating: true })
         }
         const releaseTransition = entry.source.trackTransitions()
         if (releaseTransition) onCleanup(releaseTransition)
