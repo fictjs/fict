@@ -1,6 +1,15 @@
-import { createMemo } from './memo'
 import { isAsyncPending } from './async-state'
-import { isComputed, isEffect, isEffectScope, isSignal, untrack } from './signal'
+import { createMemo } from './memo'
+import {
+  isAsyncRejection,
+  isComputed,
+  isEffect,
+  isEffectScope,
+  isSignal,
+  registerAsyncRejection,
+  untrack,
+  withAsyncErrorScope,
+} from './signal'
 
 const PROP_GETTER_MARKER = Symbol.for('fict:prop-getter')
 const NON_REACTIVE_FN_MARKER = Symbol.for('fict:non-reactive-fn')
@@ -56,20 +65,25 @@ function getPropGetterRegistry(): WeakSet<(...args: unknown[]) => unknown> {
  * Marks a prop getter so props proxy and runtime value paths can evaluate it.
  * Call expressions use an initialized memo: all consumers share one result until
  * its dependencies change, including object/function identity. Initial evaluation
- * preserves prop order and calls in unread props. An unavailable graph value is
- * retained in the memo and suspends the eventual consumer, not component setup.
+ * preserves prop order and calls in unread props. An initially pending graph read
+ * is retained for the eventual consumer; initialization errors still propagate.
  * Users normally never call this directly; the compiler injects it.
  */
 export function __fictProp<T>(getter: () => T, initialize = false): () => T {
   if (initialize) {
     getter = createMemo(getter)
-    untrack(() => {
-      try {
-        getter()
-      } catch (error) {
-        if (!isAsyncPending(error)) throw error
+    const initialization = {}
+    try {
+      untrack(() => withAsyncErrorScope(initialization, getter))
+    } catch (error) {
+      if (isAsyncRejection(error, initialization)) {
+        // Rejection values may themselves be pending tokens. Forward their
+        // classification to the caller after restoring its tracking/error scope.
+        registerAsyncRejection(error)
+        throw error
       }
-    })
+      if (!isAsyncPending(error)) throw error
+    }
   }
   if (typeof getter === 'function' && getter.length === 0) {
     getPropGetterRegistry().add(getter as (...args: unknown[]) => unknown)

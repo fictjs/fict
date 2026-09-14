@@ -13,11 +13,43 @@ for (const format of ['esm', 'cjs']) {
       ? {
           ...(await import('../packages/runtime/dist/index.js')),
           ...(await import('../packages/runtime/dist/advanced.js')),
+          ...(await import('../packages/runtime/dist/internal.js')),
         }
       : {
           ...require('../packages/runtime/dist/index.cjs'),
           ...require('../packages/runtime/dist/advanced.cjs'),
+          ...require('../packages/runtime/dist/internal.cjs'),
         }
+  test(`distributed ${format} call-prop initialization preserves arbitrary graph rejections`, async () => {
+    const tokenSource = runtime.createAsyncMemo(() => new Promise(() => {}))
+    try {
+      for (const reason of [
+        undefined,
+        'failure',
+        Promise.resolve('error value'),
+        tokenSource.state().pending,
+      ]) {
+        const data = runtime.createAsyncMemo(() => Promise.reject(reason))
+        data.state()
+        await drain()
+        try {
+          let outcome
+          try {
+            const owner = runtime.createRoot(() => runtime.__fictProp(data, true))
+            outcome = 'returned'
+            owner.dispose()
+          } catch (error) {
+            outcome = { error }
+          }
+          assert.deepEqual(outcome, { error: reason })
+        } finally {
+          data.dispose()
+        }
+      }
+    } finally {
+      tokenSource.dispose()
+    }
+  })
   for (const chain of [false, true]) {
     test(`distributed ${format} effects handle pending, arbitrary errors and recovery (chain: ${chain})`, async () => {
       const tokenSource = runtime.createAsyncMemo(() => new Promise(() => {}))
