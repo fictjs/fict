@@ -223,7 +223,7 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
       - name: Download target platform package
-        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: fict-native-package-${{ matrix.target }}
           path: ${{ runner.temp }}/native-package
@@ -300,13 +300,13 @@ jobs:
           node-version: 24
 
       - name: Download all certified native packages
-        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           pattern: fict-native-package-*
           path: ${{ runner.temp }}/native-packages
 
       - name: Download all native runtime evidence
-        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           pattern: fict-native-evidence-*
           path: ${{ runner.temp }}/native-evidence
@@ -421,13 +421,13 @@ jobs:
           retention-days: 90
 
       - name: Download all certified native packages
-        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           pattern: fict-native-package-*
           path: ${{ runner.temp }}/native-packages
 
       - name: Download native release certification
-        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: fict-native-certification-${{ github.sha }}
           path: ${{ runner.temp }}/native-certification
