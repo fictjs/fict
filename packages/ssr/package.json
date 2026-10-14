@@ -61,7 +61,7 @@
   },
   "dependencies": {
     "@fictjs/runtime": "workspace:^",
-    "linkedom": "^0.18.12"
+    "linkedom": "^0.18.13"
   },
   "devDependencies": {
     "fict": "workspace:*",
