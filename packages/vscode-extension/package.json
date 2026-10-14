@@ -149,12 +149,12 @@
   },
   "dependencies": {
     "@fictjs/compiler": "workspace:*",
-    "ws": "^8.21.0"
+    "ws": "^8.22.0"
   },
   "devDependencies": {
     "@types/node": "^25.3.0",
     "@types/vscode": "1.90.0",
-    "@types/ws": "^8.18.1",
+    "@types/ws": "^8.18.2",
     "@vscode/vsce": "^3.6.2",
     "tsdown": "^0.22.3",
     "vitest": "^4.0.18"
