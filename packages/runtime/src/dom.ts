@@ -901,7 +901,7 @@ export function template(
       t.innerHTML = `<svg>${html}</svg>`
       const wrapper = (t as HTMLTemplateElement).content.firstChild!
       // Dev check for multi-root SVG templates
-      if (isDev && wrapper.childNodes.length !== 1) {
+      if (isDev && !forceFragment && wrapper.childNodes.length !== 1) {
         console.warn('[fict] Multi-root SVG template.')
       }
       if (!forceFragment && wrapper.childNodes.length === 1) {
@@ -918,7 +918,7 @@ export function template(
       t.innerHTML = `<math>${html}</math>`
       const wrapper = (t as HTMLTemplateElement).content.firstChild!
       // Dev check for multi-root MathML templates
-      if (isDev && wrapper.childNodes.length !== 1) {
+      if (isDev && !forceFragment && wrapper.childNodes.length !== 1) {
         console.warn('[fict] Multi-root MathML template.')
       }
       if (!forceFragment && wrapper.childNodes.length === 1) {
@@ -933,7 +933,7 @@ export function template(
     t.innerHTML = html
     const content = (t as HTMLTemplateElement).content
     // Dev check for multi-root templates
-    if (isDev && content.childNodes.length !== 1) {
+    if (isDev && !forceFragment && content.childNodes.length !== 1) {
       console.warn('[fict] Multi-root template.')
     }
     if (!forceFragment && content.childNodes.length === 1) {

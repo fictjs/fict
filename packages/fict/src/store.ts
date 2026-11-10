@@ -358,6 +358,7 @@ export function $store<T extends object>(initialValue: T): T {
         isDev &&
         currentValue !== trackedValue &&
         !isAccessorInvalidation(trackedValue) &&
+        !getPropertyDescriptor(target, prop)?.get &&
         !SKIP_MUTATION_WARNING_PROPS.includes(prop) &&
         !MUTATION_WARNED.has(target)
       ) {

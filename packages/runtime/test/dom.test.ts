@@ -38,6 +38,22 @@ const tick = () =>
       : Promise.resolve().then(resolve),
   )
 
+it('accepts intentional multi-root HTML, SVG and MathML templates without warnings', () => {
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+  try {
+    for (const [html, svg, math] of [
+      ['<b></b><i></i>', false, false],
+      ['<circle/><path/>', true, false],
+      ['<mi>x</mi><mi>y</mi>', false, true],
+    ] as const) {
+      expect(template(html, false, svg, math, true)().childNodes.length).toBe(2)
+    }
+    expect(warn).not.toHaveBeenCalled()
+  } finally {
+    warn.mockRestore()
+  }
+})
+
 describe('DOM Module', () => {
   let container: HTMLElement
 

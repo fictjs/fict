@@ -1823,6 +1823,24 @@ describe('$store', () => {
       expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('[fict] Use $store for value'))
     })
 
+    it('does not mistake getter recomputation for raw mutation or consume its warning', () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      const raw = {
+        a: 1,
+        get double() {
+          return this.a * 2
+        },
+      }
+      const store = $store(raw)
+      expect(store.double).toBe(2)
+      store.a = 2
+      expect(store.double).toBe(4)
+      expect(warn).not.toHaveBeenCalled()
+      raw.a = 3
+      expect(store.a).toBe(3)
+      expect(warn).toHaveBeenCalledWith('[fict] Use $store for a.')
+    })
+
     it('should not warn when mutations go through proxy', async () => {
       const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
 
