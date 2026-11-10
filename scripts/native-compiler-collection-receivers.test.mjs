@@ -241,6 +241,8 @@ test('normative receiver proof examples match every compiler profile', async () 
       'shadowed-builtin',
       'parameter-through-state',
       'unknown-parameter',
+      'prop-alias-callback',
+      'map-set-copies',
     ],
   )
   for (const [, id, expected, source] of examples) {

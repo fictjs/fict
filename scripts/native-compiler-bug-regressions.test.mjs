@@ -1229,3 +1229,67 @@ test('bug 13: known collection and event hosts accept prop aliases and ordinary 
     }
   `)
 })
+
+for (const fineGrainedDom of [true, false]) {
+  for (const [family, seed, update] of [
+    ['Set', "['a']", "values = new Set([...values, 'b'])"],
+    ['Set', "['a']", "values = new Set(values).add('b')"],
+    ['Set', "['a']", "const next = new Set(values); next.add('b'); values = next"],
+    ['Map', "[['a', 1]]", "values = new Map([...values, ['b', 5]])"],
+    ['Map', "[['a', 1]]", "values = new Map(values).set('b', 5)"],
+    ['Map', "[['a', 1]]", "const next = new Map(values); next.set('b', 5); values = next"],
+  ]) {
+    test(`bug 24: ${update} preserves the original collection and updates DOM (fineGrainedDom=${fineGrainedDom})`, async () => {
+      const code = compile(
+        `
+        import { $state, render } from 'fict'
+        let root
+        const seed = new ${family}(${seed})
+        function App() {
+          let values = $state<${family}>(seed)
+          return <button onClick={() => { ${update} }}>{values.size}:{values.has('b') ? 'yes' : 'no'}</button>
+        }
+        export function mount(container) { root = container; return render(() => <App />, root) }
+        export function observe() { return [root.textContent, seed.size, seed.has('b')] }
+      `,
+        { fineGrainedDom },
+      )
+      const result = await executeDomCommonJs(code, {
+        mountExport: 'mount',
+        observeExport: 'observe',
+        steps: [
+          { kind: 'record', label: 'initial' },
+          { kind: 'click', selector: 'button' },
+          { kind: 'record', label: 'updated' },
+        ],
+      })
+      assert.deepEqual(result, [
+        { label: 'initial', value: ['1:no', 1, false] },
+        { label: 'updated', value: ['2:yes', 1, false] },
+      ])
+    })
+  }
+}
+
+for (const update of [
+  "values.set('b', { n: 2 })",
+  "const copy = values; copy.set('b', { n: 2 })",
+  "new Map(values).get('a').n++",
+  "const copy = new Map(values); copy.get('a').n++",
+  "Map = external; const copy = new Map(values); copy.set('b', { n: 2 })",
+  'Map.prototype.set = external; const copy = new Map(values)',
+  'const Map = external; const copy = new Map(values)',
+]) {
+  test(`bug 24: collection copies do not permit shared writes or uncertified constructors (${update})`, () => {
+    const result = native.transformSync({
+      code: `import { $state } from 'fict'; declare const external: any; function App() { let values = $state(new Map([['a', {n:1}]])); return <button onClick={() => {${update}}}>{values.size}</button> }`,
+      filename: '/map-negative.tsx',
+      options: { dev: false, strictGuarantee: true },
+    })
+    assert.ok(
+      result.diagnostics.some(d => ['FICT-M', 'FICT-S002', 'FICT-R002'].includes(d.code)),
+      JSON.stringify(result.diagnostics),
+    )
+    assert.ok(!result.code)
+  })
+}

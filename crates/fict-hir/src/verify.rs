@@ -1181,7 +1181,9 @@ impl Verifier<'_> {
                 }
                 self.call_host(call.host, instruction.origin);
             }
-            HirInstructionKind::New { callee, arguments } => {
+            HirInstructionKind::New {
+                callee, arguments, ..
+            } => {
                 self.value(function, *callee, instruction.origin);
                 for argument in arguments {
                     self.value(function, argument.value, instruction.origin);

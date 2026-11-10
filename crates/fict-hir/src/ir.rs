@@ -1194,6 +1194,8 @@ pub enum HirInstructionKind {
         callee: ValueId,
         /// Arguments in evaluation order.
         arguments: Vec<CallArgument>,
+        /// Fresh collection family certified against intact built-in constructors.
+        collection_kind: StateReceiverKind,
     },
     /// Materialize an array literal.
     Array {

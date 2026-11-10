@@ -31645,6 +31645,7 @@ fn materializes_constructor_calls_and_spread_iteration_order() {
     let HirInstructionKind::New {
         callee: empty_callee,
         arguments: empty_arguments,
+        ..
     } = &empty.kind
     else {
         panic!("typed empty constructor")
@@ -31692,7 +31693,10 @@ fn materializes_constructor_calls_and_spread_iteration_order() {
         );
     }
     let spread = constructor_for_local("spread");
-    let HirInstructionKind::New { callee, arguments } = &spread.kind else {
+    let HirInstructionKind::New {
+        callee, arguments, ..
+    } = &spread.kind
+    else {
         panic!("typed spread constructor")
     };
     assert_eq!(Some(*callee), instruction("getCtor()").result);

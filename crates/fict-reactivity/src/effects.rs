@@ -1425,7 +1425,9 @@ fn instruction_inputs(instruction: &HirInstruction, file: &HirFile) -> Vec<Value
         HirInstructionKind::Call(call) => std::iter::once(call.callee)
             .chain(call.arguments.iter().map(|argument| argument.value))
             .collect(),
-        HirInstructionKind::New { callee, arguments } => std::iter::once(*callee)
+        HirInstructionKind::New {
+            callee, arguments, ..
+        } => std::iter::once(*callee)
             .chain(arguments.iter().map(|argument| argument.value))
             .collect(),
         HirInstructionKind::Array { elements } => elements

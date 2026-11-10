@@ -1632,7 +1632,9 @@ impl HandlerBindingCollector<'_> {
                 }
                 self.call_host(call.host);
             }
-            HirInstructionKind::New { callee, arguments } => {
+            HirInstructionKind::New {
+                callee, arguments, ..
+            } => {
                 self.value(callee);
                 for argument in arguments {
                     self.value(argument.value);

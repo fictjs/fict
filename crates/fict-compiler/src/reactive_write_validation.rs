@@ -3815,6 +3815,26 @@ fn value_preserves_state_identity_in(
                         visiting,
                     )
                 }),
+                HirInstructionKind::New {
+                    collection_kind,
+                    arguments,
+                    ..
+                } => {
+                    matches!(
+                        collection_kind,
+                        StateReceiverKind::Map | StateReceiverKind::Set
+                    ) && arguments.iter().any(|argument| {
+                        value_preserves_state_identity_in(
+                            identity,
+                            function,
+                            analysis,
+                            argument.value,
+                            state_names,
+                            state_this_functions,
+                            visiting,
+                        )
+                    })
+                }
                 HirInstructionKind::Declare {
                     initializer: None, ..
                 }
@@ -3829,7 +3849,6 @@ fn value_preserves_state_identity_in(
                 | HirInstructionKind::TemplateLiteral { .. }
                 | HirInstructionKind::TaggedTemplate { .. }
                 | HirInstructionKind::DynamicImport { .. }
-                | HirInstructionKind::New { .. }
                 | HirInstructionKind::Function { .. }
                 | HirInstructionKind::Jsx { .. }
                 | HirInstructionKind::Yield { value: None, .. }
@@ -4290,6 +4309,12 @@ fn value_is_fresh_state_container(
             .instruction_for_result(function, value)
             .is_some_and(|instruction| match &instruction.kind {
                 HirInstructionKind::Array { .. } | HirInstructionKind::Object { .. } => true,
+                HirInstructionKind::New {
+                    collection_kind, ..
+                } => matches!(
+                    collection_kind,
+                    StateReceiverKind::Map | StateReceiverKind::Set
+                ),
                 HirInstructionKind::Read { place } if place.projections.is_empty() => {
                     match place.base {
                         PlaceBase::Ssa(name) => name_is_fresh_state_container(
@@ -4523,6 +4548,9 @@ fn state_derived_result_receiver_at(
     };
     let call = match &instruction.kind {
         HirInstructionKind::Array { .. } => return StateReceiverKind::Array,
+        HirInstructionKind::New {
+            collection_kind, ..
+        } => return *collection_kind,
         HirInstructionKind::Conditional {
             consequent,
             alternate,

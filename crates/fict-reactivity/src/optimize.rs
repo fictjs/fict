@@ -1254,7 +1254,9 @@ fn rewrite_instruction_values(
                 rewrite_value(&mut argument.value, replacements);
             }
         }
-        HirInstructionKind::New { callee, arguments } => {
+        HirInstructionKind::New {
+            callee, arguments, ..
+        } => {
             rewrite_value(callee, replacements);
             for argument in arguments {
                 rewrite_value(&mut argument.value, replacements);
@@ -1395,7 +1397,9 @@ fn instruction_value_inputs(
         HirInstructionKind::Call(call) => std::iter::once(call.callee)
             .chain(call.arguments.iter().map(|argument| argument.value))
             .collect(),
-        HirInstructionKind::New { callee, arguments } => std::iter::once(*callee)
+        HirInstructionKind::New {
+            callee, arguments, ..
+        } => std::iter::once(*callee)
             .chain(arguments.iter().map(|argument| argument.value))
             .collect(),
         HirInstructionKind::Array { elements } => elements
@@ -1634,7 +1638,9 @@ fn remap_instruction_values(
                 remap_value_id(&mut argument.value, remap)?;
             }
         }
-        HirInstructionKind::New { callee, arguments } => {
+        HirInstructionKind::New {
+            callee, arguments, ..
+        } => {
             remap_value_id(callee, remap)?;
             for argument in arguments {
                 remap_value_id(&mut argument.value, remap)?;

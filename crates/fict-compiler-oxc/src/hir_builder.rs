@@ -741,6 +741,7 @@ impl<'a> Visit<'a> for VariableDeclarationCollector {
 
 struct TypedExpressionCollector<'semantic> {
     scoping: &'semantic Scoping,
+    aliases: &'semantic StaticHookAliases,
     facts: Vec<TypedExpressionFact>,
     classes: Vec<ClassFact>,
     decorators: Vec<DecoratorFact>,
@@ -955,6 +956,11 @@ impl<'a> Visit<'a> for TypedExpressionCollector<'_> {
                 Some(TypedExpressionFact {
                     span: source_span(new_expression.span),
                     kind: TypedExpressionKind::New {
+                        collection_kind: collection_receivers::constructor_kind(
+                            self.scoping,
+                            self.aliases,
+                            new_expression,
+                        ),
                         callee: source_span(callee.span()),
                         callee_has_effects: structured_control_flow::expression_has_effects(
                             &new_expression.callee,
@@ -2258,6 +2264,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
         variable_declarations.visit_program(program);
         let mut typed_expressions = TypedExpressionCollector {
             scoping: self.semantic.scoping(),
+            aliases: &static_hook_aliases,
             facts: Vec::new(),
             classes: Vec::new(),
             decorators: Vec::new(),
@@ -5074,6 +5081,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                 callee,
                 callee_has_effects,
                 arguments,
+                collection_kind,
             } => {
                 let callee =
                     self.control_expression_value(owner, block, *callee, true, *callee_has_effects);
@@ -5104,6 +5112,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                     HirInstructionKind::New {
                         callee,
                         arguments: materialized,
+                        collection_kind: *collection_kind,
                     },
                     InstructionSemantics::CONSERVATIVE_EAGER,
                 )
@@ -8694,6 +8703,7 @@ enum TypedExpressionKind {
         callee: SourceSpan,
         callee_has_effects: bool,
         arguments: Vec<TypedNewArgument>,
+        collection_kind: StateReceiverKind,
     },
     Array {
         elements: Vec<TypedArrayElement>,
@@ -44691,7 +44701,11 @@ impl<'a> Visit<'a> for ReactiveEscapeCollector<'_, '_, '_> {
 
     fn visit_new_expression(&mut self, expression: &NewExpression<'a>) {
         let arguments = escape_arguments(&expression.arguments);
-        self.analyze_invocation(&arguments);
+        if collection_receivers::constructor_kind(self.scoping, self.callback_aliases, expression)
+            == StateReceiverKind::Unknown
+        {
+            self.analyze_invocation(&arguments);
+        }
         oxc::ast_visit::walk::walk_new_expression(self, expression);
     }
 
@@ -46922,7 +46936,9 @@ fn instruction_value_inputs(instruction: &HirInstruction) -> Vec<ValueId> {
             inputs.push(call.callee);
             inputs.extend(call.arguments.iter().map(|argument| argument.value));
         }
-        HirInstructionKind::New { callee, arguments } => {
+        HirInstructionKind::New {
+            callee, arguments, ..
+        } => {
             inputs.push(*callee);
             inputs.extend(arguments.iter().map(|argument| argument.value));
         }

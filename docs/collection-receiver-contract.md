@@ -154,3 +154,34 @@ export function Example(props: { items: string[]; prefix: string }) {
   )
 }
 ```
+
+## Map and Set copies
+
+Intact built-in `Map` and `Set` constructors synchronously copy their input into a
+fresh container. Updating that container before replacing the state is supported.
+The copy remains shallow: objects returned by `get`, iteration, or callbacks can
+still belong to the original state and must not be mutated. Replaced constructors
+or insertion methods cannot certify a fresh built-in copy.
+
+<!-- receiver-proof: map-set-copies guaranteed -->
+
+```tsx
+import { $state } from 'fict'
+
+export function Example() {
+  let scores = $state(new Map([['first', 1]]))
+  let tags = $state(new Set(['first']))
+  return (
+    <button
+      onClick={() => {
+        const next = new Map(scores)
+        next.set('second', 2)
+        scores = next
+        tags = new Set(tags).add('second')
+      }}
+    >
+      {scores.size}:{tags.size}
+    </button>
+  )
+}
+```

@@ -322,3 +322,40 @@ pub(super) fn certified_alias_calls(
         })
         .collect()
 }
+
+/// Map and Set synchronously copy their iterable into a fresh container. A
+/// replaced constructor or insertion method cannot establish this contract.
+pub(super) fn constructor_kind(
+    scoping: &Scoping,
+    aliases: &StaticHookAliases,
+    expression: &NewExpression<'_>,
+) -> StateReceiverKind {
+    let Some(raw) = static_alias_source_path(scoping, &expression.callee) else {
+        return StateReceiverKind::Unknown;
+    };
+    let resolved = aliases.resolve(&raw);
+    if !resolved.properties.is_empty()
+        || resolved.element_wildcard
+        || !aliases.path_is_intact(&raw)
+        || !aliases.path_is_intact(&resolved)
+        || expression
+            .arguments
+            .iter()
+            .any(|argument| argument.is_spread())
+    {
+        return StateReceiverKind::Unknown;
+    }
+    let StaticAliasRoot::UnresolvedGlobal(name) = &resolved.root else {
+        return StateReceiverKind::Unknown;
+    };
+    let (family, insertion) = match name.as_str() {
+        "Map" => (StateReceiverKind::Map, "set"),
+        "Set" => (StateReceiverKind::Set, "add"),
+        _ => return StateReceiverKind::Unknown,
+    };
+    if aliases.builtin_prototype_method_is_intact(family, insertion) {
+        family
+    } else {
+        StateReceiverKind::Unknown
+    }
+}
