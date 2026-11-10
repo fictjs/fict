@@ -3591,7 +3591,13 @@ mod tests {
             "{}",
             result.code
         );
-        assert!(result.code.contains(", handler, true)"), "{}", result.code);
+        assert!(
+            result
+                .code
+                .contains(", __fictReactive(() => handler), true)"),
+            "{}",
+            result.code
+        );
         assert!(result.code.contains("__fict_value++"), "{}", result.code);
         assert!(result.code.contains("bindRef("), "{}", result.code);
         assert!(result.code.contains("seen = node"), "{}", result.code);
@@ -3611,7 +3617,9 @@ mod tests {
             result.code
         );
         assert!(
-            result.code.contains("\"scroll\", handler"),
+            result
+                .code
+                .contains("\"scroll\", __fictReactive(() => handler)"),
             "{}",
             result.code
         );

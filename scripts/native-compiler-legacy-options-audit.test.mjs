@@ -296,9 +296,10 @@ async function executeUncachedReads(fixture) {
   runtime.__fictResetContext()
   try {
     const click = runtime.__fictRender({ slots: [], cursor: 0 }, () => module.probe())
-    assert.equal(click(), 0)
+    // Reactive event selection is evaluated at dispatch, then the selected handler runs.
+    assert.equal(click()(), 0)
     module.update(2)
-    assert.equal(click(), 6)
+    assert.equal(click()(), 6)
   } finally {
     runtime.__fictResetContext()
   }

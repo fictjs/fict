@@ -2340,29 +2340,37 @@ function createEventInvoker(
     withRootContext(rootRef, () =>
       runOutsideComponentRender(() => {
         try {
-          if (Array.isArray(handler)) {
+          // A reactive handler can select either a callback or a data tuple.
+          // Resolve it at dispatch time before deciding how to invoke it.
+          const current = isStrictlyReactive(handler)
+            ? (
+                handler as () =>
+                  | EventListenerOrEventListenerObject
+                  | EventHandlerTuple
+                  | null
+                  | undefined
+              )()
+            : handler
+          if (Array.isArray(current)) {
             const resolvedHandler = resolveEventHandlerValue(
-              handler[0] as EventListenerOrEventListenerObject | null | undefined,
+              current[0] as EventListenerOrEventListenerObject | null | undefined,
             )
-            const hasData = handler.length > 1
-            const data = hasData ? resolveEventData(handler[1], event) : undefined
+            const hasData = current.length > 1
+            const data = hasData ? resolveEventData(current[1], event) : undefined
             callEventHandler(
               resolvedHandler,
               event,
               node,
               data,
-              handler[2] === DELEGATED_DATA_ONLY_MARKER ||
-                handler[2] === DELEGATED_DATA_PLAIN_MARKER,
-              handler[2] === DELEGATED_DATA_PLAIN_MARKER,
+              current[2] === DELEGATED_DATA_ONLY_MARKER ||
+                current[2] === DELEGATED_DATA_PLAIN_MARKER,
+              current[2] === DELEGATED_DATA_PLAIN_MARKER,
               hasData,
             )
             return
           }
 
-          const resolvedHandler = resolveEventHandlerValue(
-            handler as EventListenerOrEventListenerObject | null | undefined,
-          )
-          callEventHandler(resolvedHandler, event, node)
+          callEventHandler(current, event, node)
         } catch (err) {
           if (
             handleError(err, { source: 'event', eventName }, getEventErrorRoot(node) ?? rootRef)

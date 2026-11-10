@@ -2426,8 +2426,12 @@ fn lower_jsx_instruction(
         target: root,
         namespace_helper: matches!(&template.root, JsxNode::Element(_))
             .then_some(RuntimeHelper::ElementNamespaceMatches),
-        reactive_helper: matches!(&template.root, JsxNode::Element(_))
-            .then_some(RuntimeHelper::ReactiveGetter),
+        reactive_helper: (matches!(&template.root, JsxNode::Element(_))
+            || serialized
+                .bindings
+                .iter()
+                .any(|binding| matches!(binding, TemplateBinding::Event { .. })))
+        .then_some(RuntimeHelper::ReactiveGetter),
         fragment_helper: template
             .contains_fragment
             .then_some(RuntimeHelper::Fragment),

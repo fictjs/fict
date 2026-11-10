@@ -657,3 +657,63 @@ for (const fineGrainedDom of [true, false]) {
     ])
   })
 }
+
+for (const fineGrainedDom of [true, false]) {
+  test(`bug 38: forwarded and selected handlers read the latest callback (fineGrainedDom=${fineGrainedDom})`, async () => {
+    const code = compile(
+      `
+      import { $state, render } from 'fict'
+      let root
+      function Button({ onSave }) { return <button id="destructured" onClick={onSave}>save</button> }
+      function Optional(props) { return <button id="optional" onClick={props.onSave}>optional</button> }
+      function Forward(props) { return <><button id="forward" onClick={props.onSave}>forward</button><button id="capture" onClickCapture={props.onSave}>capture</button></> }
+      function App() {
+        let ready = $state(false), mode = $state('a'), total = $state(0), seen = $state('')
+        const saveA = () => { total++ }, saveB = () => { total += 10 }
+        const handler = mode === 'a' ? saveA : saveB
+        const consume = data => { seen = data }
+        return <div>
+          <button id="ready" onClick={() => ready = !ready}>ready</button>
+          <button id="mode" onClick={() => mode = 'b'}>mode</button>
+          <Optional onSave={ready ? saveA : undefined}/><Button onSave={handler}/><Forward onSave={handler}/>
+          <button id="derived" onClick={handler}>derived</button>
+          <button id="ternary" onClick={mode === 'a' ? saveA : saveB}>ternary</button>
+          <button id="tuple" onClick={[consume, mode]}>tuple</button>
+          <p>{total}</p><b>{seen}</b>
+        </div>
+      }
+      export function mount(container) { root = container; return render(() => <App />, root) }
+      export function observe() { return [root.querySelector('p').textContent, root.querySelector('b').textContent] }
+    `,
+      { fineGrainedDom },
+    )
+    const steps = [
+      { kind: 'click', selector: '#optional' },
+      { kind: 'record', label: 'disabled' },
+      { kind: 'click', selector: '#ready' },
+      { kind: 'click', selector: '#optional' },
+    ]
+    for (const selector of ['destructured', 'forward', 'capture', 'derived', 'ternary', 'tuple'])
+      steps.push({ kind: 'click', selector: '#' + selector })
+    steps.push({ kind: 'record', label: 'first' }, { kind: 'click', selector: '#mode' })
+    for (const selector of ['destructured', 'forward', 'capture', 'derived', 'ternary', 'tuple'])
+      steps.push({ kind: 'click', selector: '#' + selector })
+    steps.push(
+      { kind: 'record', label: 'switched' },
+      { kind: 'click', selector: '#ready' },
+      { kind: 'click', selector: '#optional' },
+      { kind: 'record', label: 'disabled-again' },
+    )
+    const result = await executeDomCommonJs(code, {
+      mountExport: 'mount',
+      observeExport: 'observe',
+      steps,
+    })
+    assert.deepEqual(result, [
+      { label: 'disabled', value: ['0', ''] },
+      { label: 'first', value: ['6', 'a'] },
+      { label: 'switched', value: ['56', 'b'] },
+      { label: 'disabled-again', value: ['56', 'b'] },
+    ])
+  })
+}

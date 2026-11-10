@@ -22,7 +22,12 @@ impl<'a> AstRewriter<'a, '_> {
         span: Span,
     ) -> Expression<'a> {
         let Some(namespace_helper) = clone.namespace_helper.clone() else {
-            return self.lower_template_clone_optimized(clone, jsx, span);
+            let previous = self.active_vnode_reactive_local.clone();
+            self.active_vnode_reactive_local
+                .clone_from(&clone.reactive_helper);
+            let lowered = self.lower_template_clone_optimized(clone, jsx, span);
+            self.active_vnode_reactive_local = previous;
+            return lowered;
         };
         let Some(tag_name) = jsx_intrinsic_tag_name(&jsx) else {
             self.diagnostics.push(
@@ -204,7 +209,10 @@ impl<'a> AstRewriter<'a, '_> {
         let Some(helper) = helper else {
             return value;
         };
-        if expression_contains_direct_await(&value) || !self.span_needs_jsx_getter(source_span) {
+        if expression_contains_direct_await(&value)
+            || expression_contains_direct_yield(&value)
+            || !self.span_needs_jsx_getter(source_span)
+        {
             return value;
         }
         self.wrap_jsx_getter(value, source_span, helper)

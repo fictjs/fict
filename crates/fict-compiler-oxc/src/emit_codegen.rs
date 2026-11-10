@@ -5240,6 +5240,10 @@ impl<'a> AstRewriter<'a, '_> {
                         );
                         continue;
                     };
+                    let function_like = matches!(
+                        handler.get_inner_expression(),
+                        Expression::ArrowFunctionExpression(_) | Expression::FunctionExpression(_)
+                    );
                     self.visit_expression(&mut handler);
                     let prevent_default = handler_may_prevent_default(&handler);
                     if self.preview_handlers.contains_key(&location) {
@@ -5280,6 +5284,12 @@ impl<'a> AstRewriter<'a, '_> {
                         continue;
                     }
                     handler = ignore_inline_event_handler_return(self.allocator, handler, span);
+                    if !function_like {
+                        handler = self.wrap_vnode_reactive_value(
+                            handler,
+                            Span::new(handler_origin.start(), handler_origin.end()),
+                        );
+                    }
                     let callee = Expression::new_identifier(
                         span,
                         self.allocator.alloc_str(&helper),
@@ -6606,13 +6616,12 @@ impl<'a> AstRewriter<'a, '_> {
                             .get(&location)
                             .map(|handler| (location, handler.event.clone()))
                     });
-                    let reactive = !intrinsic
-                        || (name != "ref" && fict_emit::parse_event_attribute(&name).is_none());
+                    let reactive = !intrinsic || name != "ref";
                     let value_span = jsx_attribute_source_span(&attribute.value);
                     let mut value = self.lower_jsx_attribute_value(
                         attribute.value,
                         attribute.span,
-                        reactive && intrinsic,
+                        reactive && intrinsic && preview.is_none(),
                     );
                     if !intrinsic
                         && reactive
@@ -7921,6 +7930,23 @@ fn expression_contains_direct_await(expression: &Expression<'_>) -> bool {
     let mut finder = DirectAwaitFinder { found: false };
     finder.visit_expression(expression);
     finder.found
+}
+fn expression_contains_direct_yield(expression: &Expression<'_>) -> bool {
+    struct DirectYieldFinder(bool);
+    impl<'a> Visit<'a> for DirectYieldFinder {
+        fn visit_expression(&mut self, expression: &Expression<'a>) {
+            if matches!(expression, Expression::YieldExpression(_)) {
+                self.0 = true;
+            } else if !self.0 {
+                walk::walk_expression(self, expression);
+            }
+        }
+        fn visit_function(&mut self, _function: &Function<'a>, _flags: ScopeFlags) {}
+        fn visit_arrow_function_expression(&mut self, _function: &ArrowFunctionExpression<'a>) {}
+    }
+    let mut finder = DirectYieldFinder(false);
+    finder.visit_expression(expression);
+    finder.0
 }
 struct DirectAwaitFinder {
     found: bool,
