@@ -3302,7 +3302,7 @@ export function createConditional(
   // re-running when condition dependencies change but the boolean result stays same.
   // This is critical because re-running the effect would purge child effect deps
   // (like bindText) even if we early-return, breaking fine-grained reactivity.
-  const conditionMemo = computed(condition)
+  const conditionMemo = computed(() => !!condition())
 
   const prepareBranch = (
     render: (() => FictNode) | undefined,

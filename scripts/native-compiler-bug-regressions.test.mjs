@@ -100,3 +100,48 @@ for (const fineGrainedDom of [true, false]) {
     ])
   })
 }
+
+for (const expression of [
+  'name ? <Profile name={name} /> : <i>login</i>',
+  'name && <Profile name={name} />',
+]) {
+  test(`bug 31: truthy updates preserve conditional component identity (${expression})`, async () => {
+    const code = compile(`
+      import { $state, render, onMount } from 'fict'
+      let root, first, mounts = 0
+      function Profile(props) {
+        let edits = $state(0)
+        onMount(() => { mounts++ })
+        return <b onClick={() => edits++}>{props.name}:{edits}</b>
+      }
+      function App() {
+        let name = $state('ann')
+        return <div><button onClick={() => { name += '!' }}>rename</button>
+          <section>{${expression}}</section></div>
+      }
+      export function mount(container) {
+        root = container
+        const dispose = render(() => <App />, root)
+        first = root.querySelector('b')
+        return dispose
+      }
+      export function observe() {
+        return { text: root.querySelector('b').textContent, same: root.querySelector('b') === first, mounts }
+      }
+    `)
+    assert.match(code, /createConditional/)
+    const result = await executeDomCommonJs(code, {
+      mountExport: 'mount',
+      observeExport: 'observe',
+      steps: [
+        { kind: 'click', selector: 'b' },
+        { kind: 'click', selector: 'b' },
+        { kind: 'click', selector: 'button' },
+        { kind: 'record', label: 'renamed' },
+      ],
+    })
+    assert.deepEqual(result, [
+      { label: 'renamed', value: { text: 'ann!:2', same: true, mounts: 1 } },
+    ])
+  })
+}
