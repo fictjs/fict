@@ -129,3 +129,28 @@ export function Example(rows: any) {
   return <p>{rows.map(x => x + count).join(',')}</p>
 }
 ```
+
+## Prop aliases in callbacks
+
+A prop-derived alias remains reactive when captured by a callback. Extracting or
+renaming a prop does not certify that an unknown collection method owns that
+callback. Direct prop reads and their aliases both require `FICT-R005`; `FICT-R002`
+may accompany it. Ordinary value arguments keep their existing snapshot boundary.
+
+<!-- receiver-proof: prop-alias-callback FICT-R005 -->
+
+```tsx
+export function Example(props: { items: string[]; prefix: string }) {
+  const prefix = props.prefix
+  return (
+    <ul>
+      {props.items.map(item => (
+        <li key={item}>
+          {prefix}
+          {item}
+        </li>
+      ))}
+    </ul>
+  )
+}
+```

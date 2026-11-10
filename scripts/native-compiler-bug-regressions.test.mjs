@@ -1193,3 +1193,39 @@ test('bug 17: nested callback returns do not make later top-level hooks conditio
     }
   `)
 })
+
+for (const [setup, value] of [
+  ['', 'props.prefix'],
+  ['const p = props.prefix;', 'p'],
+  ['const { prefix: p } = props;', 'p'],
+  ['const p = props.prefix; const q = p + "!";', 'q'],
+]) {
+  test(`bug 13: unknown collection callbacks retain prop capture diagnostics (${setup || 'direct'})`, () => {
+    for (const strictGuarantee of [true, false]) {
+      const result = native.transformSync({
+        code: `function List(props) { ${setup} return <ul>{props.items.map(s => <li key={s}>{${value}}{s}</li>)}</ul> }`,
+        filename: '/prop-capture.tsx',
+        options: { dev: false, strictGuarantee },
+      })
+      assert.ok(result.diagnostics.some(d => d.code === 'FICT-R005'))
+      assert.ok(result.diagnostics.every(d => ['FICT-R002', 'FICT-R005'].includes(d.code)))
+      assert.ok(
+        result.diagnostics.every(d => d.severity === (strictGuarantee ? 'error' : 'warning')),
+      )
+      assert.equal(Boolean(result.code), !strictGuarantee)
+    }
+  })
+}
+
+test('bug 13: known collection and event hosts accept prop aliases and ordinary value arguments remain snapshots', () => {
+  compile(`
+    import { $state } from 'fict'
+    declare function consume(value: string): void
+    function List(props) {
+      let items = $state(['x', 'y'])
+      const prefix = props.prefix
+      consume(prefix)
+      return <ul onClick={() => consume(prefix)}>{items.map(s => <li key={s}>{prefix}{s}</li>)}</ul>
+    }
+  `)
+})

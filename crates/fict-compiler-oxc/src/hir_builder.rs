@@ -2879,9 +2879,10 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             &self.macro_bindings,
         );
         let mut escape_reactive_symbols = source_escape_reactive_symbols;
-        // The legacy escape pass propagates state/memo/imported-reactive aliases, but treats
-        // component parameters as direct roots only. Propagating every props-derived local would
-        // reject ordinary resource keys and event callbacks. Runtime reactive factory results
+        // Value snapshots passed as ordinary arguments retain the legacy props boundary.
+        // Callback captures must also follow props-derived aliases: reading an inferred memo
+        // from a deferred callback has the same owner requirement as reading the prop itself.
+        // Runtime reactive factory results
         // still participate in DOM dependency tracking, but do not become escape roots merely
         // because they came from store/resource/selector.
         propagate_reactive_symbols(
@@ -2890,12 +2891,19 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             |dependency| dependency.escape_identity_container,
         );
         escape_reactive_symbols.extend(component_parameter_symbols);
+        let mut callback_reactive_symbols = escape_reactive_symbols.clone();
+        propagate_reactive_symbols(
+            &mut callback_reactive_symbols,
+            &dependencies.facts,
+            |dependency| dependency.escape_identity_container,
+        );
 
         ReactiveSymbolAnalysis {
             state,
             state_receivers,
             reactive: reactive_symbols,
             escape_reactive: escape_reactive_symbols,
+            callback_reactive: callback_reactive_symbols,
             hook_return_shapes,
             dependencies: dependencies.facts,
         }
@@ -3095,7 +3103,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             .collect();
         let mut captures = FunctionCaptureCollector {
             scoping: self.semantic.scoping(),
-            reactive_symbols: &reactive.escape_reactive,
+            reactive_symbols: &reactive.callback_reactive,
             binding_owners: &binding_owners,
             function_by_span: &self.function_by_span,
             stack: vec![FunctionId::new(0)],
@@ -10279,6 +10287,7 @@ struct ReactiveSymbolAnalysis {
     state_receivers: BTreeMap<SymbolId, StateReceiverKind>,
     reactive: BTreeSet<SymbolId>,
     escape_reactive: BTreeSet<SymbolId>,
+    callback_reactive: BTreeSet<SymbolId>,
     hook_return_shapes: BTreeMap<SymbolId, LocalHookReturnShape>,
     dependencies: Vec<ReactiveBindingDependencyFact>,
 }
