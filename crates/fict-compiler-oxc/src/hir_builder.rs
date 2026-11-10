@@ -3953,7 +3953,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                         self.diagnostics.push(
                             error(
                                 "FICT-PLACEMENT-HOOK-CONTROL",
-                                "hook calls must be made at the top level of a component or hook",
+                                "hook calls must be made at the top level of a component or hook, before any early return",
                                 call.span,
                             )
                             .with_note(format!("resolved hook call: {display_name}()")),
@@ -3982,7 +3982,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                     } else if placement_sensitive {
                         self.diagnostics.push(error(
                             "FICT-PLACEMENT-HOOK-CONTROL",
-                            "member hook calls must be made at the top level of a component or hook",
+                            "member hook calls must be made at the top level of a component or hook, before any early return",
                             call.span,
                         ).with_note(format!("resolved hook call: {display_name}()")));
                     }
@@ -9580,6 +9580,7 @@ struct PlacementContext {
     block_depth: u32,
     control_depth: u32,
     function_baselines: Vec<(u32, u32)>,
+    function_returns: Vec<bool>,
     next_function_inheritance: Vec<bool>,
     jsx_depth: u32,
     variables: Vec<VariableContext>,
@@ -9601,7 +9602,10 @@ impl PlacementContext {
                 } else {
                     (self.block_depth, self.control_depth)
                 };
+                let prior_return =
+                    inherits_parent && self.function_returns.last().copied().unwrap_or(false);
                 self.function_baselines.push(baseline);
+                self.function_returns.push(prior_return);
             }
             AstKind::JSXElement(_) | AstKind::JSXFragment(_) => {
                 self.jsx_depth = self.jsx_depth.saturating_add(1);
@@ -9647,6 +9651,12 @@ impl PlacementContext {
         match kind {
             AstKind::Function(_) | AstKind::ArrowFunctionExpression(_) => {
                 self.function_baselines.pop();
+                self.function_returns.pop();
+            }
+            AstKind::ReturnStatement(_) => {
+                if let Some(returned) = self.function_returns.last_mut() {
+                    *returned = true;
+                }
             }
             AstKind::JSXElement(_) | AstKind::JSXFragment(_) => {
                 self.jsx_depth = self.jsx_depth.saturating_sub(1);
@@ -9685,7 +9695,8 @@ impl PlacementContext {
     ) {
         let (block_baseline, control_baseline) =
             self.function_baselines.last().copied().unwrap_or_default();
-        let conditional_or_loop = self.control_depth > control_baseline;
+        let conditional_or_loop = self.control_depth > control_baseline
+            || self.function_returns.last().copied().unwrap_or(false);
         let immediate_statement = self.block_depth == block_baseline && !conditional_or_loop;
         let direct_variable = self.variables.last().and_then(|variable| {
             (variable.initializer == Some(call)).then_some(variable.simple_identifier)

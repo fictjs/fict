@@ -165,10 +165,10 @@ impl Builder<'_, '_> {
                         self.diagnostics.push(
                             error(
                                 "FICT-PLACEMENT-STATE-CONTROL",
-                                "$state() cannot be declared inside loops, conditionals, or nested blocks",
+                                "$state() cannot be declared inside loops, conditionals, nested blocks, or after an early return",
                                 call.span,
                             )
-                            .with_help("move the state declaration to the component or hook top level"),
+                            .with_help("move the state declaration to the component or hook top level, before any early return"),
                         );
                     }
                 }
@@ -203,10 +203,10 @@ impl Builder<'_, '_> {
                         self.diagnostics.push(
                             error(
                                 "FICT-PLACEMENT-EFFECT-CONTROL",
-                                "$effect() cannot be called inside loops, conditionals, or nested blocks",
+                                "$effect() cannot be called inside loops, conditionals, nested blocks, or after an early return",
                                 call.span,
                             )
-                            .with_help("move the effect registration to the reactive owner top level"),
+                            .with_help("move the effect registration to the reactive owner top level, before any early return"),
                         );
                     }
                 }
@@ -269,7 +269,7 @@ impl Builder<'_, '_> {
                     if !call.immediate_statement || call.conditional_or_loop {
                         self.diagnostics.push(error(
                             "FICT-PLACEMENT-ASYNC-CONTROL",
-                            "$async() cannot be declared inside loops, conditionals, or nested blocks",
+                            "$async() cannot be declared inside loops, conditionals, nested blocks, or after an early return",
                             call.span,
                         ).with_help("move async node creation to the reactive owner top level"));
                     }
@@ -279,10 +279,10 @@ impl Builder<'_, '_> {
                         self.diagnostics.push(
                             error(
                                 "FICT-PLACEMENT-MEMO-CONTROL",
-                                "$memo() cannot be called inside loops, conditionals, or nested blocks",
+                                "$memo() cannot be called inside loops, conditionals, nested blocks, or after an early return",
                                 call.span,
                             )
-                            .with_help("move the memo creation to the component or module top level"),
+                            .with_help("move the memo creation to the component or module top level, before any early return"),
                         );
                     }
                 }

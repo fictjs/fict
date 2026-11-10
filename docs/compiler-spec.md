@@ -50,7 +50,8 @@ const y = $state({ foo: 1 })
 Constraints:
 
 - `$state` must be imported from `'fict'` (or subsequent official packages).
-- Calls must appear at the **immediate top level of a component or hook (`useX`) function body**. Module scope is **illegal**.
+- Calls must appear at the **immediate top level of a component or hook (`useX`) function body**, before any possible early return. Module scope is **illegal**.
+- `$state`, `$effect`, `$memo`, and custom hook calls after an early return are conditional creation and fail compilation, including in opt-out builds. Move these calls before the guard, or extract the guarded branch into a separate component. Returns inside nested callbacks do not count as returns from the containing component.
 - `$state` **cannot** be called inside loops (`for`, `while`, `do-while`) or conditional branches (`if`, `switch`, ternary). This is a **hard compilation error**.
   - Rationale: Signals must be topologically stable; dynamic creation of signals inside control flow breaks the static graph and is often a bug (e.g., recreating state on every render if it were allowed).
 

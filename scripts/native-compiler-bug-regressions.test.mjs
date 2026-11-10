@@ -1142,3 +1142,54 @@ for (const fineGrainedDom of [true, false]) {
     ])
   })
 }
+
+for (const strictGuarantee of [true, false]) {
+  for (const [declaration, code] of [
+    ['let m = $state(100)', 'FICT-PLACEMENT-STATE-CONTROL'],
+    ['$effect(() => { document.title = "n=" + n })', 'FICT-PLACEMENT-EFFECT-CONTROL'],
+    ['const v = $memo(() => n * 3)', 'FICT-PLACEMENT-MEMO-CONTROL'],
+    ['const t = useThing()', 'FICT-PLACEMENT-HOOK-CONTROL'],
+  ]) {
+    for (const guard of [
+      'if (!props.on) return <p>off</p>',
+      'switch (props.on) { case false: return <p>off</p> }',
+    ]) {
+      test(`bug 17: rejects hooks following early exits (${declaration}; ${guard}; strict=${strictGuarantee})`, () => {
+        const source = `import { $state, $effect, $memo } from 'fict'; function useThing() { let x = $state(1); return { x } } export function Inner(props) { let n = $state(0); ${guard}; ${declaration}; return <p>{n}</p> }`
+        const result = native.transformSync({
+          code: source,
+          filename: '/bug-17.tsx',
+          options: { dev: false, strictGuarantee },
+        })
+        const diagnostic = result.diagnostics.find(diagnostic => diagnostic.code === code)
+        assert.ok(diagnostic, JSON.stringify(result.diagnostics))
+        assert.equal(diagnostic.severity, 'error')
+        assert.match(diagnostic.message, /early return/)
+        assert.ok(
+          declaration.includes(
+            source.slice(diagnostic.primarySpan.start, diagnostic.primarySpan.end),
+          ),
+        )
+        assert.ok(!result.code)
+      })
+    }
+  }
+}
+
+test('bug 17: nested callback returns do not make later top-level hooks conditional', () => {
+  compile(`
+    import { $state, $effect, $memo } from 'fict'
+    function useThing() { let x = $state(1); return { x } }
+    export function App(props) {
+      const handler = () => { if (props.enabled) return 1; return 0 }
+      const result = (() => { return 1 })()
+      let n = $state(1)
+      $effect(() => { document.title = '' + n })
+      const doubled = $memo(() => n * 2)
+      const thing = useThing()
+      if (!props.on) return <p>off</p>
+      const derived = n * 3
+      return <button onClick={handler}>{doubled}:{thing.x}:{derived}:{result}</button>
+    }
+  `)
+})
