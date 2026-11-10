@@ -451,3 +451,56 @@ for (const fineGrainedDom of [true, false]) {
     ])
   })
 }
+
+for (const fineGrainedDom of [true, false]) {
+  test(`bug 7: inline fragments preserve flattened DOM paths and text runs (fineGrainedDom=${fineGrainedDom})`, async () => {
+    const code = compile(
+      `
+      import { $state, render } from 'fict'
+      let root
+      function App() {
+        let n = $state(1)
+        return <div><section><><button id="inc" onClick={() => n++}>inc</button>
+          <span title={'t' + n}><><i>{n}</i></></span></></section>
+          <p id="text">x<><>{n}</></>y</p>
+          <p id="joined">a<>b<></></>c<button id="next" onClick={() => n++}>next</button><em>{n}</em></p>
+          <table><><tr><td>{n}</td></tr></><tr><td>{n + 1}</td></tr></table>
+        </div>
+      }
+      export function mount(container) { root = container; return render(() => <App />, root) }
+      export function observe() { return {
+        title: root.querySelector('span').title, number: root.querySelector('i').textContent,
+        text: root.querySelector('#text').textContent, joined: root.querySelector('#joined').textContent,
+        cells: Array.from(root.querySelectorAll('td'), el => el.textContent),
+        bodies: root.querySelectorAll('tbody').length,
+      } }
+    `,
+      { fineGrainedDom },
+    )
+    const result = await executeDomCommonJs(code, {
+      mountExport: 'mount',
+      observeExport: 'observe',
+      steps: [
+        { kind: 'record', label: 'initial' },
+        { kind: 'click', selector: '#inc' },
+        { kind: 'record', label: 'updated' },
+        { kind: 'click', selector: '#next' },
+        { kind: 'record', label: 'again' },
+      ],
+    })
+    assert.deepEqual(
+      result,
+      [1, 2, 3].map((n, i) => ({
+        label: ['initial', 'updated', 'again'][i],
+        value: {
+          title: 't' + n,
+          number: '' + n,
+          text: 'x' + n + 'y',
+          joined: 'abcnext' + n,
+          cells: ['' + n, '' + (n + 1)],
+          bodies: fineGrainedDom ? 1 : 0,
+        },
+      })),
+    )
+  })
+}

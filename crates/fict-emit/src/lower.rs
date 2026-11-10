@@ -3585,11 +3585,26 @@ fn serialize_children(
     child_namespace: DomNamespace,
     trusted_lists: &BTreeSet<ValueId>,
 ) -> Result<u32, DiagnosticBundle> {
+    // Fragments have no DOM node. Flatten them before assigning paths so the
+    // sibling index, adjacent text run and implicit table wrappers all span
+    // fragment boundaries. Borrow children instead of cloning their subtrees.
+    let mut flattened = Vec::new();
+    let mut pending: Vec<_> = children.iter().rev().collect();
+    while let Some(child) = pending.pop() {
+        if let JsxChild::Node(node) = child
+            && let JsxNode::Fragment { children, .. } = node.as_ref()
+        {
+            pending.extend(children.iter().rev());
+        } else {
+            flattened.push(child);
+        }
+    }
+    let children = flattened;
     let mut child_index = 0_u32;
     let mut source_index = 0_usize;
     let mut previous_static_text = false;
     while source_index < children.len() {
-        let child = &children[source_index];
+        let child = children[source_index];
         match child {
             JsxChild::Text { value, .. } => {
                 if !value.is_empty() {
@@ -3700,11 +3715,11 @@ fn serialize_children(
                         && is_implicit_table_child(
                             parent_tag,
                             parent_element_namespace,
-                            &children[source_index],
+                            children[source_index],
                             "tr",
                         )
                     {
-                        let JsxChild::Node(row) = &children[source_index] else {
+                        let JsxChild::Node(row) = children[source_index] else {
                             unreachable!("table child predicate requires a JSX node")
                         };
                         parent_path.push(row_index);
@@ -3734,11 +3749,11 @@ fn serialize_children(
                         && is_implicit_table_child(
                             parent_tag,
                             parent_element_namespace,
-                            &children[source_index],
+                            children[source_index],
                             "col",
                         )
                     {
-                        let JsxChild::Node(column) = &children[source_index] else {
+                        let JsxChild::Node(column) = children[source_index] else {
                             unreachable!("table child predicate requires a JSX node")
                         };
                         parent_path.push(column_index);
