@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 
 import { createRoot, onDestroy, createEffect, createMemo, onCleanup } from '../src/index'
-import { createSignal, createScope, runInScope } from '../src/advanced'
+import { createSignal, createScope, runInScope, reactive } from '../src/advanced'
 
 const tick = () =>
   new Promise<void>(resolve =>
@@ -208,6 +208,41 @@ describe('Reactive Scope', () => {
   })
 
   describe('runInScope', () => {
+    it('preserves scope state and cleanup while the flag stays true', async () => {
+      const count = createSignal(1)
+      const log: string[] = []
+      const seen: number[] = []
+      const root = createRoot(() => {
+        runInScope(
+          reactive(() => count() > 0),
+          () => {
+            log.push('start')
+            onCleanup(() => log.push('stop'))
+            createEffect(() => {
+              seen.push(count())
+            })
+          },
+        )
+      })
+      try {
+        count(2)
+        await tick()
+        count(3)
+        await tick()
+        expect(log).toEqual(['start'])
+        expect(seen).toEqual([1, 2, 3])
+        count(0)
+        await tick()
+        expect(log).toEqual(['start', 'stop'])
+        count(4)
+        await tick()
+        expect(log).toEqual(['start', 'stop', 'start'])
+      } finally {
+        root.dispose()
+      }
+      expect(log).toEqual(['start', 'stop', 'start', 'stop'])
+    })
+
     it('runs code when flag is true', async () => {
       const flag = createSignal(true)
       const log: string[] = []

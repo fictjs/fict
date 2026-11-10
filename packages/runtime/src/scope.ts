@@ -11,7 +11,7 @@ import {
   registerRootCleanup,
   type RootContext,
 } from './lifecycle'
-import { untrack } from './signal'
+import { computed, untrack } from './signal'
 
 export { effectScope } from './signal'
 
@@ -78,7 +78,7 @@ export function createScope(): ReactiveScope {
  */
 export function runInScope(flag: MaybeReactive<boolean>, fn: () => void): void {
   const scope = createScope()
-  const evaluate = () => (isReactive(flag) ? (flag as () => boolean)() : !!flag)
+  const evaluate = computed(() => !!(isReactive(flag) ? (flag as () => boolean)() : flag))
 
   createEffect(() => {
     const enabled = evaluate()
