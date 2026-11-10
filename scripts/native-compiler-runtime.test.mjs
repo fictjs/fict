@@ -752,7 +752,7 @@ test('legacy DOM binding targets and forced prefixes update through native outpu
   assert.equal(forced?.getAttribute('title'), 'forced-off')
   assert.equal(forced?.hasAttribute('data-active'), false)
   assert.equal(forced?.textContent, 'forced off')
-  assert.equal(custom?.someProp, 0)
+  assert.equal(custom?.getAttribute('some-prop'), '0')
   assert.deepEqual(custom?.config, { value: 0 })
 
   compiled.update()
@@ -766,7 +766,7 @@ test('legacy DOM binding targets and forced prefixes update through native outpu
   assert.equal(forced?.getAttribute('title'), 'forced-on')
   assert.equal(forced?.getAttribute('data-active'), '')
   assert.equal(forced?.textContent, 'forced on')
-  assert.equal(custom?.someProp, 1)
+  assert.equal(custom?.getAttribute('some-prop'), '1')
   assert.deepEqual(custom?.config, { value: 1 })
 
   dispose()

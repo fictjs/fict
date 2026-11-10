@@ -132,6 +132,8 @@ export {
   bindEvent,
   callEventHandler,
   bindProperty,
+  bindCustomElementProp,
+  setCustomElementProp,
   bindRef,
   __fictReactive,
   nonReactive,

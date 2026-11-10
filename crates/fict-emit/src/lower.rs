@@ -4221,11 +4221,15 @@ fn dom_binding_plan(name: &str, custom_element: bool) -> DomBindingPlan {
         "class" | "className" | "classList" => DomBindingKind::Class,
         "style" => DomBindingKind::Style,
         _ if is_dom_property(name) => DomBindingKind::Property(name.to_owned()),
-        _ => custom_element_property_name(name, custom_element)
-            .map(DomBindingKind::Property)
-            .unwrap_or_else(|| DomBindingKind::Attribute(name.to_owned())),
+        _ if custom_element_property_name(name, custom_element).is_some() => {
+            DomBindingKind::CustomElement(name.to_owned())
+        }
+        _ => DomBindingKind::Attribute(name.to_owned()),
     };
-    let force = matches!(kind, DomBindingKind::Property(_)) || name == "classList";
+    let force = matches!(
+        kind,
+        DomBindingKind::Property(_) | DomBindingKind::CustomElement(_)
+    ) || name == "classList";
     DomBindingPlan { kind, force }
 }
 fn is_dom_property(name: &str) -> bool {
@@ -4275,8 +4279,7 @@ fn custom_element_property_name(name: &str, custom_element: bool) -> Option<Stri
         return Some(name.to_owned());
     }
     let mut property = String::new();
-    let lowercase_name = name.to_lowercase();
-    let mut characters = lowercase_name.chars().peekable();
+    let mut characters = name.chars().peekable();
     while let Some(character) = characters.next() {
         if character == '-'
             && let Some(next) = characters.peek()
@@ -4316,6 +4319,8 @@ fn dom_binding_helper(kind: &DomBindingKind, reactive: bool) -> RuntimeHelper {
         (DomBindingKind::BooleanAttribute(_), false) => RuntimeHelper::SetBooleanAttribute,
         (DomBindingKind::Property(_), true) => RuntimeHelper::BindProperty,
         (DomBindingKind::Property(_), false) => RuntimeHelper::SetProp,
+        (DomBindingKind::CustomElement(_), true) => RuntimeHelper::BindCustomElementProp,
+        (DomBindingKind::CustomElement(_), false) => RuntimeHelper::SetCustomElementProp,
         (DomBindingKind::Class, true) => RuntimeHelper::BindClass,
         (DomBindingKind::Class, false) => RuntimeHelper::SetClass,
         (DomBindingKind::Style, true) => RuntimeHelper::BindStyle,

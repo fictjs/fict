@@ -5114,7 +5114,8 @@ impl<'a> AstRewriter<'a, '_> {
                     match kind {
                         DomBindingKind::Attribute(name)
                         | DomBindingKind::BooleanAttribute(name)
-                        | DomBindingKind::Property(name) => {
+                        | DomBindingKind::Property(name)
+                        | DomBindingKind::CustomElement(name) => {
                             arguments.push(Argument::from(Expression::new_string_literal(
                                 span,
                                 self.allocator.alloc_str(&name),

@@ -3374,8 +3374,8 @@ mod tests {
             "muted",
             "textContent",
             "config",
-            "someProp",
-            "customProp",
+            "some-prop",
+            "custom-prop",
         ] {
             assert!(
                 result.code.contains(&format!("\"{property}\"")),
@@ -3384,6 +3384,16 @@ mod tests {
             );
         }
         assert!(result.code.contains("bindClass("), "{}", result.code);
+        assert!(
+            result.code.contains("bindCustomElementProp("),
+            "{}",
+            result.code
+        );
+        assert!(
+            result.code.contains("setCustomElementProp("),
+            "{}",
+            result.code
+        );
         assert!(result.code.contains("setAttr("), "{}", result.code);
         assert!(
             result.code.contains("bindBooleanAttribute("),
@@ -3530,7 +3540,6 @@ mod tests {
             "bool:dataOn",
             "data-on",
             "prop:textContent",
-            "prop:textcontent",
             "some-prop",
             "someProp",
             "textContent",

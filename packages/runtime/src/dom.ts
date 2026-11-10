@@ -26,6 +26,7 @@ import {
   parseEventNameWithModifiers,
   registerCreateElement,
   setElementProperty,
+  setCustomElementProp,
   type MaybeReactive,
   type AttributeSetter,
   type BindingHandle,
@@ -848,10 +849,14 @@ function createElementWithContext(
         ? semanticTagName
         : tagName
   assertValidDOMElementName(domTagName, namespaceURI !== null, namespaceURI ?? undefined)
+  const isValue = vnode.props?.is
+  const customIs = isReactive(isValue) ? untrack(isValue) : isValue
   const createDOMElement = () =>
     namespaceURI !== null
       ? ownerDocument.createElementNS(namespaceURI, domTagName)
-      : ownerDocument.createElement(domTagName)
+      : typeof customIs === 'string'
+        ? ownerDocument.createElement(domTagName, { is: customIs })
+        : ownerDocument.createElement(domTagName)
   const expected = createDOMElement()
   const el = isHydratingActive() ? (claimNodes(expected, () => expected) as Element) : expected
   const childParent =
@@ -894,6 +899,9 @@ export function template(
   forceFragment?: boolean,
 ): () => Node {
   const nodeByDocument = new WeakMap<Document, Node>()
+  // Template content belongs to an inert document. Import custom elements into
+  // the rendering document so registered setters exist before prop bindings.
+  const needsImport = isImportNode || /<[a-z][^\s/>]*-|\sis\s*=/i.test(html)
 
   const create = (ownerDocument: Document): Node => {
     const t = ownerDocument.createElement('template')
@@ -955,7 +963,7 @@ export function template(
   }
 
   // Create the cloning function
-  const fn = isImportNode
+  const fn = needsImport
     ? () =>
         untrack(() => {
           const ownerDocument = resolveOwnerDocument()
@@ -1279,14 +1287,10 @@ function applyProps(
     // Handle properties and element-specific attributes
     if (propAlias || isProperty || isCE) {
       const propName = propAlias || key
-      // Custom elements use toPropertyName conversion
+      // Custom setters and rich values use properties; ordinary attributes
+      // keep their authored names, including data-* and tabindex.
       if (isCE && !isProperty && !propAlias) {
-        createAttributeBinding(
-          el,
-          toPropertyName(propName),
-          value as MaybeReactive<unknown>,
-          setProperty,
-        )
+        createAttributeBinding(el, propName, value as MaybeReactive<unknown>, setCustomElementProp)
       } else {
         createAttributeBinding(el, propName, value as MaybeReactive<unknown>, setProperty)
       }
@@ -1298,13 +1302,6 @@ function applyProps(
     const attrName = key === 'htmlFor' ? 'for' : key
     createAttributeBinding(el, attrName, value as MaybeReactive<unknown>, setAttribute)
   }
-}
-
-/**
- * Convert kebab-case to camelCase for custom element properties
- */
-function toPropertyName(name: string): string {
-  return name.toLowerCase().replace(/-([a-z])/g, (_, w) => w.toUpperCase())
 }
 
 // ============================================================================

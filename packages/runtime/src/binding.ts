@@ -793,6 +793,28 @@ export function bindProperty(el: Element, key: string, getValue: () => unknown):
   return createRenderBinding(getValue, next => setProp(el, key, next))
 }
 
+/** Dispatch a custom-element value without inventing properties for HTML attributes. */
+export function setCustomElementProp(el: Element, key: string, value: unknown): void {
+  if (key === 'htmlFor') key = 'for'
+  if (key === 'is' || key.startsWith('data-') || key.startsWith('aria-')) {
+    setAttr(el, key, value)
+    return
+  }
+  const property = key in el ? key : toPropertyName(key)
+  if (
+    property in el ||
+    (value !== null && (typeof value === 'object' || typeof value === 'function'))
+  ) {
+    setProp(el, property, value)
+  } else {
+    setAttr(el, key, value)
+  }
+}
+
+export function bindCustomElementProp(el: Element, key: string, getValue: () => unknown): Cleanup {
+  return createRenderBinding(getValue, next => setCustomElementProp(el, key, next))
+}
+
 function isHTMLSelect(el: Element): el is HTMLSelectElement {
   return el.localName === 'select' && el.namespaceURI === 'http://www.w3.org/1999/xhtml'
 }
@@ -3301,9 +3323,12 @@ function assignProp(
 
     if (propAlias || isProperty || isChildProp || isCE) {
       const propName = propAlias || prop
+      if (isCE && !isProperty && !isChildProp && !propAlias) {
+        setCustomElementProp(node, propName, value)
+        return value
+      }
       const target = node as unknown as Record<string, unknown>
-      const targetProp =
-        isCE && !isProperty && !isChildProp && !propAlias ? toPropertyName(propName) : propName
+      const targetProp = propName
       if (
         target[targetProp] === value &&
         !(targetProp === 'value' && (isHTMLSelect(node) || node.localName === 'input'))
@@ -3347,7 +3372,7 @@ function assignProp(
  * Convert kebab-case to camelCase for property names
  */
 function toPropertyName(name: string): string {
-  return name.toLowerCase().replace(/-([a-z])/g, (_, w) => w.toUpperCase())
+  return name.replace(/-([a-z])/g, (_, w) => w.toUpperCase())
 }
 
 // ============================================================================

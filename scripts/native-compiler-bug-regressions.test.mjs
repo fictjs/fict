@@ -1033,3 +1033,112 @@ for (const fineGrainedDom of [true, false]) {
     ])
   })
 }
+
+for (const fineGrainedDom of [true, false]) {
+  test(`bug 16: custom elements retain attributes and dispatch supported properties (fineGrainedDom=${fineGrainedDom})`, async () => {
+    const code = compile(
+      `
+      import { $state, render } from 'fict'
+      let root
+      function App() {
+        let name = $state('first'), n = $state(1)
+        return <div>
+          <my-el id="plain" data-testid={name} data-static="s" tabindex="0" for="label" variant="primary" aria-label={name} prop:extra={n}/>
+          <x-defined id="defined" foo-bar={n} config={{ count: n }} variant={name}/>
+          <button id="built" is="my-btn" data-testid={name} tabindex="0">built</button>
+          <button id="update" onClick={() => { name = 'next'; n++ }}>update</button>
+        </div>
+      }
+      export function mount(container) {
+        class Defined extends window.HTMLElement { set fooBar(value) { this.current = value } get fooBar() { return this.current } }
+        class Built extends window.HTMLButtonElement {}
+        window.customElements.define('x-defined', Defined)
+        window.customElements.define('my-btn', Built, { extends: 'button' })
+        root = container
+        return render(() => <App/>, root)
+      }
+      export function observe() {
+        const plain = root.querySelector('#plain'), defined = root.querySelector('#defined'), built = root.querySelector('#built')
+        return { plain: [plain.dataset.testid, plain.dataset.static, plain.tabIndex, plain.getAttribute('for'), plain.getAttribute('variant'), plain.getAttribute('aria-label'), plain.extra],
+          defined: [defined.fooBar, defined.config.count, defined.getAttribute('variant')],
+          built: [built.getAttribute('is'), built.dataset.testid, built.tabIndex, built instanceof window.customElements.get('my-btn')] }
+      }
+    `,
+      { fineGrainedDom },
+    )
+    const result = await executeDomCommonJs(code, {
+      mountExport: 'mount',
+      observeExport: 'observe',
+      steps: [
+        { kind: 'record', label: 'initial' },
+        { kind: 'click', selector: '#update' },
+        { kind: 'record', label: 'updated' },
+      ],
+    })
+    assert.deepEqual(result, [
+      {
+        label: 'initial',
+        value: {
+          plain: ['first', 's', 0, 'label', 'primary', 'first', 1],
+          defined: [1, 1, 'first'],
+          built: ['my-btn', 'first', 0, true],
+        },
+      },
+      {
+        label: 'updated',
+        value: {
+          plain: ['next', 's', 0, 'label', 'primary', 'next', 2],
+          defined: [2, 2, 'next'],
+          built: ['my-btn', 'next', 0, true],
+        },
+      },
+    ])
+  })
+}
+
+for (const fineGrainedDom of [true, false]) {
+  test(`bug 16: custom attributes survive SSR and hydration (fineGrainedDom=${fineGrainedDom})`, async () => {
+    const code = compile(
+      `
+      import { $state, hydrate } from 'fict'
+      import { renderToString } from '@fictjs/ssr'
+      let root, before, same
+      function App() {
+        let active = $state(true)
+        return <div><my-el data-testid="custom" tabindex="0" variant="primary" data-active={active} active={active}/>
+          <button is="fancy-button" data-testid="button" onClick={() => { active = false }}>off</button></div>
+      }
+      function attrs() { const el = root.querySelector('my-el'); return [el.dataset.testid, el.tabIndex, el.getAttribute('variant'), el.getAttribute('data-active'), el.hasAttribute('active'), root.querySelector('button').getAttribute('is')] }
+      export function mount(container) {
+        root = container; root.innerHTML = renderToString(() => <App/>)
+        const first = root.querySelector('my-el'); before = attrs()
+        const dispose = hydrate(() => <App/>, root, { strictHydration: true })
+        same = first === root.querySelector('my-el'); return dispose
+      }
+      export function observe() { return { before, same, attrs: attrs() } }
+    `,
+      { fineGrainedDom },
+    )
+    const initial = ['custom', 0, 'primary', 'true', true, 'fancy-button']
+    const result = await executeDomCommonJs(code, {
+      mountExport: 'mount',
+      observeExport: 'observe',
+      steps: [
+        { kind: 'record', label: 'initial' },
+        { kind: 'click', selector: 'button' },
+        { kind: 'record', label: 'updated' },
+      ],
+    })
+    assert.deepEqual(result, [
+      { label: 'initial', value: { before: initial, same: true, attrs: initial } },
+      {
+        label: 'updated',
+        value: {
+          before: initial,
+          same: true,
+          attrs: ['custom', 0, 'primary', 'false', false, 'fancy-button'],
+        },
+      },
+    ])
+  })
+}

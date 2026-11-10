@@ -327,3 +327,9 @@ $effect(async () => {
 - [compiler-spec.md](./compiler-spec.md) — Detailed compiler transformation rules
 - [diagnostic-codes.md](./diagnostic-codes.md) — Warning and error code reference
 - [architecture.md](./architecture.md) — Runtime and compiler architecture
+
+## Custom element attributes and properties
+
+Custom elements use an existing DOM property (including a registered custom setter) when one is available. A kebab-case name can resolve to an existing camelCase property. Otherwise primitive values are attributes with their authored names; `data-*`, `aria-*`, and `is` always remain attributes. Objects and functions use properties so their identity is preserved. `attr:name` and `prop:name` explicitly select either behavior.
+
+Register custom elements before rendering so their setters are available for the initial bindings. Templates containing custom elements are imported into the rendering document before bindings execute. A static `is="custom-button"` on a built-in element is also supplied when the VNode backend creates that element. Both backends preserve the `is` attribute.

@@ -302,6 +302,20 @@
       "stability": "core"
     },
     {
+      "key": "bindCustomElementProp",
+      "export": "bindCustomElementProp",
+      "preferredLocal": "bindCustomElementProp",
+      "module": "internal",
+      "stability": "core"
+    },
+    {
+      "key": "setCustomElementProp",
+      "export": "setCustomElementProp",
+      "preferredLocal": "setCustomElementProp",
+      "module": "internal",
+      "stability": "core"
+    },
+    {
       "key": "bindClass",
       "export": "bindClass",
       "preferredLocal": "bindClass",

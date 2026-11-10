@@ -162,6 +162,7 @@ pub enum DomBindingKind {
     Attribute(String),
     BooleanAttribute(String),
     Property(String),
+    CustomElement(String),
     Class,
     Style,
     Spread,

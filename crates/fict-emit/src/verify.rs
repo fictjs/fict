@@ -1635,6 +1635,12 @@ fn verify_helper_semantics(
                     (crate::DomBindingKind::Property(_), false) => {
                         *helper == RuntimeHelper::SetProp
                     }
+                    (crate::DomBindingKind::CustomElement(_), true) => {
+                        *helper == RuntimeHelper::BindCustomElementProp
+                    }
+                    (crate::DomBindingKind::CustomElement(_), false) => {
+                        *helper == RuntimeHelper::SetCustomElementProp
+                    }
                     (crate::DomBindingKind::Class, true) => *helper == RuntimeHelper::BindClass,
                     (crate::DomBindingKind::Class, false) => *helper == RuntimeHelper::SetClass,
                     (crate::DomBindingKind::Style, true) => *helper == RuntimeHelper::BindStyle,

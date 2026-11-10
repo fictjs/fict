@@ -2615,15 +2615,16 @@ describe('DOM Module', () => {
   })
 
   describe('Custom Elements', () => {
-    it('handles custom element property conversion', () => {
+    it('preserves unknown primitive custom element attributes', () => {
       const result = createElement({
         type: 'my-component',
         props: { 'my-prop': 'value' },
         key: undefined,
       })
 
-      // Custom elements have properties set via kebab-to-camel conversion
       expect(result).toBeInstanceOf(HTMLElement)
+      expect((result as Element).getAttribute('my-prop')).toBe('value')
+      expect((result as HTMLElement & { myProp?: string }).myProp).toBeUndefined()
     })
 
     it('handles custom elements with is attribute', () => {
@@ -2634,6 +2635,7 @@ describe('DOM Module', () => {
       })
 
       expect(result).toBeInstanceOf(HTMLButtonElement)
+      expect((result as Element).getAttribute('is')).toBe('my-button')
     })
   })
 
