@@ -717,3 +717,48 @@ for (const fineGrainedDom of [true, false]) {
     ])
   })
 }
+
+for (const fineGrainedDom of [true, false]) {
+  test(`bug 25: single-assignment var derives reactively without changing hoisted storage (fineGrainedDom=${fineGrainedDom})`, async () => {
+    const code = compile(
+      `
+      import { $state, render } from 'fict'
+      let root
+      function App() {
+        let count = $state(1), read = $state('')
+        let a = count * 2
+        var b = count * 2
+        const c = count * 2
+        const earlier = late
+        var late = 7
+        var duplicate = 1; var duplicate = 2
+        var changed = count * 3; changed = 9
+        const early = peek()
+        var hoisted = count * 5
+        function peek() { return hoisted }
+        return <div><button onClick={() => count++}>inc</button>
+          <p>{a}:{b}:{c}</p><b>{String(earlier)}:{late}:{duplicate}:{changed}</b>
+          <button id="read" onClick={() => { read = '' + b }}>read</button><u>{read}</u><small>{'' + early}:{hoisted}</small>
+        </div>
+      }
+      export function mount(container) { root = container; return render(() => <App />, root) }
+      export function observe() { return [root.querySelector('p').textContent, root.querySelector('b').textContent, root.querySelector('u').textContent, root.querySelector('small').textContent] }
+    `,
+      { fineGrainedDom },
+    )
+    const result = await executeDomCommonJs(code, {
+      mountExport: 'mount',
+      observeExport: 'observe',
+      steps: [
+        { kind: 'record', label: 'initial' },
+        { kind: 'click', selector: 'button' },
+        { kind: 'click', selector: '#read' },
+        { kind: 'record', label: 'updated' },
+      ],
+    })
+    assert.deepEqual(result, [
+      { label: 'initial', value: ['2:2:2', 'undefined:7:2:9', '', 'undefined:5'] },
+      { label: 'updated', value: ['4:4:4', 'undefined:7:2:9', '4', 'undefined:5'] },
+    ])
+  })
+}

@@ -30,11 +30,15 @@ console.log(count()) // ← getter call
 
 Any binding that depends on reactive state becomes a memo accessor by default, whether or not it flows to JSX, effects, events, or plain functions. The compiler may inline a safe, straight-line single-use memo when `optimize` and `inlineDerivedMemos` are enabled, but the semantics remain memoized. Set `inlineDerivedMemos: false` to preserve user-named implicit memos. If you need a concrete memo node regardless of optimization, use `$memo`.
 
-| Pattern               | Outcome                       |
-| --------------------- | ----------------------------- |
-| `const x = count`     | memo accessor (`x()`)         |
-| `const x = count * 2` | memo accessor                 |
-| `const x = a + b`     | memo accessor if a/b reactive |
+| Pattern               | Outcome                                                                                |
+| --------------------- | -------------------------------------------------------------------------------------- |
+| `const x = count`     | memo accessor (`x()`)                                                                  |
+| `const x = count * 2` | memo accessor                                                                          |
+| `const x = a + b`     | memo accessor if a/b reactive                                                          |
+| `let x = count * 2`   | memo accessor when not reassigned                                                      |
+| `var x = count * 2`   | memo accessor for an unconditional single declaration without pre-initialization reads |
+
+A `var` that can be read before initialization (including through a hoisted function), is redeclared or reassigned, or has a conditional initializer retains ordinary hoisted storage. Declare a derived value with `const` or `let` before its uses when you need reactive behavior in these cases.
 
 ### Example
 

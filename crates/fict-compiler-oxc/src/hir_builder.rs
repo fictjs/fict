@@ -4348,8 +4348,26 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                 })
                 .cloned()
                 .collect();
+            let mut declaration_counts = BTreeMap::new();
+            for declaration in owned_declarations
+                .iter()
+                .filter(|declaration| declaration.declaration_kind == DeclarationKind::Var)
+            {
+                for symbol in &declaration.bindings {
+                    *declaration_counts.entry(*symbol).or_insert(0_usize) += 1;
+                }
+            }
             for declaration in &owned_declarations {
-                inputs.extend(self.materialize_variable_declaration(fact.id, declaration));
+                let link_var = declaration.declaration_kind == DeclarationKind::Var
+                    && declaration.simple_binding.is_some_and(|symbol| {
+                        declaration_counts.get(&symbol) == Some(&1)
+                            && self.can_link_var_initializer(fact.id, declaration, symbol)
+                    });
+                inputs.extend(self.materialize_variable_declaration(
+                    fact.id,
+                    declaration,
+                    link_var,
+                ));
             }
 
             for (_, pattern) in opaque_patterns
@@ -5253,6 +5271,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
         &mut self,
         owner: FunctionId,
         declaration: &VariableDeclarationFact,
+        link_var: bool,
     ) -> Vec<ValueId> {
         let Some(initializer_span) = declaration.initializer_span else {
             return Vec::new();
@@ -5320,7 +5339,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             else {
                 continue;
             };
-            if declaration.declaration_kind == DeclarationKind::Var {
+            if declaration.declaration_kind == DeclarationKind::Var && !link_var {
                 self.functions[owner.as_usize()].blocks[block.as_usize()]
                     .instructions
                     .push(HirInstruction {
@@ -5342,6 +5361,55 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             }
         }
         materialized
+    }
+
+    fn can_link_var_initializer(
+        &self,
+        owner: FunctionId,
+        declaration: &VariableDeclarationFact,
+        symbol: SymbolId,
+    ) -> bool {
+        if declaration.declaration_kind != DeclarationKind::Var
+            || declaration.initializer_span.is_none()
+            || self.planned_block_for_span(owner, declaration.declarator_span)
+                != self.functions[owner.as_usize()].entry
+            || self
+                .control_flow_plans
+                .get(&owner)
+                .is_some_and(|plan| !plan.supported)
+        {
+            return false;
+        }
+        // An unconditional, single-assignment var is as derivable as a let.
+        // Keep hoisted/reassigned storage separate: a read before initialization
+        // must still yield undefined, including through hoisted functions.
+        self.semantic
+            .scoping()
+            .get_resolved_references(symbol)
+            .all(|reference| {
+                if reference.is_write() {
+                    return false;
+                }
+                if !reference.is_read() {
+                    return true;
+                }
+                let span = source_span(self.semantic.reference_span(reference));
+                if span.start() < declaration.declarator_span.end() {
+                    return false;
+                }
+                let mut reader = self.function_owner_for_span(span);
+                while reader != owner {
+                    let fact = &self.function_facts[reader.as_usize()];
+                    if reader == FunctionId::new(0)
+                        || !fact.flags.is_arrow
+                        || fact.span.start() < declaration.declarator_span.end()
+                    {
+                        return false;
+                    }
+                    reader = fact.parent;
+                }
+                true
+            })
     }
 
     fn link_lexical_declaration(
