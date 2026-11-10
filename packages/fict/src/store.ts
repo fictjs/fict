@@ -12,6 +12,7 @@
  * ```
  */
 
+import { batch, untrack } from '@fictjs/runtime'
 import { createSignal, type Signal } from '@fictjs/runtime/advanced'
 
 /** Function type for bound methods */
@@ -79,6 +80,18 @@ const PRESENCE_SIGNAL_CACHE = new WeakMap<object, PresenceSignalBucket>()
 const DESCRIPTOR_SIGNAL_CACHE = new WeakMap<object, DescriptorSignalBucket>()
 
 /** Cache of bound methods to preserve function identity across reads */
+const ARRAY_MUTATORS = new Set([
+  'push',
+  'pop',
+  'shift',
+  'unshift',
+  'splice',
+  'sort',
+  'reverse',
+  'fill',
+  'copyWithin',
+])
+
 const BOUND_METHOD_CACHE = new WeakMap<object, Map<string | symbol, BoundMethodEntry>>()
 
 /** Suppress defineProperty notifications caused by the set trap's Reflect.set receiver path. */
@@ -190,7 +203,7 @@ function triggerIteration(target: object): void {
   const signals = SIGNAL_CACHE.get(target)
   const signal = getCachedSignal(signals, ITERATE_KEY)
   if (signal) {
-    const current = signal() as number
+    const current = untrack(() => signal()) as number
     signal(current + 1)
   }
 }
@@ -381,7 +394,13 @@ export function $store<T extends object>(initialValue: T): T {
           return cached.bound
         }
 
-        const bound = (currentValue as AnyFn).bind(receiver ?? proxy)
+        const bound =
+          Array.isArray(target) &&
+          ARRAY_MUTATORS.has(String(prop)) &&
+          currentValue === Reflect.get(Array.prototype, prop)
+            ? (...args: unknown[]) =>
+                untrack(() => batch(() => Reflect.apply(currentValue, receiver ?? proxy, args)))
+            : (currentValue as AnyFn).bind(receiver ?? proxy)
         boundMethods.set(prop, { ref: currentValue as AnyFn, bound })
         return bound
       }
@@ -425,7 +444,7 @@ export function $store<T extends object>(initialValue: T): T {
       const releaseDefineSuppression = suppressDefineNotification(target, prop)
       let result: boolean
       try {
-        result = Reflect.set(target, prop, newValue, receiver)
+        result = untrack(() => Reflect.set(target, prop, newValue, receiver))
       } finally {
         releaseDefineSuppression()
       }
@@ -449,7 +468,7 @@ export function $store<T extends object>(initialValue: T): T {
         let nextValue = newValue
         if (descriptor && !('value' in descriptor)) {
           try {
-            nextValue = Reflect.get(target, prop, receiver)
+            nextValue = untrack(() => Reflect.get(target, prop, receiver))
           } catch {
             nextValue = newValue
           }

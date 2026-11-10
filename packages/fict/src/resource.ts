@@ -597,7 +597,7 @@ export function resource<T, Args = void>(
       cache.forEach(entry => {
         entry.controller?.abort()
         entry.source.dispose()
-        entry.version(entry.version() + 1)
+        entry.version(untrack(() => entry.version()) + 1)
         entry.expiresAt = Date.now() - 1
       })
       cache.clear()
@@ -608,7 +608,7 @@ export function resource<T, Args = void>(
     if (entry) {
       entry.controller?.abort()
       entry.source.dispose()
-      entry.version(entry.version() + 1)
+      entry.version(untrack(() => entry.version()) + 1)
       entry.expiresAt = Date.now() - 1
       cache.delete(normalizedKey)
     }
@@ -622,7 +622,7 @@ export function resource<T, Args = void>(
     const usableData = hasData(entry) && !isExpired(entry)
     if (!usableData) {
       entry.lastArgs = args
-      entry.lastVersion = entry.version()
+      entry.lastVersion = untrack(() => entry.version())
       const release = entry.retain?.()
       if (release) onCleanup(release)
       startFetch(cache, entry, args)
@@ -654,10 +654,10 @@ export function resource<T, Args = void>(
     entry.source.resolve(generation, nextValue)
     markExpiry(entry)
     entry.lastArgs = args
-    entry.lastVersion = entry.version()
+    entry.lastVersion = untrack(() => entry.version())
 
     if (options?.revalidate) {
-      entry.version(entry.version() + 1)
+      entry.version(untrack(() => entry.version()) + 1)
     }
   }
 
@@ -774,8 +774,8 @@ export function resource<T, Args = void>(
           return entry.errorProjection()
         },
         refresh: () => {
-          const entry = entryRef()
-          if (entry) entry.version(entry.version() + 1)
+          const entry = untrack(() => entryRef())
+          if (entry) entry.version(untrack(() => entry.version()) + 1)
         },
       }
     },
