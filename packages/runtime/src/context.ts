@@ -46,6 +46,7 @@
 
 import { createElement } from './dom'
 import { createRenderEffect } from './effect'
+import { claimNodes, hydrateFragment, isHydratingActive } from './hydration'
 import {
   createRootContext,
   destroyRoot,
@@ -194,8 +195,9 @@ export function createContext<T>(defaultValue: T): Context<T> {
     // Create DOM structure
     const markerOwnerDocument = hostRoot?.ownerDocument ?? document
     const fragment = markerOwnerDocument.createDocumentFragment()
-    const marker = markerOwnerDocument.createComment('fict:ctx')
-    fragment.appendChild(marker)
+    const hydrating = isHydratingActive()
+    let marker = markerOwnerDocument.createComment('fict:ctx')
+    if (!hydrating) fragment.appendChild(marker)
 
     const initialValue = untrack(() => props.value)
     const valueSignal = createSignal(initialValue)
@@ -318,27 +320,35 @@ export function createContext<T>(defaultValue: T): Context<T> {
     const unsetChildren = Symbol('fict.context.unset-children')
     let previousChildren: FictNode | typeof unsetChildren = unsetChildren
     let previousValue = initialValue
-    createRenderEffect(() => {
-      if (disposed) return
-      const nextValue = props.value
-      const children = props.children
-      const valueChanged = !Object.is(previousValue, nextValue)
-      const childrenChanged =
-        previousChildren === unsetChildren || !Object.is(previousChildren, children)
+    const initialize = () => {
+      createRenderEffect(() => {
+        if (disposed) return
+        const nextValue = props.value
+        const children = props.children
+        const valueChanged = !Object.is(previousValue, nextValue)
+        const childrenChanged =
+          previousChildren === unsetChildren || !Object.is(previousChildren, children)
 
-      previousValue = nextValue
-      previousChildren = children
-      getContextMap(providerRoot).get(id)?.write(nextValue)
+        previousValue = nextValue
+        previousChildren = children
+        getContextMap(providerRoot).get(id)?.write(nextValue)
 
-      // `useContext()` historically returned a setup-time snapshot and relied
-      // on Provider replay for updates. Keep that behavior for existing
-      // consumers, while accessor/effect-only trees retain their identity.
-      if (!childrenChanged && !(valueChanged && snapshotConsumerRootCount > 0)) return
+        // `useContext()` historically returned a setup-time snapshot and relied
+        // on Provider replay for updates. Keep that behavior for existing
+        // consumers, while accessor/effect-only trees retain their identity.
+        if (!childrenChanged && !(valueChanged && snapshotConsumerRootCount > 0)) return
 
-      // Rendering descendants must not make this effect subscribe to their
-      // signals or to the context value they consume.
-      untrack(() => renderChildren(children))
-    })
+        // Rendering descendants must not make this effect subscribe to their
+        // signals or to the context value they consume.
+        untrack(() => renderChildren(children))
+      })
+
+      if (hydrating) marker = claimNodes(marker, () => marker) as Comment
+    }
+    // Claim children and the trailing provider marker without moving live SSR
+    // nodes into a temporary fragment. Later value/children updates use marker.
+    if (hydrating) return hydrateFragment(markerOwnerDocument, initialize)
+    initialize()
 
     return fragment
   }

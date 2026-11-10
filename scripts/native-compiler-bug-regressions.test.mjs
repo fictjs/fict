@@ -298,3 +298,54 @@ for (const control of ['if', 'switch']) {
     ])
   })
 }
+
+for (const fineGrainedDom of [true, false]) {
+  test(`bug 34: context providers hydrate their live subtree (fineGrainedDom=${fineGrainedDom})`, async () => {
+    const code = compile(
+      `
+      import { $state, createContext, useContext, hydrate } from 'fict'
+      import { renderToString } from '@fictjs/ssr'
+      const Theme = createContext('default')
+      let root, preserved
+      const issues = []
+      function Leaf() { const theme = useContext(Theme); return ${fineGrainedDom ? '<span>leaf:{theme}</span>' : '<span>leaf:<em>{theme}</em></span>'} }
+      function App() {
+        let theme = $state('dark')
+        return <div><button onClick={() => { theme = 'light' }}>light</button>
+          <Theme.Provider value={theme}><Leaf/><b>static</b>
+            <Theme.Provider value="inner"><Leaf/></Theme.Provider>
+          </Theme.Provider><i>tail</i></div>
+      }
+      export function mount(container) {
+        root = container
+        root.innerHTML = renderToString(() => <App />)
+        const first = root.querySelector('span')
+        const dispose = hydrate(() => <App />, root, { strictHydration: true, onHydrationIssue: issue => { issues.push(issue.code) } })
+        preserved = root.querySelector('span') === first
+        return dispose
+      }
+      export function observe() { return { text: root.textContent, preserved, issues } }
+    `,
+      { fineGrainedDom },
+    )
+    const result = await executeDomCommonJs(code, {
+      mountExport: 'mount',
+      observeExport: 'observe',
+      steps: [
+        { kind: 'record', label: 'hydrated' },
+        { kind: 'click', selector: 'button' },
+        { kind: 'record', label: 'updated' },
+      ],
+    })
+    assert.deepEqual(result, [
+      {
+        label: 'hydrated',
+        value: { text: 'lightleaf:darkstaticleaf:innertail', preserved: true, issues: [] },
+      },
+      {
+        label: 'updated',
+        value: { text: 'lightleaf:lightstaticleaf:innertail', preserved: true, issues: [] },
+      },
+    ])
+  })
+}
