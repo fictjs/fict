@@ -839,6 +839,38 @@ export function setElementProperty(el: Element, key: string, value: unknown): vo
     else select.selectedIndex = -1
     return
   }
+  if (__fictIsSSR() && el.namespaceURI === 'http://www.w3.org/1999/xhtml') {
+    // These live properties are not consistently reflected by server DOMs
+    // (checked/selected/muted are also deliberately unreflected in browsers).
+    // SSR must encode their initial state in HTML before child setup, notably
+    // so option selection observes a select's multiple attribute.
+    const tag = el.localName
+    let attribute: string | undefined
+    if (tag === 'input' && (key === 'checked' || key === 'defaultChecked')) {
+      attribute = 'checked'
+    } else if (tag === 'option' && (key === 'selected' || key === 'defaultSelected')) {
+      attribute = 'selected'
+    } else if (
+      (tag === 'video' || tag === 'audio') &&
+      (key === 'muted' || key === 'defaultMuted')
+    ) {
+      attribute = 'muted'
+    } else if ((tag === 'input' || tag === 'textarea') && key === 'readOnly') {
+      attribute = 'readonly'
+    } else if ((tag === 'input' || tag === 'select') && key === 'multiple') {
+      attribute = 'multiple'
+    }
+    if (attribute) {
+      // linkedom's option.selected setter deselects siblings even for a
+      // multiple select or a false assignment. Its getter reads the attribute,
+      // so write the initial selection directly and let HTML parsing resolve
+      // single-select defaults in the browser.
+      if (tag !== 'option') (el as unknown as Record<string, unknown>)[key] = value
+      if (value) el.setAttribute(attribute, '')
+      else el.removeAttribute(attribute)
+      return
+    }
+  }
   ;(el as unknown as Record<string, unknown>)[key] = value
 }
 

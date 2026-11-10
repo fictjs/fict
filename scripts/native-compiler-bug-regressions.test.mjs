@@ -393,3 +393,61 @@ for (const Boundary of ['Suspense', 'ErrorBoundary']) {
     })
   }
 }
+
+for (const fineGrainedDom of [true, false]) {
+  test(`bug 35: SSR preserves boolean form and media properties (fineGrainedDom=${fineGrainedDom})`, async () => {
+    const code = compile(
+      `
+      import { $state } from 'fict'
+      import { renderToString } from '@fictjs/ssr'
+      let root
+      function App() {
+        let on = $state(true), off = $state(false)
+        return <div><input id="static" type="checkbox" checked readOnly />
+          <input id="dynamic" type="checkbox" checked={on} readOnly={on} />
+          <input id="off" type="checkbox" checked={off} readOnly={off} />
+          <select multiple><option value="a" selected>A</option><option value="b" selected={on}>B</option><option value="c" selected={off}>C</option></select>
+          <video id="muted" muted/><audio id="sound" muted={off}/>
+        </div>
+      }
+      export function mount(container) {
+        root = container; root.innerHTML = renderToString(() => <App />)
+        return () => root.replaceChildren()
+      }
+      export function observe() {
+        return {
+          inputs: Array.from(root.querySelectorAll('input'), input => [input.checked, input.readOnly]),
+          multiple: root.querySelector('select').multiple,
+          options: Array.from(root.querySelectorAll('option'), option => [option.selected, option.hasAttribute('selected')]),
+          media: [root.querySelector('video').hasAttribute('muted'), root.querySelector('audio').hasAttribute('muted')],
+        }
+      }
+    `,
+      { fineGrainedDom },
+    )
+    const result = await executeDomCommonJs(code, {
+      mountExport: 'mount',
+      observeExport: 'observe',
+      steps: [{ kind: 'record', label: 'server' }],
+    })
+    assert.deepEqual(result, [
+      {
+        label: 'server',
+        value: {
+          inputs: [
+            [true, true],
+            [true, true],
+            [false, false],
+          ],
+          multiple: true,
+          options: [
+            [true, true],
+            [true, true],
+            [false, false],
+          ],
+          media: [true, false],
+        },
+      },
+    ])
+  })
+}
