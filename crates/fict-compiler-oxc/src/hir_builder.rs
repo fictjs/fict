@@ -43039,7 +43039,15 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
                 Some(FictMacroKind::Effect | FictMacroKind::Memo | FictMacroKind::Async)
             );
         let selector = runtime_host == Some(runtime_callbacks::RuntimeCallbackHost::Selector);
-        let snapshot_arguments = if selector {
+        // Array.from synchronously copies the source. It does not retain the
+        // state container; element aliases still undergo mutation validation.
+        let copies_array_source = matches!(
+            call.callee.get_inner_expression(),
+            Expression::StaticMemberExpression(member) if member.property.name == "from"
+        ) && classify_global_state_factory_call(self.scoping, call)
+            == StateReceiverKind::Array
+            && self.is_non_escaping_safe_global_call(&call.callee, arguments);
+        let snapshot_arguments = if selector || copies_array_source {
             arguments.get(1..).unwrap_or_default()
         } else {
             arguments
@@ -45883,6 +45891,14 @@ fn classify_state_receiver_expression(
 ) -> StateReceiverKind {
     match expression.get_inner_expression() {
         Expression::ArrayExpression(_) => StateReceiverKind::Array,
+        Expression::ConditionalExpression(expression) => merge_state_receiver_kinds(
+            classify_state_receiver_expression(scoping, &expression.consequent),
+            classify_state_receiver_expression(scoping, &expression.alternate),
+        ),
+        Expression::LogicalExpression(expression) => merge_state_receiver_kinds(
+            classify_state_receiver_expression(scoping, &expression.left),
+            classify_state_receiver_expression(scoping, &expression.right),
+        ),
         Expression::ArrowFunctionExpression(_) | Expression::FunctionExpression(_) => {
             StateReceiverKind::Function
         }

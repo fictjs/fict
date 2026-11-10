@@ -266,11 +266,15 @@ pub fn classify_state_method_result(
             if matches!(
                 method,
                 "concat"
+                    | "copyWithin"
                     | "filter"
+                    | "fill"
                     | "flat"
                     | "flatMap"
                     | "map"
                     | "slice"
+                    | "reverse"
+                    | "sort"
                     | "toReversed"
                     | "toSorted"
                     | "toSpliced"
@@ -282,7 +286,17 @@ pub fn classify_state_method_result(
         StateReceiverKind::TypedArray
             if matches!(
                 method,
-                "filter" | "map" | "slice" | "subarray" | "toReversed" | "toSorted" | "with"
+                "copyWithin"
+                    | "fill"
+                    | "filter"
+                    | "map"
+                    | "reverse"
+                    | "slice"
+                    | "sort"
+                    | "subarray"
+                    | "toReversed"
+                    | "toSorted"
+                    | "with"
             ) =>
         {
             StateReceiverKind::TypedArray
@@ -456,6 +470,11 @@ mod tests {
             (StateReceiverKind::Map, "set"),
             (StateReceiverKind::Set, "add"),
             (StateReceiverKind::Array, "push"),
+            (StateReceiverKind::Array, "reverse"),
+            (StateReceiverKind::Array, "sort"),
+            (StateReceiverKind::Array, "fill"),
+            (StateReceiverKind::Array, "copyWithin"),
+            (StateReceiverKind::TypedArray, "reverse"),
             (StateReceiverKind::Date, "setTime"),
             (StateReceiverKind::Map, "map"),
             (StateReceiverKind::Unknown, "get"),
@@ -471,6 +490,11 @@ mod tests {
 
     #[test]
     fn preserves_result_families_only_for_matching_builtin_receivers() {
+        for receiver in [StateReceiverKind::Array, StateReceiverKind::TypedArray] {
+            for method in ["reverse", "sort", "fill", "copyWithin"] {
+                assert_eq!(classify_state_method_result(receiver, method), receiver);
+            }
+        }
         assert_eq!(
             classify_state_method_result(StateReceiverKind::Array, "map"),
             StateReceiverKind::Array

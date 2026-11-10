@@ -293,9 +293,6 @@ pub(super) fn certified_alias_calls(
         .iter()
         .filter_map(|call| {
             let place = call.callee_reference.as_ref()?;
-            let PlannedPlaceBase::Binding(symbol) = place.base else {
-                return None;
-            };
             let [
                 PlannedProjection::Static {
                     name,
@@ -303,6 +300,20 @@ pub(super) fn certified_alias_calls(
                 },
             ] = place.projections.as_slice()
             else {
+                return None;
+            };
+            if let PlannedPlaceBase::UnresolvedGlobal { name: owner, .. } = &place.base
+                && owner == "Array"
+                && matches!(name.as_str(), "from" | "of")
+            {
+                let path =
+                    StaticAliasPath::unresolved_global(owner.clone()).with_property(name.clone());
+                return aliases.path_is_intact(&path).then_some((
+                    (call.span.start(), call.span.end()),
+                    StateReceiverKind::Array,
+                ));
+            }
+            let PlannedPlaceBase::Binding(symbol) = place.base else {
                 return None;
             };
             let receiver = *receivers.get(&symbol)?;

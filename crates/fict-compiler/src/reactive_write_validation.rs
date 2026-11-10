@@ -1834,6 +1834,21 @@ impl WriteValidationContext<'_> {
         let Some(analysis) = self.analyses.get(function.id.as_usize()) else {
             return;
         };
+        // A shallow copy owns its container, but its elements can still refer to
+        // state. Only a write to the immediate fresh container is safe.
+        if place.projections.len() <= 1
+            && value_is_fresh_state_container(
+                self.identity,
+                function.id.as_usize(),
+                value,
+                &mut BTreeMap::new(),
+                &mut BTreeMap::new(),
+                &mut BTreeSet::new(),
+                &mut BTreeSet::new(),
+            )
+        {
+            return;
+        }
         if place.projections.len() <= 1
             && self.fresh_state_this_functions.contains(&function.id)
             && projected_alias_kind(
@@ -4337,13 +4352,22 @@ fn value_is_fresh_state_container(
                     visiting_values,
                     visiting_names,
                 ),
-                HirInstructionKind::Call(call) => call
-                    .callee_reference
-                    .as_ref()
-                    .and_then(|place| state_method_name(function, place))
-                    .is_some_and(|method| {
+                HirInstructionKind::Call(call) => {
+                    call.callee_reference.as_ref().is_some_and(|place| {
+                        let Some(method) = state_method_name(function, place) else {
+                            return false;
+                        };
+                        if let PlaceBase::Global(global) = place.base
+                            && place.projections.len() == 1
+                            && identity.hir.globals[global.as_usize()].name == "Array"
+                            && call.state_receiver_kind == StateReceiverKind::Array
+                            && matches!(method.as_str(), "from" | "of")
+                        {
+                            return true;
+                        }
                         state_method_returns_fresh_container(call.state_receiver_kind, &method)
-                    }),
+                    })
+                }
                 _ => false,
             }),
         _ => false,
@@ -4484,11 +4508,34 @@ fn state_derived_result_receiver_inner(
     if !visiting.insert(value) {
         return StateReceiverKind::Unknown;
     }
+    let result = state_derived_result_receiver_at(function, value, visiting);
+    visiting.remove(&value);
+    result
+}
+
+fn state_derived_result_receiver_at(
+    function: &HirFunction,
+    value: ValueId,
+    visiting: &mut BTreeSet<ValueId>,
+) -> StateReceiverKind {
     let Some(instruction) = function.instruction_for_result(value) else {
         return StateReceiverKind::Unknown;
     };
     let call = match &instruction.kind {
         HirInstructionKind::Array { .. } => return StateReceiverKind::Array,
+        HirInstructionKind::Conditional {
+            consequent,
+            alternate,
+            ..
+        } => {
+            let left = state_derived_result_receiver_inner(function, *consequent, visiting);
+            let right = state_derived_result_receiver_inner(function, *alternate, visiting);
+            return if left == right {
+                left
+            } else {
+                StateReceiverKind::Unknown
+            };
+        }
         HirInstructionKind::Literal(fict_hir::LiteralValue::String(_)) => {
             return StateReceiverKind::String;
         }

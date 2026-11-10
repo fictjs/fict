@@ -762,3 +762,104 @@ for (const fineGrainedDom of [true, false]) {
     ])
   })
 }
+
+for (const [update, expected] of [
+  ['[...items].reverse()', 'cab'],
+  ['[...items].sort()', 'abc'],
+  ['items.slice().reverse()', 'cab'],
+  ["[...items, 'd'].sort()", 'abcd'],
+  ['items.concat([]).reverse()', 'cab'],
+  ['items.map(x => x).reverse()', 'cab'],
+  ['Array.from(items).reverse()', 'cab'],
+]) {
+  test(`bug 5: copied array mutation retains array provenance (${update})`, async () => {
+    const code = compile(`
+      import { $state, render } from 'fict'
+      let root
+      function App() {
+        let items = $state(['b', 'a', 'c'])
+        return <div><button onClick={() => { items = ${update} }}>update</button>
+          <ul>{items.map(item => <li key={item}>{item}</li>)}</ul></div>
+      }
+      export function mount(container) { root = container; return render(() => <App />, root) }
+      export function observe() { return root.querySelector('ul').textContent }
+    `)
+    const result = await executeDomCommonJs(code, {
+      mountExport: 'mount',
+      observeExport: 'observe',
+      steps: [
+        { kind: 'record', label: 'initial' },
+        { kind: 'click', selector: 'button' },
+        { kind: 'record', label: 'updated' },
+      ],
+    })
+    assert.deepEqual(result, [
+      { label: 'initial', value: 'bac' },
+      { label: 'updated', value: expected },
+    ])
+  })
+}
+
+for (const flag of [true, false]) {
+  test(`bug 5: conditional array initialization retains array provenance (${flag})`, async () => {
+    const code = compile(`
+      import { $state, render } from 'fict'
+      let root
+      function App(props) {
+        let items = $state(props.flag ? ['b', 'a', 'c'] : ['b', 'a'])
+        return <div><button onClick={() => { items = items.toReversed() }}>update</button>
+          <ul>{items.map(item => <li key={item}>{item}</li>)}</ul></div>
+      }
+      export function mount(container) { root = container; return render(() => <App flag={${flag}}/>, root) }
+      export function observe() { return root.querySelector('ul').textContent }
+    `)
+    const result = await executeDomCommonJs(code, {
+      mountExport: 'mount',
+      observeExport: 'observe',
+      steps: [
+        { kind: 'record', label: 'initial' },
+        { kind: 'click', selector: 'button' },
+        { kind: 'record', label: 'updated' },
+      ],
+    })
+    assert.deepEqual(result, [
+      { label: 'initial', value: flag ? 'bac' : 'ba' },
+      { label: 'updated', value: flag ? 'cab' : 'ab' },
+    ])
+  })
+}
+
+for (const mutation of [
+  'items.reverse()',
+  'items.sort()',
+  'items.fill({ n: 2 })',
+  'items.copyWithin(0, 1)',
+  '[...items][0].n++',
+  'items.slice()[0].n++',
+  'Array.from(items)[0].n++',
+]) {
+  test(`bug 5: copying does not allow mutations of state identity (${mutation})`, () => {
+    const result = native.transformSync({
+      code: `import { $state } from 'fict'; export function App() { let items = $state([{ n: 1 }]); return <button onClick={() => { ${mutation} }}>update</button> }`,
+      filename: '/bug-5-mutation.tsx',
+      moduleKind: 'commonjs',
+      options: { dev: false, strictGuarantee: true },
+    })
+    assert.ok(
+      result.diagnostics.some(diagnostic => diagnostic.code === 'FICT-M'),
+      JSON.stringify(result.diagnostics),
+    )
+  })
+}
+
+test('bug 5: replaced array factories are not certified as fresh copies', () => {
+  for (const replacement of ['Array.from = x => x', 'const A = Array; A.from = x => x']) {
+    const result = native.transformSync({
+      code: `import { $state } from 'fict'; ${replacement}; export function App() { let items = $state(['a']); return <button onClick={() => { items = Array.from(items).reverse() }}>update</button> }`,
+      filename: '/bug-5-factory.tsx',
+      moduleKind: 'commonjs',
+      options: { dev: false, strictGuarantee: true },
+    })
+    assert.ok(result.diagnostics.some(diagnostic => diagnostic.severity === 'error'))
+  }
+})
