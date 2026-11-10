@@ -1,5 +1,6 @@
 export interface FictSSRSession {
   ssrEnabled: boolean
+  captureScopes: boolean
   scopeCounter: number
   scopeIdentifierPrefix: string
   scopeRegistry: Map<string, unknown>
@@ -26,6 +27,7 @@ let activeSSRSessionCount = 0
 export function __fictCreateSSRSession(): FictSSRSession {
   return {
     ssrEnabled: false,
+    captureScopes: false,
     scopeCounter: 0,
     scopeIdentifierPrefix: '',
     scopeRegistry: new Map(),
@@ -123,6 +125,7 @@ export function __fictIsSSRSessionActive(): boolean {
 }
 
 export function __fictResetSSRSession(session: FictSSRSession): void {
+  session.captureScopes = false
   session.scopeCounter = 0
   session.scopeIdentifierPrefix = ''
   session.scopeRegistry = new Map()

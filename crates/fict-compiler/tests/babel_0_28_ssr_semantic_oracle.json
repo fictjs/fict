@@ -34,87 +34,95 @@
           "framework": {
             "fineGrainedRootCount": 0,
             "handlerAttributeCount": 0,
-            "resumableHostCount": 1,
+            "resumableHostCount": 0,
             "snapshotScopeCount": 0,
             "snapshotVersion": null
           },
           "tree": [
             {
               "type": "element",
-              "localName": "fict-host",
+              "localName": "main",
               "namespaceURI": "http://www.w3.org/1999/xhtml",
               "attributes": [
-                ["data-fict-host", ""],
-                ["data-fict-t", "App"],
-                ["style", "display:contents"]
+                ["aria-label", "status <ready>"],
+                ["data-mode", "server"]
               ],
               "children": [
                 {
                   "type": "element",
-                  "localName": "main",
+                  "localName": "h1",
                   "namespaceURI": "http://www.w3.org/1999/xhtml",
+                  "attributes": [],
+                  "children": [
+                    {
+                      "type": "text",
+                      "value": "SSR & hydration"
+                    }
+                  ]
+                },
+                {
+                  "type": "element",
+                  "localName": "p",
+                  "namespaceURI": "http://www.w3.org/1999/xhtml",
+                  "attributes": [],
+                  "children": [
+                    {
+                      "type": "text",
+                      "value": "safe <script> & text"
+                    }
+                  ]
+                },
+                {
+                  "type": "element",
+                  "localName": "ul",
+                  "namespaceURI": "http://www.w3.org/1999/xhtml",
+                  "attributes": [],
+                  "children": [
+                    {
+                      "type": "element",
+                      "localName": "li",
+                      "namespaceURI": "http://www.w3.org/1999/xhtml",
+                      "attributes": [["data-id", "a&b"]],
+                      "children": [
+                        {
+                          "type": "text",
+                          "value": "Alpha & Beta"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "element",
+                      "localName": "li",
+                      "namespaceURI": "http://www.w3.org/1999/xhtml",
+                      "attributes": [["data-id", "quoted"]],
+                      "children": [
+                        {
+                          "type": "text",
+                          "value": "<quoted>"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "element",
+                  "localName": "svg",
+                  "namespaceURI": "http://www.w3.org/2000/svg",
                   "attributes": [
-                    ["aria-label", "status <ready>"],
-                    ["data-mode", "server"]
+                    ["aria-label", "shape"],
+                    ["viewBox", "0 0 10 10"]
                   ],
                   "children": [
                     {
                       "type": "element",
-                      "localName": "h1",
-                      "namespaceURI": "http://www.w3.org/1999/xhtml",
-                      "attributes": [],
-                      "children": [{ "type": "text", "value": "SSR & hydration" }]
-                    },
-                    {
-                      "type": "element",
-                      "localName": "p",
-                      "namespaceURI": "http://www.w3.org/1999/xhtml",
-                      "attributes": [],
-                      "children": [{ "type": "text", "value": "safe <script> & text" }]
-                    },
-                    {
-                      "type": "element",
-                      "localName": "ul",
-                      "namespaceURI": "http://www.w3.org/1999/xhtml",
-                      "attributes": [],
-                      "children": [
-                        {
-                          "type": "element",
-                          "localName": "li",
-                          "namespaceURI": "http://www.w3.org/1999/xhtml",
-                          "attributes": [["data-id", "a&b"]],
-                          "children": [{ "type": "text", "value": "Alpha & Beta" }]
-                        },
-                        {
-                          "type": "element",
-                          "localName": "li",
-                          "namespaceURI": "http://www.w3.org/1999/xhtml",
-                          "attributes": [["data-id", "quoted"]],
-                          "children": [{ "type": "text", "value": "<quoted>" }]
-                        }
-                      ]
-                    },
-                    {
-                      "type": "element",
-                      "localName": "svg",
+                      "localName": "circle",
                       "namespaceURI": "http://www.w3.org/2000/svg",
                       "attributes": [
-                        ["aria-label", "shape"],
-                        ["viewBox", "0 0 10 10"]
+                        ["cx", "4"],
+                        ["cy", "5"],
+                        ["r", "2"]
                       ],
-                      "children": [
-                        {
-                          "type": "element",
-                          "localName": "circle",
-                          "namespaceURI": "http://www.w3.org/2000/svg",
-                          "attributes": [
-                            ["cx", "4"],
-                            ["cy", "5"],
-                            ["r", "2"]
-                          ],
-                          "children": []
-                        }
-                      ]
+                      "children": []
                     }
                   ]
                 }
@@ -134,53 +142,54 @@
           "framework": {
             "fineGrainedRootCount": 0,
             "handlerAttributeCount": 0,
-            "resumableHostCount": 1,
+            "resumableHostCount": 0,
             "snapshotScopeCount": 0,
             "snapshotVersion": null
           },
           "tree": [
             {
               "type": "element",
-              "localName": "fict-host",
+              "localName": "article",
               "namespaceURI": "http://www.w3.org/1999/xhtml",
-              "attributes": [
-                ["data-fict-host", ""],
-                ["data-fict-t", "App"],
-                ["style", "display:contents"]
-              ],
+              "attributes": [["data-kind", "counter"]],
               "children": [
                 {
                   "type": "element",
-                  "localName": "article",
+                  "localName": "span",
                   "namespaceURI": "http://www.w3.org/1999/xhtml",
-                  "attributes": [["data-kind", "counter"]],
+                  "attributes": [],
                   "children": [
                     {
-                      "type": "element",
-                      "localName": "span",
-                      "namespaceURI": "http://www.w3.org/1999/xhtml",
-                      "attributes": [],
-                      "children": [{ "type": "text", "value": "value:2" }]
-                    },
-                    {
-                      "type": "element",
-                      "localName": "button",
-                      "namespaceURI": "http://www.w3.org/1999/xhtml",
-                      "attributes": [],
-                      "children": [{ "type": "text", "value": "add" }]
-                    },
-                    {
-                      "type": "element",
-                      "localName": "input",
-                      "namespaceURI": "http://www.w3.org/1999/xhtml",
-                      "attributes": [
-                        ["aria-label", "count"],
-                        ["value", "2"]
-                      ],
-                      "children": [],
-                      "formState": { "checked": false, "value": "2" }
+                      "type": "text",
+                      "value": "value:2"
                     }
                   ]
+                },
+                {
+                  "type": "element",
+                  "localName": "button",
+                  "namespaceURI": "http://www.w3.org/1999/xhtml",
+                  "attributes": [],
+                  "children": [
+                    {
+                      "type": "text",
+                      "value": "add"
+                    }
+                  ]
+                },
+                {
+                  "type": "element",
+                  "localName": "input",
+                  "namespaceURI": "http://www.w3.org/1999/xhtml",
+                  "attributes": [
+                    ["aria-label", "count"],
+                    ["value", "2"]
+                  ],
+                  "children": [],
+                  "formState": {
+                    "checked": false,
+                    "value": "2"
+                  }
                 }
               ]
             }
@@ -195,46 +204,47 @@
               "tree": [
                 {
                   "type": "element",
-                  "localName": "fict-host",
+                  "localName": "article",
                   "namespaceURI": "http://www.w3.org/1999/xhtml",
-                  "attributes": [
-                    ["data-fict-host", ""],
-                    ["data-fict-t", "App"],
-                    ["style", "display:contents"]
-                  ],
+                  "attributes": [["data-kind", "counter"]],
                   "children": [
                     {
                       "type": "element",
-                      "localName": "article",
+                      "localName": "span",
                       "namespaceURI": "http://www.w3.org/1999/xhtml",
-                      "attributes": [["data-kind", "counter"]],
+                      "attributes": [],
                       "children": [
                         {
-                          "type": "element",
-                          "localName": "span",
-                          "namespaceURI": "http://www.w3.org/1999/xhtml",
-                          "attributes": [],
-                          "children": [{ "type": "text", "value": "value:3" }]
-                        },
-                        {
-                          "type": "element",
-                          "localName": "button",
-                          "namespaceURI": "http://www.w3.org/1999/xhtml",
-                          "attributes": [],
-                          "children": [{ "type": "text", "value": "add" }]
-                        },
-                        {
-                          "type": "element",
-                          "localName": "input",
-                          "namespaceURI": "http://www.w3.org/1999/xhtml",
-                          "attributes": [
-                            ["aria-label", "count"],
-                            ["value", "2"]
-                          ],
-                          "children": [],
-                          "formState": { "checked": false, "value": "3" }
+                          "type": "text",
+                          "value": "value:3"
                         }
                       ]
+                    },
+                    {
+                      "type": "element",
+                      "localName": "button",
+                      "namespaceURI": "http://www.w3.org/1999/xhtml",
+                      "attributes": [],
+                      "children": [
+                        {
+                          "type": "text",
+                          "value": "add"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "element",
+                      "localName": "input",
+                      "namespaceURI": "http://www.w3.org/1999/xhtml",
+                      "attributes": [
+                        ["aria-label", "count"],
+                        ["value", "2"]
+                      ],
+                      "children": [],
+                      "formState": {
+                        "checked": false,
+                        "value": "3"
+                      }
                     }
                   ]
                 }
@@ -245,46 +255,47 @@
               "tree": [
                 {
                   "type": "element",
-                  "localName": "fict-host",
+                  "localName": "article",
                   "namespaceURI": "http://www.w3.org/1999/xhtml",
-                  "attributes": [
-                    ["data-fict-host", ""],
-                    ["data-fict-t", "App"],
-                    ["style", "display:contents"]
-                  ],
+                  "attributes": [["data-kind", "counter"]],
                   "children": [
                     {
                       "type": "element",
-                      "localName": "article",
+                      "localName": "span",
                       "namespaceURI": "http://www.w3.org/1999/xhtml",
-                      "attributes": [["data-kind", "counter"]],
+                      "attributes": [],
                       "children": [
                         {
-                          "type": "element",
-                          "localName": "span",
-                          "namespaceURI": "http://www.w3.org/1999/xhtml",
-                          "attributes": [],
-                          "children": [{ "type": "text", "value": "value:5" }]
-                        },
-                        {
-                          "type": "element",
-                          "localName": "button",
-                          "namespaceURI": "http://www.w3.org/1999/xhtml",
-                          "attributes": [],
-                          "children": [{ "type": "text", "value": "add" }]
-                        },
-                        {
-                          "type": "element",
-                          "localName": "input",
-                          "namespaceURI": "http://www.w3.org/1999/xhtml",
-                          "attributes": [
-                            ["aria-label", "count"],
-                            ["value", "2"]
-                          ],
-                          "children": [],
-                          "formState": { "checked": false, "value": "5" }
+                          "type": "text",
+                          "value": "value:5"
                         }
                       ]
+                    },
+                    {
+                      "type": "element",
+                      "localName": "button",
+                      "namespaceURI": "http://www.w3.org/1999/xhtml",
+                      "attributes": [],
+                      "children": [
+                        {
+                          "type": "text",
+                          "value": "add"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "element",
+                      "localName": "input",
+                      "namespaceURI": "http://www.w3.org/1999/xhtml",
+                      "attributes": [
+                        ["aria-label", "count"],
+                        ["value", "2"]
+                      ],
+                      "children": [],
+                      "formState": {
+                        "checked": false,
+                        "value": "5"
+                      }
                     }
                   ]
                 }
@@ -324,7 +335,12 @@
                   "localName": "button",
                   "namespaceURI": "http://www.w3.org/1999/xhtml",
                   "attributes": [["data-kind", "resumable-counter"]],
-                  "children": [{ "type": "text", "value": "resumed:5" }]
+                  "children": [
+                    {
+                      "type": "text",
+                      "value": "resumed:5"
+                    }
+                  ]
                 }
               ]
             }
@@ -352,7 +368,12 @@
                       "localName": "button",
                       "namespaceURI": "http://www.w3.org/1999/xhtml",
                       "attributes": [["data-kind", "resumable-counter"]],
-                      "children": [{ "type": "text", "value": "resumed:6" }]
+                      "children": [
+                        {
+                          "type": "text",
+                          "value": "resumed:6"
+                        }
+                      ]
                     }
                   ]
                 }
@@ -376,7 +397,12 @@
                       "localName": "button",
                       "namespaceURI": "http://www.w3.org/1999/xhtml",
                       "attributes": [["data-kind", "resumable-counter"]],
-                      "children": [{ "type": "text", "value": "resumed:7" }]
+                      "children": [
+                        {
+                          "type": "text",
+                          "value": "resumed:7"
+                        }
+                      ]
                     }
                   ]
                 }
@@ -400,9 +426,9 @@
       "expected": {
         "transport": "web-readable-stream",
         "chunks": [
-          "<fict-host data-fict-t=\"App\" data-fict-s=\"oracle-readable_stream_structure:s1\" style=\"display:contents\" data-fict-host=\"\"><section data-mode=\"stream\"><h2>stream &amp; structure</h2><ul><li data-id=\"first\">Alpha</li><li data-id=\"second\">Beta &lt;safe&gt;</li></ul></section></fict-host>"
+          "<!--fict:component-start--><section data-mode=\"stream\"><h2>stream &amp; structure</h2><ul><li data-id=\"first\">Alpha</li><li data-id=\"second\">Beta &lt;safe&gt;</li></ul></section><!--fict:component-end-->"
         ],
-        "html": "<fict-host data-fict-t=\"App\" data-fict-s=\"oracle-readable_stream_structure:s1\" style=\"display:contents\" data-fict-host=\"\"><section data-mode=\"stream\"><h2>stream &amp; structure</h2><ul><li data-id=\"first\">Alpha</li><li data-id=\"second\">Beta &lt;safe&gt;</li></ul></section></fict-host>"
+        "html": "<!--fict:component-start--><section data-mode=\"stream\"><h2>stream &amp; structure</h2><ul><li data-id=\"first\">Alpha</li><li data-id=\"second\">Beta &lt;safe&gt;</li></ul></section><!--fict:component-end-->"
       }
     },
     {
@@ -419,14 +445,14 @@
       "expected": {
         "transport": "node-pipeable-stream",
         "shellChunks": [
-          "<fict-host data-fict-t=\"App\" data-fict-s=\"oracle-pipeable_stream_suspense:s2\" style=\"display:contents\" data-fict-host=\"\"><main><h2>stream:suspense</h2><fict-host data-fict-t=\"Suspense\" data-fict-s=\"oracle-pipeable_stream_suspense:s1\" style=\"display:contents\" data-fict-host=\"\"><!--fict:suspense-start:oracle_pipeable_stream_suspense:s1--><em data-phase=\"loading\">loading:deferred</em><!--fict:suspense-end:oracle_pipeable_stream_suspense:s1--></fict-host><footer>end</footer></main></fict-host><script>(function(){var runtime=window.__FICT_STREAM;function walk(root,visit){var stack=[root];while(stack.length){var node=stack.pop();if(visit(node)===false)return false;var container=node.nodeType===1&&node.localName===\"template\"&&node.content?node.content:node;for(var child=container.lastChild;child;child=child.previousSibling)stack.push(child);}return true;}if(!runtime||typeof runtime.apply!==\"function\"){var cache=new Map();function findTemplate(id){var tpl=null;walk(document,function(n){if(n.nodeType===1&&n.localName===\"template\"&&n.content&&n.getAttribute(\"data-fict-suspense\")===id){tpl=n;return false;}});return tpl;}function find(id){var hit=cache.get(id);if(hit)return hit;var startMarker=\"fict:suspense-start:\"+id,endMarker=\"fict:suspense-end:\"+id;walk(document,function(n){if(n.nodeType!==8||n.data!==startMarker)return;var end=n.nextSibling;while(end&&(end.nodeType!==8||end.data!==endMarker))end=end.nextSibling;if(end){hit={start:n,end:end};return false;}});if(hit)cache.set(id,hit);return hit;}function apply(id){if(typeof id!==\"string\"||!id)return;var tpl=findTemplate(id);if(!tpl)return;var b=find(id);if(!b)return;var parent=b.start.parentNode;if(!parent||b.end.parentNode!==parent)return;var cursor=b.start.nextSibling;while(cursor&&cursor!==b.end)cursor=cursor.nextSibling;if(cursor!==b.end)return;var content=tpl.content;var ns=tpl.getAttribute(\"data-fict-patch-namespace\");if(ns){var tag=ns===\"svg\"?\"svg\":ns===\"mathml\"?\"math\":null;var wrapper=content.firstElementChild;if(!tag||!wrapper||wrapper.localName!==tag)return;var fragment=document.createDocumentFragment();while(wrapper.firstChild)fragment.appendChild(wrapper.firstChild);content=fragment;}var node=b.start.nextSibling;while(node&&node!==b.end){var next=node.nextSibling;node.parentNode&&node.parentNode.removeChild(node);node=next;}parent.insertBefore(content,b.end);tpl.parentNode&&tpl.parentNode.removeChild(tpl);}runtime={apply:apply};window.__FICT_STREAM=runtime;}})();</script>"
+          "<!--fict:component-start--><main><h2>stream:suspense</h2><!--fict:component-start--><!--fict:suspense-start:oracle_pipeable_stream_suspense:s1--><em data-phase=\"loading\">loading:deferred</em><!--fict:suspense-end:oracle_pipeable_stream_suspense:s1--><!--fict:component-end--><footer>end</footer></main><!--fict:component-end--><script>(function(){var runtime=window.__FICT_STREAM;function walk(root,visit){var stack=[root];while(stack.length){var node=stack.pop();if(visit(node)===false)return false;var container=node.nodeType===1&&node.localName===\"template\"&&node.content?node.content:node;for(var child=container.lastChild;child;child=child.previousSibling)stack.push(child);}return true;}if(!runtime||typeof runtime.apply!==\"function\"){var cache=new Map();function findTemplate(id){var tpl=null;walk(document,function(n){if(n.nodeType===1&&n.localName===\"template\"&&n.content&&n.getAttribute(\"data-fict-suspense\")===id){tpl=n;return false;}});return tpl;}function find(id){var hit=cache.get(id);if(hit)return hit;var startMarker=\"fict:suspense-start:\"+id,endMarker=\"fict:suspense-end:\"+id;walk(document,function(n){if(n.nodeType!==8||n.data!==startMarker)return;var end=n.nextSibling;while(end&&(end.nodeType!==8||end.data!==endMarker))end=end.nextSibling;if(end){hit={start:n,end:end};return false;}});if(hit)cache.set(id,hit);return hit;}function apply(id){if(typeof id!==\"string\"||!id)return;var tpl=findTemplate(id);if(!tpl)return;var b=find(id);if(!b)return;var parent=b.start.parentNode;if(!parent||b.end.parentNode!==parent)return;var cursor=b.start.nextSibling;while(cursor&&cursor!==b.end)cursor=cursor.nextSibling;if(cursor!==b.end)return;var content=tpl.content;var ns=tpl.getAttribute(\"data-fict-patch-namespace\");if(ns){var tag=ns===\"svg\"?\"svg\":ns===\"mathml\"?\"math\":null;var wrapper=content.firstElementChild;if(!tag||!wrapper||wrapper.localName!==tag)return;var fragment=document.createDocumentFragment();while(wrapper.firstChild)fragment.appendChild(wrapper.firstChild);content=fragment;}var node=b.start.nextSibling;while(node&&node!==b.end){var next=node.nextSibling;node.parentNode&&node.parentNode.removeChild(node);node=next;}parent.insertBefore(content,b.end);tpl.parentNode&&tpl.parentNode.removeChild(tpl);}runtime={apply:apply};window.__FICT_STREAM=runtime;}})();</script>"
         ],
         "chunks": [
-          "<fict-host data-fict-t=\"App\" data-fict-s=\"oracle-pipeable_stream_suspense:s2\" style=\"display:contents\" data-fict-host=\"\"><main><h2>stream:suspense</h2><fict-host data-fict-t=\"Suspense\" data-fict-s=\"oracle-pipeable_stream_suspense:s1\" style=\"display:contents\" data-fict-host=\"\"><!--fict:suspense-start:oracle_pipeable_stream_suspense:s1--><em data-phase=\"loading\">loading:deferred</em><!--fict:suspense-end:oracle_pipeable_stream_suspense:s1--></fict-host><footer>end</footer></main></fict-host><script>(function(){var runtime=window.__FICT_STREAM;function walk(root,visit){var stack=[root];while(stack.length){var node=stack.pop();if(visit(node)===false)return false;var container=node.nodeType===1&&node.localName===\"template\"&&node.content?node.content:node;for(var child=container.lastChild;child;child=child.previousSibling)stack.push(child);}return true;}if(!runtime||typeof runtime.apply!==\"function\"){var cache=new Map();function findTemplate(id){var tpl=null;walk(document,function(n){if(n.nodeType===1&&n.localName===\"template\"&&n.content&&n.getAttribute(\"data-fict-suspense\")===id){tpl=n;return false;}});return tpl;}function find(id){var hit=cache.get(id);if(hit)return hit;var startMarker=\"fict:suspense-start:\"+id,endMarker=\"fict:suspense-end:\"+id;walk(document,function(n){if(n.nodeType!==8||n.data!==startMarker)return;var end=n.nextSibling;while(end&&(end.nodeType!==8||end.data!==endMarker))end=end.nextSibling;if(end){hit={start:n,end:end};return false;}});if(hit)cache.set(id,hit);return hit;}function apply(id){if(typeof id!==\"string\"||!id)return;var tpl=findTemplate(id);if(!tpl)return;var b=find(id);if(!b)return;var parent=b.start.parentNode;if(!parent||b.end.parentNode!==parent)return;var cursor=b.start.nextSibling;while(cursor&&cursor!==b.end)cursor=cursor.nextSibling;if(cursor!==b.end)return;var content=tpl.content;var ns=tpl.getAttribute(\"data-fict-patch-namespace\");if(ns){var tag=ns===\"svg\"?\"svg\":ns===\"mathml\"?\"math\":null;var wrapper=content.firstElementChild;if(!tag||!wrapper||wrapper.localName!==tag)return;var fragment=document.createDocumentFragment();while(wrapper.firstChild)fragment.appendChild(wrapper.firstChild);content=fragment;}var node=b.start.nextSibling;while(node&&node!==b.end){var next=node.nextSibling;node.parentNode&&node.parentNode.removeChild(node);node=next;}parent.insertBefore(content,b.end);tpl.parentNode&&tpl.parentNode.removeChild(tpl);}runtime={apply:apply};window.__FICT_STREAM=runtime;}})();</script>",
-          "<template data-fict-suspense=\"oracle_pipeable_stream_suspense:s1\"><fict-host data-fict-t=\"Deferred\" data-fict-s=\"oracle-pipeable_stream_suspense:s3\" style=\"display:contents\" data-fict-host=\"\"><strong data-phase=\"ready\">ready:deferred</strong></fict-host></template><script>__FICT_STREAM.apply(\"oracle_pipeable_stream_suspense:s1\")</script>"
+          "<!--fict:component-start--><main><h2>stream:suspense</h2><!--fict:component-start--><!--fict:suspense-start:oracle_pipeable_stream_suspense:s1--><em data-phase=\"loading\">loading:deferred</em><!--fict:suspense-end:oracle_pipeable_stream_suspense:s1--><!--fict:component-end--><footer>end</footer></main><!--fict:component-end--><script>(function(){var runtime=window.__FICT_STREAM;function walk(root,visit){var stack=[root];while(stack.length){var node=stack.pop();if(visit(node)===false)return false;var container=node.nodeType===1&&node.localName===\"template\"&&node.content?node.content:node;for(var child=container.lastChild;child;child=child.previousSibling)stack.push(child);}return true;}if(!runtime||typeof runtime.apply!==\"function\"){var cache=new Map();function findTemplate(id){var tpl=null;walk(document,function(n){if(n.nodeType===1&&n.localName===\"template\"&&n.content&&n.getAttribute(\"data-fict-suspense\")===id){tpl=n;return false;}});return tpl;}function find(id){var hit=cache.get(id);if(hit)return hit;var startMarker=\"fict:suspense-start:\"+id,endMarker=\"fict:suspense-end:\"+id;walk(document,function(n){if(n.nodeType!==8||n.data!==startMarker)return;var end=n.nextSibling;while(end&&(end.nodeType!==8||end.data!==endMarker))end=end.nextSibling;if(end){hit={start:n,end:end};return false;}});if(hit)cache.set(id,hit);return hit;}function apply(id){if(typeof id!==\"string\"||!id)return;var tpl=findTemplate(id);if(!tpl)return;var b=find(id);if(!b)return;var parent=b.start.parentNode;if(!parent||b.end.parentNode!==parent)return;var cursor=b.start.nextSibling;while(cursor&&cursor!==b.end)cursor=cursor.nextSibling;if(cursor!==b.end)return;var content=tpl.content;var ns=tpl.getAttribute(\"data-fict-patch-namespace\");if(ns){var tag=ns===\"svg\"?\"svg\":ns===\"mathml\"?\"math\":null;var wrapper=content.firstElementChild;if(!tag||!wrapper||wrapper.localName!==tag)return;var fragment=document.createDocumentFragment();while(wrapper.firstChild)fragment.appendChild(wrapper.firstChild);content=fragment;}var node=b.start.nextSibling;while(node&&node!==b.end){var next=node.nextSibling;node.parentNode&&node.parentNode.removeChild(node);node=next;}parent.insertBefore(content,b.end);tpl.parentNode&&tpl.parentNode.removeChild(tpl);}runtime={apply:apply};window.__FICT_STREAM=runtime;}})();</script>",
+          "<template data-fict-suspense=\"oracle_pipeable_stream_suspense:s1\"><!--fict:component-start--><strong data-phase=\"ready\">ready:deferred</strong><!--fict:component-end--></template><script>__FICT_STREAM.apply(\"oracle_pipeable_stream_suspense:s1\")</script>"
         ],
-        "shellHtml": "<fict-host data-fict-t=\"App\" data-fict-s=\"oracle-pipeable_stream_suspense:s2\" style=\"display:contents\" data-fict-host=\"\"><main><h2>stream:suspense</h2><fict-host data-fict-t=\"Suspense\" data-fict-s=\"oracle-pipeable_stream_suspense:s1\" style=\"display:contents\" data-fict-host=\"\"><!--fict:suspense-start:oracle_pipeable_stream_suspense:s1--><em data-phase=\"loading\">loading:deferred</em><!--fict:suspense-end:oracle_pipeable_stream_suspense:s1--></fict-host><footer>end</footer></main></fict-host><script>(function(){var runtime=window.__FICT_STREAM;function walk(root,visit){var stack=[root];while(stack.length){var node=stack.pop();if(visit(node)===false)return false;var container=node.nodeType===1&&node.localName===\"template\"&&node.content?node.content:node;for(var child=container.lastChild;child;child=child.previousSibling)stack.push(child);}return true;}if(!runtime||typeof runtime.apply!==\"function\"){var cache=new Map();function findTemplate(id){var tpl=null;walk(document,function(n){if(n.nodeType===1&&n.localName===\"template\"&&n.content&&n.getAttribute(\"data-fict-suspense\")===id){tpl=n;return false;}});return tpl;}function find(id){var hit=cache.get(id);if(hit)return hit;var startMarker=\"fict:suspense-start:\"+id,endMarker=\"fict:suspense-end:\"+id;walk(document,function(n){if(n.nodeType!==8||n.data!==startMarker)return;var end=n.nextSibling;while(end&&(end.nodeType!==8||end.data!==endMarker))end=end.nextSibling;if(end){hit={start:n,end:end};return false;}});if(hit)cache.set(id,hit);return hit;}function apply(id){if(typeof id!==\"string\"||!id)return;var tpl=findTemplate(id);if(!tpl)return;var b=find(id);if(!b)return;var parent=b.start.parentNode;if(!parent||b.end.parentNode!==parent)return;var cursor=b.start.nextSibling;while(cursor&&cursor!==b.end)cursor=cursor.nextSibling;if(cursor!==b.end)return;var content=tpl.content;var ns=tpl.getAttribute(\"data-fict-patch-namespace\");if(ns){var tag=ns===\"svg\"?\"svg\":ns===\"mathml\"?\"math\":null;var wrapper=content.firstElementChild;if(!tag||!wrapper||wrapper.localName!==tag)return;var fragment=document.createDocumentFragment();while(wrapper.firstChild)fragment.appendChild(wrapper.firstChild);content=fragment;}var node=b.start.nextSibling;while(node&&node!==b.end){var next=node.nextSibling;node.parentNode&&node.parentNode.removeChild(node);node=next;}parent.insertBefore(content,b.end);tpl.parentNode&&tpl.parentNode.removeChild(tpl);}runtime={apply:apply};window.__FICT_STREAM=runtime;}})();</script>",
-        "html": "<fict-host data-fict-t=\"App\" data-fict-s=\"oracle-pipeable_stream_suspense:s2\" style=\"display:contents\" data-fict-host=\"\"><main><h2>stream:suspense</h2><fict-host data-fict-t=\"Suspense\" data-fict-s=\"oracle-pipeable_stream_suspense:s1\" style=\"display:contents\" data-fict-host=\"\"><!--fict:suspense-start:oracle_pipeable_stream_suspense:s1--><em data-phase=\"loading\">loading:deferred</em><!--fict:suspense-end:oracle_pipeable_stream_suspense:s1--></fict-host><footer>end</footer></main></fict-host><script>(function(){var runtime=window.__FICT_STREAM;function walk(root,visit){var stack=[root];while(stack.length){var node=stack.pop();if(visit(node)===false)return false;var container=node.nodeType===1&&node.localName===\"template\"&&node.content?node.content:node;for(var child=container.lastChild;child;child=child.previousSibling)stack.push(child);}return true;}if(!runtime||typeof runtime.apply!==\"function\"){var cache=new Map();function findTemplate(id){var tpl=null;walk(document,function(n){if(n.nodeType===1&&n.localName===\"template\"&&n.content&&n.getAttribute(\"data-fict-suspense\")===id){tpl=n;return false;}});return tpl;}function find(id){var hit=cache.get(id);if(hit)return hit;var startMarker=\"fict:suspense-start:\"+id,endMarker=\"fict:suspense-end:\"+id;walk(document,function(n){if(n.nodeType!==8||n.data!==startMarker)return;var end=n.nextSibling;while(end&&(end.nodeType!==8||end.data!==endMarker))end=end.nextSibling;if(end){hit={start:n,end:end};return false;}});if(hit)cache.set(id,hit);return hit;}function apply(id){if(typeof id!==\"string\"||!id)return;var tpl=findTemplate(id);if(!tpl)return;var b=find(id);if(!b)return;var parent=b.start.parentNode;if(!parent||b.end.parentNode!==parent)return;var cursor=b.start.nextSibling;while(cursor&&cursor!==b.end)cursor=cursor.nextSibling;if(cursor!==b.end)return;var content=tpl.content;var ns=tpl.getAttribute(\"data-fict-patch-namespace\");if(ns){var tag=ns===\"svg\"?\"svg\":ns===\"mathml\"?\"math\":null;var wrapper=content.firstElementChild;if(!tag||!wrapper||wrapper.localName!==tag)return;var fragment=document.createDocumentFragment();while(wrapper.firstChild)fragment.appendChild(wrapper.firstChild);content=fragment;}var node=b.start.nextSibling;while(node&&node!==b.end){var next=node.nextSibling;node.parentNode&&node.parentNode.removeChild(node);node=next;}parent.insertBefore(content,b.end);tpl.parentNode&&tpl.parentNode.removeChild(tpl);}runtime={apply:apply};window.__FICT_STREAM=runtime;}})();</script><template data-fict-suspense=\"oracle_pipeable_stream_suspense:s1\"><fict-host data-fict-t=\"Deferred\" data-fict-s=\"oracle-pipeable_stream_suspense:s3\" style=\"display:contents\" data-fict-host=\"\"><strong data-phase=\"ready\">ready:deferred</strong></fict-host></template><script>__FICT_STREAM.apply(\"oracle_pipeable_stream_suspense:s1\")</script>"
+        "shellHtml": "<!--fict:component-start--><main><h2>stream:suspense</h2><!--fict:component-start--><!--fict:suspense-start:oracle_pipeable_stream_suspense:s1--><em data-phase=\"loading\">loading:deferred</em><!--fict:suspense-end:oracle_pipeable_stream_suspense:s1--><!--fict:component-end--><footer>end</footer></main><!--fict:component-end--><script>(function(){var runtime=window.__FICT_STREAM;function walk(root,visit){var stack=[root];while(stack.length){var node=stack.pop();if(visit(node)===false)return false;var container=node.nodeType===1&&node.localName===\"template\"&&node.content?node.content:node;for(var child=container.lastChild;child;child=child.previousSibling)stack.push(child);}return true;}if(!runtime||typeof runtime.apply!==\"function\"){var cache=new Map();function findTemplate(id){var tpl=null;walk(document,function(n){if(n.nodeType===1&&n.localName===\"template\"&&n.content&&n.getAttribute(\"data-fict-suspense\")===id){tpl=n;return false;}});return tpl;}function find(id){var hit=cache.get(id);if(hit)return hit;var startMarker=\"fict:suspense-start:\"+id,endMarker=\"fict:suspense-end:\"+id;walk(document,function(n){if(n.nodeType!==8||n.data!==startMarker)return;var end=n.nextSibling;while(end&&(end.nodeType!==8||end.data!==endMarker))end=end.nextSibling;if(end){hit={start:n,end:end};return false;}});if(hit)cache.set(id,hit);return hit;}function apply(id){if(typeof id!==\"string\"||!id)return;var tpl=findTemplate(id);if(!tpl)return;var b=find(id);if(!b)return;var parent=b.start.parentNode;if(!parent||b.end.parentNode!==parent)return;var cursor=b.start.nextSibling;while(cursor&&cursor!==b.end)cursor=cursor.nextSibling;if(cursor!==b.end)return;var content=tpl.content;var ns=tpl.getAttribute(\"data-fict-patch-namespace\");if(ns){var tag=ns===\"svg\"?\"svg\":ns===\"mathml\"?\"math\":null;var wrapper=content.firstElementChild;if(!tag||!wrapper||wrapper.localName!==tag)return;var fragment=document.createDocumentFragment();while(wrapper.firstChild)fragment.appendChild(wrapper.firstChild);content=fragment;}var node=b.start.nextSibling;while(node&&node!==b.end){var next=node.nextSibling;node.parentNode&&node.parentNode.removeChild(node);node=next;}parent.insertBefore(content,b.end);tpl.parentNode&&tpl.parentNode.removeChild(tpl);}runtime={apply:apply};window.__FICT_STREAM=runtime;}})();</script>",
+        "html": "<!--fict:component-start--><main><h2>stream:suspense</h2><!--fict:component-start--><!--fict:suspense-start:oracle_pipeable_stream_suspense:s1--><em data-phase=\"loading\">loading:deferred</em><!--fict:suspense-end:oracle_pipeable_stream_suspense:s1--><!--fict:component-end--><footer>end</footer></main><!--fict:component-end--><script>(function(){var runtime=window.__FICT_STREAM;function walk(root,visit){var stack=[root];while(stack.length){var node=stack.pop();if(visit(node)===false)return false;var container=node.nodeType===1&&node.localName===\"template\"&&node.content?node.content:node;for(var child=container.lastChild;child;child=child.previousSibling)stack.push(child);}return true;}if(!runtime||typeof runtime.apply!==\"function\"){var cache=new Map();function findTemplate(id){var tpl=null;walk(document,function(n){if(n.nodeType===1&&n.localName===\"template\"&&n.content&&n.getAttribute(\"data-fict-suspense\")===id){tpl=n;return false;}});return tpl;}function find(id){var hit=cache.get(id);if(hit)return hit;var startMarker=\"fict:suspense-start:\"+id,endMarker=\"fict:suspense-end:\"+id;walk(document,function(n){if(n.nodeType!==8||n.data!==startMarker)return;var end=n.nextSibling;while(end&&(end.nodeType!==8||end.data!==endMarker))end=end.nextSibling;if(end){hit={start:n,end:end};return false;}});if(hit)cache.set(id,hit);return hit;}function apply(id){if(typeof id!==\"string\"||!id)return;var tpl=findTemplate(id);if(!tpl)return;var b=find(id);if(!b)return;var parent=b.start.parentNode;if(!parent||b.end.parentNode!==parent)return;var cursor=b.start.nextSibling;while(cursor&&cursor!==b.end)cursor=cursor.nextSibling;if(cursor!==b.end)return;var content=tpl.content;var ns=tpl.getAttribute(\"data-fict-patch-namespace\");if(ns){var tag=ns===\"svg\"?\"svg\":ns===\"mathml\"?\"math\":null;var wrapper=content.firstElementChild;if(!tag||!wrapper||wrapper.localName!==tag)return;var fragment=document.createDocumentFragment();while(wrapper.firstChild)fragment.appendChild(wrapper.firstChild);content=fragment;}var node=b.start.nextSibling;while(node&&node!==b.end){var next=node.nextSibling;node.parentNode&&node.parentNode.removeChild(node);node=next;}parent.insertBefore(content,b.end);tpl.parentNode&&tpl.parentNode.removeChild(tpl);}runtime={apply:apply};window.__FICT_STREAM=runtime;}})();</script><template data-fict-suspense=\"oracle_pipeable_stream_suspense:s1\"><!--fict:component-start--><strong data-phase=\"ready\">ready:deferred</strong><!--fict:component-end--></template><script>__FICT_STREAM.apply(\"oracle_pipeable_stream_suspense:s1\")</script>"
       }
     }
   ]

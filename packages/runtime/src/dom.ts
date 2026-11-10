@@ -46,6 +46,8 @@ import { __fictPushContext, __fictPopContext, __fictGetCurrentComponentId } from
 import {
   claimNodes,
   claimEagerComponentHost,
+  claimEagerComponentRange,
+  hydratedRangeFragment,
   hydrateFragment,
   claimResumableScopeHost,
   claimText,
@@ -55,6 +57,7 @@ import {
   isHydratingActive,
   suppressHydrationClaimsForPendingRepair,
   withHydration,
+  withHydrationRange,
   type HydrationIssueHandler,
 } from './hydration'
 import { syncInputValue } from './input-value'
@@ -82,6 +85,7 @@ import { runComponentRender } from './render-phase'
 import {
   __fictIsHydrating,
   __fictIsResumable,
+  __fictIsSSR,
   __fictRegisterScope,
   __fictEnterHydration,
   __fictExitHydration,
@@ -685,6 +689,13 @@ function createElementWithContext(
     const componentMeta = __fictGetComponentMeta(component)
     let hydrationRepairToken: object | null = null
     if (isHydratingActive() && !componentHostClaimed) {
+      const eagerRange = claimEagerComponentRange()
+      if (eagerRange) {
+        withHydrationRange(eagerRange.start.nextSibling, eagerRange.end, ownerDocument, () =>
+          createElementWithContext(node, namespace, ownerDocument, true),
+        )
+        return hydratedRangeFragment(eagerRange.start, eagerRange.end) as DOMElement
+      }
       if (componentMeta?.id) {
         const scopeHost = claimResumableScopeHost(componentMeta.id)
         if (scopeHost) return scopeHost as DOMElement
@@ -796,6 +807,15 @@ function createElementWithContext(
       if (hook && componentId !== undefined) {
         mountElements = collectComponentMountElements(componentRoot)
         annotateComponentElements(mountElements, componentId, componentName)
+      }
+      if (__fictIsSSR()) {
+        const range = ownerDocument.createDocumentFragment()
+        range.append(
+          ownerDocument.createComment('fict:component-start'),
+          componentRoot,
+          ownerDocument.createComment('fict:component-end'),
+        )
+        return range as DOMElement
       }
       restoreHydrationClaims()
       return finalizePendingHydrationRepair(hydrationRepairToken, componentRoot) as DOMElement

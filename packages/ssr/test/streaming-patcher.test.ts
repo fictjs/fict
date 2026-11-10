@@ -170,7 +170,10 @@ describe('@fictjs/ssr streaming patcher', () => {
         }
       }
 
-      const stream = renderToStream(() => ({ type: App, props: {} }), { mode: 'shell' })
+      const stream = renderToStream(() => ({ type: App, props: {} }), {
+        mode: 'shell',
+        includeSnapshot: true,
+      })
       const readAll = readReadableStream(stream)
       const rejected = expect(readAll).rejects.toThrow(
         new RegExp(`resumable <fict-host>.*${namespaceName}.*range-based scope anchors`, 'i'),
@@ -180,6 +183,67 @@ describe('@fictjs/ssr streaming patcher', () => {
       token.resolve()
 
       await rejected
+    },
+  )
+
+  it.each([
+    {
+      rootTag: 'svg',
+      childTag: 'circle',
+      fallbackTag: 'text',
+      namespace: 'http://www.w3.org/2000/svg',
+    },
+    {
+      rootTag: 'math',
+      childTag: 'mi',
+      fallbackTag: 'mtext',
+      namespace: 'http://www.w3.org/1998/Math/MathML',
+    },
+  ])(
+    'streams eager components transparently inside $rootTag',
+    async ({ rootTag, childTag, fallbackTag, namespace }) => {
+      const token = createSuspenseToken()
+      let ready = false
+      function Child(): FictNode {
+        if (!ready) throw token.token
+        return {
+          type: childTag,
+          props: { 'data-stream-child': '', children: childTag === 'mi' ? 'resolved' : undefined },
+        }
+      }
+      const stream = renderToStream(
+        () => ({
+          type: rootTag,
+          props: {
+            children: {
+              type: Suspense,
+              props: {
+                fallback: { type: fallbackTag, props: { children: 'pending' } },
+                children: { type: Child },
+              },
+            },
+          },
+        }),
+        { mode: 'shell' },
+      )
+      const readAll = readReadableStream(stream)
+      await Promise.resolve()
+      ready = true
+      token.resolve()
+      const output = await readAll
+      expect(output).not.toContain('<fict-host')
+      const win = parseHTML(output) as Window & typeof globalThis
+      const document = win.document as Document
+      const patch = document.querySelector('template[data-fict-suspense]')!
+      expect(patch.getAttribute('data-fict-patch-namespace')).toBe(
+        rootTag === 'svg' ? 'svg' : 'mathml',
+      )
+      applyStreamPatch(document, win, patch.getAttribute('data-fict-suspense')!)
+      expect(document.querySelector('[data-stream-child]')?.parentElement?.localName).toBe(rootTag)
+      // linkedom does not implement MathML parsing; HTML-parsed namespace and strict hydration
+      // coverage lives in the native compiler DOM regressions.
+      if (rootTag === 'svg')
+        expect(document.querySelector('[data-stream-child]')?.namespaceURI).toBe(namespace)
     },
   )
 
@@ -319,7 +383,7 @@ describe('@fictjs/ssr streaming patcher', () => {
           },
         },
       }),
-      { mode: 'shell' },
+      { mode: 'shell', includeSnapshot: true },
     )
 
     await expect(readReadableStream(stream)).rejects.toThrow(

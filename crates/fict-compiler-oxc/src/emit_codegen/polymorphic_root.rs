@@ -29,7 +29,14 @@ impl<'a> AstRewriter<'a, '_> {
             self.active_vnode_reactive_local = previous;
             return lowered;
         };
-        let Some(tag_name) = jsx_intrinsic_tag_name(&jsx) else {
+        // Fragment templates are parsed in HTML. Their individual roots must use
+        // the VNode namespace resolver when the transparent call-site is foreign.
+        let tag_name = if matches!(jsx, Expression::JSXFragment(_)) {
+            Some("span".to_owned())
+        } else {
+            jsx_intrinsic_tag_name(&jsx)
+        };
+        let Some(tag_name) = tag_name else {
             self.diagnostics.push(
                 emit_error(
                     "FICT-OXC-EMIT-NAMESPACE",

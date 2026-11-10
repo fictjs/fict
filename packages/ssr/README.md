@@ -81,6 +81,11 @@ import { App } from './App'
 const html = renderToString(() => <App />)
 ```
 
+Ordinary SSR uses transparent comment ranges for component boundaries, including components
+inside tables, selects, SVG and MathML. Eager hydration claims these ranges and reuses the
+server nodes. Explicit Preview snapshots still use `<fict-host>` boundaries and retain their
+documented parser-context restrictions.
+
 ### SSR with Resumability
 
 ```typescript

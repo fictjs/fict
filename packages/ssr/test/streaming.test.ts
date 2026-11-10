@@ -1716,11 +1716,13 @@ describe('@fictjs/ssr streaming', () => {
 
     const firstStream = renderToStream(() => ({ type: App, props: { child: FirstChild } }), {
       mode: 'shell',
+      includeSnapshot: true,
     })
     const firstRead = readReadableStream(firstStream)
 
     const secondStream = renderToStream(() => ({ type: App, props: { child: SecondChild } }), {
       mode: 'shell',
+      includeSnapshot: true,
     })
     const secondRead = readReadableStream(secondStream)
 

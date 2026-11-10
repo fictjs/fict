@@ -892,9 +892,10 @@ describe('List/Conditional/Fragment Combination Scenarios', () => {
     expect(html).not.toContain('__FICT_SNAPSHOT__')
     expect(html).not.toContain('application/json')
 
-    // Verify scope attributes are still present (SSR mode was active)
-    expect(html).toContain('<fict-host')
-    expect(html).toContain('data-fict-s=')
+    // Eager SSR uses transparent component ranges without Preview scope attributes.
+    expect(html).toContain('<!--fict:component-start-->')
+    expect(html).not.toContain('<fict-host')
+    expect(html).not.toContain('data-fict-s=')
   })
 
   it('renderToDocument with includeSnapshot:false does not leak SSR state', () => {
@@ -918,7 +919,7 @@ describe('List/Conditional/Fragment Combination Scenarios', () => {
     try {
       // Verify HTML is rendered correctly
       expect(result.html).toContain('42')
-      expect(result.html).toContain('<fict-host')
+      expect(result.html).toContain('<!--fict:component-start-->')
 
       // Verify no snapshot
       expect(result.html).not.toContain('__FICT_SNAPSHOT__')

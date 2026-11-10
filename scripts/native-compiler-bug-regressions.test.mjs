@@ -1735,3 +1735,63 @@ test('bug 14: R006 opt-out can retain a setup snapshot and is documented as unsu
       )
   }
 })
+
+for (const fineGrainedDom of [true, false]) {
+  test(`bug 10: eager SSR components preserve tables, options and foreign namespaces (fineGrainedDom=${fineGrainedDom})`, async () => {
+    const code = compile(
+      `
+      import {$state, hydrate} from 'fict'
+      import {renderToString} from '@fictjs/ssr'
+      let root, original, preserved, html
+      const issues=[]
+      function Cell(props){return <td>{props.n}</td>}
+      function Row(props){return <tr><Cell n={props.n}/></tr>}
+      function Opt(props){return <option value={props.n}>{props.n}</option>}
+      function Dot(props){return <><circle cx={props.n} cy="10" r="5"/><circle cx="20" cy="10" r="5"/></>}
+      function Fraction(props){return <><mi>{props.n}</mi><mi>2</mi></>}
+      function App(){let n=$state(1);return <div><button onClick={()=>n++}>inc</button>
+        <table><tbody><Row n={n}/></tbody></table>
+        <select value={n}><Opt n={n}/><Opt n={n+1}/></select>
+        <svg><Dot n={n}/></svg><math><mfrac><Fraction n={n}/></mfrac></math>
+      </div>}
+      export function mount(el){
+        root=el;html=renderToString(()=>({type:App}))
+        const explicit=renderToString(()=>({type:App}),{includeSnapshot:false})
+        if(html!==explicit)throw new Error('default and explicit eager output differ')
+        root.innerHTML=html
+        original=[...root.querySelectorAll('tr,td,option,circle,mi')]
+        const dispose=hydrate(()=>({type:App}),root,{strictHydration:true,onHydrationIssue:i=>issues.push(i.code)})
+        preserved=original.every((node,index)=>node===[...root.querySelectorAll('tr,td,option,circle,mi')][index])
+        return dispose
+      }
+      export function observe(){return {htmlHost:html.includes('<fict-host'),preserved,issues,cell:root.querySelector('td').textContent,options:[...root.querySelectorAll('option')].map(o=>[o.textContent,o.selected]),circle:[root.querySelector('circle').namespaceURI,root.querySelector('circle').getAttribute('cx')],fraction:[...root.querySelectorAll('mi')].map(m=>[m.namespaceURI,m.textContent])}}
+    `,
+      { fineGrainedDom },
+    )
+    const result = await executeDomCommonJs(code, {
+      mountExport: 'mount',
+      observeExport: 'observe',
+      steps: [
+        { kind: 'record', label: 'hydrated' },
+        { kind: 'click', selector: 'button' },
+        { kind: 'record', label: 'updated' },
+      ],
+    })
+    for (const [index, entry] of result.entries())
+      assert.deepEqual(entry.value, {
+        htmlHost: false,
+        preserved: true,
+        issues: [],
+        cell: String(index + 1),
+        options: [
+          [String(index + 1), true],
+          [String(index + 2), false],
+        ],
+        circle: ['http://www.w3.org/2000/svg', String(index + 1)],
+        fraction: [
+          ['http://www.w3.org/1998/Math/MathML', String(index + 1)],
+          ['http://www.w3.org/1998/Math/MathML', '2'],
+        ],
+      })
+  })
+}

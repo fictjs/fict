@@ -5997,7 +5997,7 @@ mod tests {
                 .code
                 .matches("resetKeys: __fictReactive(() => key())")
                 .count(),
-            2,
+            4,
             "{}",
             result.code
         );
@@ -6006,7 +6006,7 @@ mod tests {
                 .code
                 .matches("resetKeys: nonReactive(() => key())")
                 .count(),
-            2,
+            3,
             "{}",
             result.code
         );
@@ -7614,7 +7614,8 @@ mod tests {
 
         assert!(!result.has_errors(), "{:?}", result.diagnostics);
         assert_eq!(result.artifacts.len(), 3);
-        assert_eq!(result.code.matches("\"default\", \"pd\"").count(), 2);
+        // Both namespace paths reference the same two extracted handlers.
+        assert_eq!(result.code.matches("\"default\", \"pd\"").count(), 4);
         for handler in 0..=1 {
             assert!(
                 result.code.contains(&format!(

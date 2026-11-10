@@ -323,6 +323,11 @@ export function claimEagerComponentHost(): Element | null {
   return host
 }
 
+/** Eager SSR components use transparent ranges, including in tables and foreign content. */
+export function claimEagerComponentRange(): { start: Comment; end: Comment } | null {
+  return claimMarkerRange('fict:component-start', 'fict:component-end', 'component', false)
+}
+
 /** Claim a balanced server Suspense range without moving its live DOM. */
 export function claimSuspenseRange(): { start: Comment; end: Comment } | null {
   return claimMarkerRange('fict:suspense-start', 'fict:suspense-end', 'Suspense', true)

@@ -263,6 +263,10 @@ describe('direct runtime rendering with a permissive server DOM', () => {
   })
 })
 
+// These cases exercise the explicit Preview host protocol.
+const renderResumableToString: typeof renderToString = (view, options = {}) =>
+  renderToString(view, { includeSnapshot: true, ...options })
+
 describe('resumable host HTML parser context validation', () => {
   it.each([
     'table',
@@ -319,7 +323,7 @@ describe('resumable host HTML parser context validation', () => {
     }
 
     expect(() =>
-      renderToString(() => ({
+      renderResumableToString(() => ({
         type: 'table',
         props: {
           children: {
@@ -336,7 +340,7 @@ describe('resumable host HTML parser context validation', () => {
       return { type: 'button', props: { children: 'safe' } }
     }
 
-    const html = renderToString(() => ({
+    const html = renderResumableToString(() => ({
       type: 'table',
       props: {
         children: {
@@ -398,7 +402,7 @@ describe('resumable host HTML parser context validation', () => {
     }
 
     expect(() =>
-      renderToString(() => ({
+      renderResumableToString(() => ({
         type: 'p',
         props: { children: { type: Block, props: {} } },
       })),
@@ -520,7 +524,7 @@ describe('host-sensitive HTML direct-child validation', () => {
       return output
     }
 
-    return renderToString(() => ({
+    return renderResumableToString(() => ({
       type: contextTag,
       props: { children: { type: Content, props: {} } },
     }))
@@ -681,7 +685,7 @@ describe('HTML void element child validation', () => {
     }
 
     expect(() =>
-      renderToString(() => ({
+      renderResumableToString(() => ({
         type: 'input',
         props: { children: { type: LostChild, props: {} } },
       })),
@@ -722,7 +726,7 @@ describe('foreign-namespace resumable host validation', () => {
     }
 
     expect(() =>
-      renderToString(() => ({
+      renderResumableToString(() => ({
         type: 'svg',
         props: {
           viewBox: '0 0 20 20',
@@ -753,7 +757,7 @@ describe('foreign-namespace resumable host validation', () => {
     }
 
     expect(() =>
-      renderToString(() => ({
+      renderResumableToString(() => ({
         type: 'math',
         props: {
           children: {
@@ -770,7 +774,7 @@ describe('foreign-namespace resumable host validation', () => {
       return { type: 'div', props: { children: 'HTML island' } }
     }
 
-    const html = renderToString(() => ({
+    const html = renderResumableToString(() => ({
       type: 'svg',
       props: {
         children: {
@@ -789,7 +793,7 @@ describe('foreign-namespace resumable host validation', () => {
       return { type: 'div', props: { children: 'HTML island' } }
     }
 
-    const html = renderToString(() => ({
+    const html = renderResumableToString(() => ({
       type: 'svg',
       props: {
         children: {
@@ -810,7 +814,7 @@ describe('foreign-namespace resumable host validation', () => {
         return { type: 'span', props: { children: 'HTML island' } }
       }
 
-      const html = renderToString(() => ({
+      const html = renderResumableToString(() => ({
         type: 'math',
         props: {
           children: {
@@ -832,7 +836,7 @@ describe('foreign-namespace resumable host validation', () => {
         return { type: 'span', props: { children: 'HTML island' } }
       }
 
-      const html = renderToString(() => ({
+      const html = renderResumableToString(() => ({
         type: 'math',
         props: {
           children: {
@@ -855,7 +859,7 @@ describe('foreign-namespace resumable host validation', () => {
       }
 
       expect(() =>
-        renderToString(() => ({
+        renderResumableToString(() => ({
           type: 'math',
           props: {
             children: {
@@ -874,7 +878,7 @@ describe('foreign-namespace resumable host validation', () => {
     }
 
     expect(() =>
-      renderToString(() => ({
+      renderResumableToString(() => ({
         type: 'math',
         props: {
           children: {

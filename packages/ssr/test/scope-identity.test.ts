@@ -122,8 +122,8 @@ describe('@fictjs/ssr resumable scope identity', () => {
   })
 
   it('assigns a unique default namespace to independent string renders', () => {
-    const first = renderToString(view)
-    const second = renderToString(view)
+    const first = renderToString(view, { includeSnapshot: true })
+    const second = renderToString(view, { includeSnapshot: true })
     const firstId = first.match(/data-fict-s="([^"]+)"/)?.[1]
     const secondId = second.match(/data-fict-s="([^"]+)"/)?.[1]
 

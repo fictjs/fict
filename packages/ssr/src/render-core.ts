@@ -256,7 +256,7 @@ function renderToDocumentInSession(
   // Always enable SSR mode during server rendering.
   // This ensures SSR-specific code paths (list rendering, etc.) work correctly
   // regardless of whether state snapshots are included.
-  __fictEnableSSR()
+  __fictEnableSSR(includeSnapshot)
   __fictSetSSRScopeIdentifierPrefix(scopeIdentifierPrefix)
 
   let dom: SSRDom
@@ -984,7 +984,7 @@ function startStreamingRenderInSession(
 
   try {
     validateExternalHeadSnapshotCsp(resolvedOptions, includeSnapshot, mode)
-    __fictEnableSSR()
+    __fictEnableSSR(includeSnapshot)
     __fictSetSSRScopeIdentifierPrefix(scopeIdentifierPrefix)
     __fictSetSSRStreamHooks(hooks)
 

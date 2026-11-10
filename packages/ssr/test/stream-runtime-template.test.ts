@@ -74,7 +74,9 @@ describe('@fictjs/ssr stream runtime template boundaries', () => {
     }
 
     await expect(
-      readReadableStream(renderToStream(() => ({ type: App, props: {} }), { mode: 'shell' })),
+      readReadableStream(
+        renderToStream(() => ({ type: App, props: {} }), { mode: 'shell', includeSnapshot: true }),
+      ),
     ).rejects.toThrowError(/Cannot serialize <template> content containing a resumable scope/)
   })
 

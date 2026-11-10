@@ -267,10 +267,11 @@ function resetSSRTrackingState(session = getSSRSession()): void {
   disposeResumedScopes(resumedScopes.keys())
 }
 
-export function __fictEnableSSR(): void {
+export function __fictEnableSSR(captureScopes = true): void {
   const session = getSSRSession()
   resetSSRTrackingState(session)
   session.ssrEnabled = true
+  session.captureScopes = captureScopes
 }
 
 export function __fictDisableSSR(): void {
@@ -592,7 +593,8 @@ function detachResumedScopeEntry(entry: ResumedScopeEntry): void {
 }
 
 export function __fictIsResumable(): boolean {
-  return getSSRSession().ssrEnabled || resumableEnabled
+  const session = getSSRSession()
+  return session.ssrEnabled ? session.captureScopes : resumableEnabled
 }
 
 export function __fictIsSSR(): boolean {

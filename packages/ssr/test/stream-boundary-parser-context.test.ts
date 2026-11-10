@@ -82,16 +82,6 @@ async function expectDeferredPatchRejection(
   }
 }
 
-function unwrapResolvedHost(container: Element): void {
-  const host = container.querySelector('fict-host[data-fict-host]')
-  if (!host?.parentNode) {
-    throw new Error('Expected the resolved component host before streaming serialization.')
-  }
-  const parent = host.parentNode
-  while (host.firstChild) parent.insertBefore(host.firstChild, host)
-  parent.removeChild(host)
-}
-
 describe('streaming boundary HTML parser context validation', () => {
   it.each([
     'iframe',
@@ -241,7 +231,6 @@ describe('streaming boundary HTML parser context validation', () => {
         type: 'tr',
         props: { children: { type: 'td', props: { children: 'resolved' } } },
       },
-      () => unwrapResolvedHost(container),
     )
     const stream = renderToStream(
       () => ({ type: 'table', props: { children: boundary.render() } }),
@@ -272,7 +261,6 @@ describe('streaming boundary HTML parser context validation', () => {
         props: { children: { type: 'td', props: { children: 'pending' } } },
       },
       { type: 'td', props: { children: 'resolved' } },
-      () => unwrapResolvedHost(container),
     )
     const stream = renderToStream(
       () => ({
