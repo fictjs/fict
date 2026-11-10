@@ -1,4 +1,5 @@
 import { isReactive, setEventErrorRoot } from './binding'
+import { readBoundaryChildren } from './boundary-children'
 import { createElement } from './dom'
 import { createEffect } from './effect'
 import {
@@ -224,7 +225,7 @@ export function ErrorBoundary(props: ErrorBoundaryProps): FictNode {
   reset = () => {
     if (disposing || disposed) return
     renderingFallback = false
-    renderValue(props.children ?? null)
+    renderValue(readBoundaryChildren(props))
   }
 
   registerRootCleanup(() => {
@@ -249,7 +250,7 @@ export function ErrorBoundary(props: ErrorBoundaryProps): FictNode {
   // Register ownership before the initial render. A successful fallback can
   // still be followed by a throwing `onError`; in that case construction
   // aborts and the host root must be able to tear the fallback subtree down.
-  renderValue(props.children ?? null)
+  renderValue(readBoundaryChildren(props))
 
   withRootContext(boundaryRoot, () => {
     registerErrorHandler(err => {
@@ -267,7 +268,7 @@ export function ErrorBoundary(props: ErrorBoundaryProps): FictNode {
       if (resetKeysChanged(prev, next)) {
         prev = next
         renderingFallback = false
-        renderValue(props.children ?? null)
+        renderValue(readBoundaryChildren(props))
       } else {
         prev = next
       }

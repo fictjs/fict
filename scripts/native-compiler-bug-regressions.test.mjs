@@ -349,3 +349,47 @@ for (const fineGrainedDom of [true, false]) {
     ])
   })
 }
+
+for (const Boundary of ['Suspense', 'ErrorBoundary']) {
+  for (const fineGrainedDom of [true, false]) {
+    test(`bug 23: ${Boundary} direct children remain reactive (fineGrainedDom=${fineGrainedDom})`, async () => {
+      const code = compile(
+        `
+        import { $state, render, ${Boundary} } from 'fict'
+        let root
+        function A() { return <b>A</b> }
+        function B() { return <b>B</b> }
+        function App() {
+          let n = $state(1), items = $state(['x'])
+          return <div><button onClick={() => { n++; items = [...items, 'y' + n] }}>inc</button>
+            <p><${Boundary} fallback="fallback">{n}</${Boundary}></p>
+            <p><${Boundary} fallback="fallback">{items.map(item => <span key={item}>{item}</span>)}</${Boundary}></p>
+            <p><${Boundary} fallback="fallback">{n % 2 ? <A/> : <B/>}</${Boundary}></p>
+            <p><${Boundary} fallback="fallback">{n % 2 > 0 && <i>shown</i>}</${Boundary}></p>
+            <p><${Boundary} fallback="fallback"><span>{n}</span></${Boundary}></p>
+          </div>
+        }
+        export function mount(container) { root = container; return render(() => <App />, root) }
+        export function observe() { return Array.from(root.querySelectorAll('p'), element => element.textContent) }
+      `,
+        { fineGrainedDom },
+      )
+      const result = await executeDomCommonJs(code, {
+        mountExport: 'mount',
+        observeExport: 'observe',
+        steps: [
+          { kind: 'record', label: 'initial' },
+          { kind: 'click', selector: 'button' },
+          { kind: 'record', label: 'updated' },
+          { kind: 'click', selector: 'button' },
+          { kind: 'record', label: 'again' },
+        ],
+      })
+      assert.deepEqual(result, [
+        { label: 'initial', value: ['1', 'x', 'A', 'shown', '1'] },
+        { label: 'updated', value: ['2', 'xy2', 'B', '', '2'] },
+        { label: 'again', value: ['3', 'xy2y3', 'A', 'shown', '3'] },
+      ])
+    })
+  }
+}

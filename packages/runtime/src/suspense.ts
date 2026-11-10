@@ -1,5 +1,6 @@
 import { isAsyncPending } from './async-state'
 import { isReactive } from './binding'
+import { readBoundaryChildren } from './boundary-children'
 import { createElement } from './dom'
 import { isCommentLike } from './dom-guards'
 import { createEffect } from './effect'
@@ -467,7 +468,7 @@ export function Suspense(props: SuspenseProps): FictNode {
                 // Directly render children instead of using switchView
                 // Retain completed requests across another suspended replay.
                 // Release only after the entire view has attached live readers.
-                renderView(props.children ?? null)
+                renderView(readBoundaryChildren(props))
                 // Rendering can immediately reveal another token. Only settle the
                 // boundary after checking the live state produced by that render.
                 if (isSettledInEpoch(tokenEpoch)) {
@@ -550,7 +551,7 @@ export function Suspense(props: SuspenseProps): FictNode {
 
   // Register ownership before rendering children, which can synchronously
   // suspend, fail, or destroy the host while this boundary is initializing.
-  renderView(props.children ?? null)
+  renderView(readBoundaryChildren(props))
   if (!parked) flushDeferredMounts(mountBoundary)
 
   if (props.resetKeys !== undefined) {
@@ -567,7 +568,7 @@ export function Suspense(props: SuspenseProps): FictNode {
         pending(0)
         resolvedOnce = false
         // Directly render children instead of using switchView
-        renderView(props.children ?? null)
+        renderView(readBoundaryChildren(props))
         if (
           isSettledInEpoch(resetEpoch) &&
           streamPending &&
