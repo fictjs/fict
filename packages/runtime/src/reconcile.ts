@@ -1,3 +1,5 @@
+import { syncSelectValue } from './select-value'
+
 /**
  * Fict DOM Reconciliation
  *
@@ -140,6 +142,7 @@ export default function reconcileArrays(parentNode: ParentNode, a: Node[], b: No
       }
     }
   }
+  syncSelectValue(parentNode)
 }
 
 /**

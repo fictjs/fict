@@ -60,6 +60,7 @@ import { toNodeArray, removeNodes, insertNodesBefore, takeHydratedInsertStart } 
 import { runOutsideComponentRender } from './render-phase'
 import { __fictIsHydrating, __fictIsSSR } from './resume'
 import { batch } from './scheduler'
+import { registerSelectValueSetter, syncSelectValue } from './select-value'
 import {
   computed,
   signal,
@@ -527,6 +528,7 @@ export function setText(textNode: Text, value: unknown): void {
   cache[TEXT_CACHE] = next
   if (textNode.data !== next) {
     textNode.data = next
+    syncSelectValue(textNode)
   }
 }
 
@@ -541,6 +543,7 @@ export function setTextContent(el: Element, value: unknown): void {
   cache[TEXT_CACHE] = next
   if (el.textContent !== next) {
     el.textContent = next
+    syncSelectValue(el)
   }
 }
 
@@ -742,6 +745,7 @@ export function setAttr(el: Element, key: string, value: unknown): void {
   } else {
     el.setAttribute(key, String(value))
   }
+  if (key === 'value' || key === 'selected') syncSelectValue(el)
 }
 
 function isAttributeCurrent(
@@ -826,23 +830,35 @@ export function setElementProperty(el: Element, key: string, value: unknown): vo
   // every duplicate value. Apply the browser's first-match algorithm directly
   // so client and SSR output agree.
   if (key === 'value' && isHTMLSelect(el)) {
-    const select = el
-    // Trust a conforming platform setter, including for customized options.
-    // Getter-only or duplicate-selecting server DOMs fall through to repair.
-    if (
-      Reflect.set(select, 'value', value) &&
-      (hasOwn.call(select, 'selectedOptions') || select.selectedOptions.length < 2)
-    ) {
-      return
-    }
-    const expected = '' + ((value ?? '') as string)
-    const options = Array.from(select.options)
-    const matched = options.find(option => option.value === expected)
-    for (const option of options) option.selected = false
-    if (matched) matched.selected = true
-    else select.selectedIndex = -1
+    const apply = () => applySelectValue(el, value)
+    registerSelectValueSetter(el, apply)
+    apply()
     return
   }
+  setOrdinaryElementProperty(el, key, value)
+  if (el.localName === 'option' || key === 'textContent' || key === 'innerHTML') {
+    syncSelectValue(el)
+  }
+}
+
+function applySelectValue(select: HTMLSelectElement, value: unknown): void {
+  // Trust a conforming platform setter, including for customized options.
+  // Getter-only or duplicate-selecting server DOMs fall through to repair.
+  if (
+    Reflect.set(select, 'value', value) &&
+    (hasOwn.call(select, 'selectedOptions') || select.selectedOptions.length < 2)
+  ) {
+    return
+  }
+  const expected = '' + ((value ?? '') as string)
+  const options = Array.from(select.options)
+  const matched = options.find(option => option.value === expected)
+  for (const option of options) option.selected = false
+  if (matched) matched.selected = true
+  else select.selectedIndex = -1
+}
+
+function setOrdinaryElementProperty(el: Element, key: string, value: unknown): void {
   if (__fictIsSSR() && el.namespaceURI === 'http://www.w3.org/1999/xhtml') {
     // These live properties are not consistently reflected by server DOMs
     // (checked/selected/muted are also deliberately unreflected in browsers).
@@ -1289,6 +1305,7 @@ export function insert(
       currentText = (parentNode.ownerDocument ?? markerOwnerDocument).createTextNode(textValue)
     } else if (currentText.data !== textValue) {
       currentText.data = textValue
+      syncSelectValue(currentText)
     }
 
     if (!shouldInsert) {
@@ -1592,6 +1609,7 @@ export function insertBetween(
       currentText = (parentNode?.ownerDocument ?? markerOwnerDocument).createTextNode(textValue)
     } else if (currentText.data !== textValue) {
       currentText.data = textValue
+      syncSelectValue(currentText)
     }
 
     if (!shouldInsert) {
@@ -2606,6 +2624,7 @@ function bindAssignedChildren(
       clearCurrentNodes()
       if (node.childNodes.length > 0) {
         node.replaceChildren()
+        syncSelectValue(node)
       }
       initialHydrating = false
       return
@@ -2628,6 +2647,7 @@ function bindAssignedChildren(
     const textNode = currentText ?? (node.ownerDocument ?? document).createTextNode(textValue)
     if (textNode.data !== textValue) {
       textNode.data = textValue
+      syncSelectValue(textNode)
     }
 
     if (currentNodes.length === 1 && currentNodes[0] === textNode) {
@@ -2638,6 +2658,7 @@ function bindAssignedChildren(
     clearCurrentNodes()
 
     node.replaceChildren(textNode)
+    syncSelectValue(node)
     currentText = textNode
     currentNodes = [textNode]
     initialHydrating = false
@@ -2766,6 +2787,7 @@ function bindAssignedChildren(
         } else {
           node.replaceChildren(...nodes)
         }
+        syncSelectValue(node)
         ownedNodes = currentHydratedNodes ?? nodes
         if (disposed || isRootDisposed(root) || isRootDisposed(hostRoot)) {
           release()
@@ -3242,7 +3264,7 @@ function assignProp(
 
   // Explicit property: prop:name
   if (prop.slice(0, 5) === 'prop:') {
-    ;(node as unknown as Record<string, unknown>)[prop.slice(5)] = value
+    setElementProperty(node, prop.slice(5), value)
     return value
   }
 
@@ -3271,12 +3293,9 @@ function assignProp(
       const target = node as unknown as Record<string, unknown>
       const targetProp =
         isCE && !isProperty && !isChildProp && !propAlias ? toPropertyName(propName) : propName
-      if (target[targetProp] === value) return value
-      if (isCE && !isProperty && !isChildProp && !propAlias) {
-        target[targetProp] = value
-      } else {
-        target[targetProp] = value
-      }
+      if (target[targetProp] === value && !(targetProp === 'value' && isHTMLSelect(node)))
+        return value
+      setElementProperty(node, targetProp, value)
       return value
     }
   }

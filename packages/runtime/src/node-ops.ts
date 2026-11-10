@@ -5,6 +5,7 @@
 
 import { isDocumentFragmentLike, isNodeLike } from './dom-guards'
 import { HYDRATED_TEMPLATE_NODE } from './hydration'
+import { syncSelectValue } from './select-value'
 
 const HYDRATED_FRAGMENT_NODES = Symbol.for('fict:hydration-fragment-nodes')
 const HYDRATED_INSERT_START = Symbol('fict:hydration-insert-start')
@@ -134,7 +135,9 @@ export function insertNodesBefore(
     if (node.nodeType === DOCUMENT_FRAGMENT_NODE) {
       return insertNodesBefore(parent, getFragmentChildNodes(node), anchor)
     }
-    return [insertSingle(node, anchor)]
+    const inserted = insertSingle(node, anchor)
+    syncSelectValue(parent)
+    return [inserted]
   }
 
   // Batch insertion using DocumentFragment for multiple nodes
@@ -161,6 +164,7 @@ export function insertNodesBefore(
       }
     }
     parent.insertBefore(frag, anchor)
+    syncSelectValue(parent)
     return insertedNodes
   }
 
@@ -185,6 +189,7 @@ export function insertNodesBefore(
     }
   }
 
+  syncSelectValue(parent)
   return insertedNodes
 }
 
@@ -192,9 +197,15 @@ export function insertNodesBefore(
  * Remove an array of nodes from the DOM.
  */
 export function removeNodes(nodes: Node[]): void {
+  const parents = new Set<Node>()
   for (const node of nodes) {
-    node.parentNode?.removeChild(node)
+    const parent = node.parentNode
+    if (parent) {
+      parent.removeChild(node)
+      parents.add(parent)
+    }
   }
+  for (const parent of parents) syncSelectValue(parent)
 }
 
 const SLOT_START = 'fict:slot:start'

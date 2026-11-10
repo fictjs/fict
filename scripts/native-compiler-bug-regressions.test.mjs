@@ -863,3 +863,127 @@ test('bug 5: replaced array factories are not certified as fresh copies', () => 
     assert.ok(result.diagnostics.some(diagnostic => diagnostic.severity === 'error'))
   }
 })
+
+for (const fineGrainedDom of [true, false]) {
+  test(`bug 11: controlled select initializes after options and follows option updates (fineGrainedDom=${fineGrainedDom})`, async () => {
+    const code = compile(
+      `
+      import { $state, render } from 'fict'
+      let root
+      function App() {
+        let choice = $state('b'), opts = $state(['a', 'b', 'c']), other = $state('x')
+        return <div>
+          <select id="static" value="c"><option value="a">A</option><option value="c">C</option></select>
+          <select id="bound" value={choice}><option value="a">A</option><option value="b">B</option><option value="c">C</option></select>
+          <select id="list" value={choice}>{opts.map(o => <option key={o} value={o}>{o}</option>)}</select>
+          <select id="option" value="b"><option value="a">A</option><option value={other}>Other</option></select>
+          <button id="choose" onClick={() => { choice = 'c' }}>choose</button>
+          <button id="remove" onClick={() => { opts = ['a']; other = 'b' }}>remove</button>
+          <button id="restore" onClick={() => { opts = ['c', 'b', 'a'] }}>restore</button>
+        </div>
+      }
+      export function mount(container) {
+        root = container
+        const dispose = render(() => <App/>, root)
+        if (root.querySelector('#static').value !== 'c' || root.querySelector('#bound').value !== 'b' || root.querySelector('#list').value !== 'b') throw new Error('select is incorrect at render return')
+        return dispose
+      }
+      export function observe() { return Array.from(root.querySelectorAll('select'), s => [s.value, s.selectedIndex]) }
+    `,
+      { fineGrainedDom },
+    )
+    const result = await executeDomCommonJs(code, {
+      mountExport: 'mount',
+      observeExport: 'observe',
+      steps: [
+        { kind: 'record', label: 'initial' },
+        { kind: 'click', selector: '#choose' },
+        { kind: 'record', label: 'choice' },
+        { kind: 'click', selector: '#remove' },
+        { kind: 'record', label: 'removed' },
+        { kind: 'click', selector: '#restore' },
+        { kind: 'record', label: 'restored' },
+      ],
+    })
+    assert.deepEqual(result, [
+      {
+        label: 'initial',
+        value: [
+          ['c', 1],
+          ['b', 1],
+          ['b', 1],
+          ['', -1],
+        ],
+      },
+      {
+        label: 'choice',
+        value: [
+          ['c', 1],
+          ['c', 2],
+          ['c', 2],
+          ['', -1],
+        ],
+      },
+      {
+        label: 'removed',
+        value: [
+          ['c', 1],
+          ['c', 2],
+          ['', -1],
+          ['b', 1],
+        ],
+      },
+      {
+        label: 'restored',
+        value: [
+          ['c', 1],
+          ['c', 2],
+          ['c', 0],
+          ['b', 1],
+        ],
+      },
+    ])
+  })
+}
+
+for (const fineGrainedDom of [true, false]) {
+  test(`bug 11: controlled select serializes its selection and hydrates (fineGrainedDom=${fineGrainedDom})`, async () => {
+    const code = compile(
+      `
+      import { $state, hydrate } from 'fict'
+      import { renderToString } from '@fictjs/ssr'
+      let root, before, same
+      function App() {
+        let choice = $state('b'), opts = $state(['a', 'b', 'c'])
+        return <div><button onClick={() => { choice = 'c' }}>choose</button>
+          <select value={choice}><option value="a">A</option><option value="b">B</option><option value="c">C</option></select>
+          <select value={choice}>{opts.map(o => <option key={o} value={o}>{o}</option>)}</select></div>
+      }
+      export function mount(container) {
+        root = container
+        root.innerHTML = renderToString(() => <App/>)
+        const first = root.querySelector('option')
+        before = Array.from(root.querySelectorAll('select'), s => s.value)
+        const dispose = hydrate(() => <App/>, root, { strictHydration: true })
+        same = first === root.querySelector('option')
+        return dispose
+      }
+      export function observe() { return { before, same, values: Array.from(root.querySelectorAll('select'), s => s.value) } }
+    `,
+      { fineGrainedDom },
+    )
+    const result = await executeDomCommonJs(code, {
+      mountExport: 'mount',
+      observeExport: 'observe',
+      steps: [
+        { kind: 'record', label: 'initial' },
+        { kind: 'click', selector: 'button' },
+        { kind: 'record', label: 'updated' },
+      ],
+    })
+    assert.deepEqual(result, [
+      { label: 'initial', value: { before: ['b', 'b'], same: true, values: ['b', 'b'] } },
+      { label: 'updated', value: { before: ['b', 'b'], same: true, values: ['c', 'c'] } },
+    ])
+  })
+}

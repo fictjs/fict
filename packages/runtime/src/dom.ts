@@ -87,6 +87,7 @@ import {
   __fictRegisterResumedScopeTeardown,
 } from './resume'
 import { untrack } from './scheduler'
+import { syncSelectValue } from './select-value'
 import { isAsyncRejection, registerAsyncRejection, withAsyncErrorScope } from './signal'
 import type { DOMElement, FictNode, FictVNode } from './types'
 
@@ -864,6 +865,7 @@ function createElementWithContext(
       resolveChildNamespace(resolvedNamespace, el),
       ownerDocument,
     )
+    syncSelectValue(el)
   }
   if (isHydratingActive()) {
     withHydration(childParent, applyElement)

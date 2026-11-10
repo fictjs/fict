@@ -4695,3 +4695,52 @@ describe('Binding Edge Cases', () => {
     })
   })
 })
+
+describe('controlled select option changes', () => {
+  it('applies spread values after children and preserves the target through replacements', async () => {
+    const root = createRoot(() => {
+      const select = document.createElement('select')
+      assign(select, {
+        value: 'b',
+        children: [
+          { type: 'option', props: { value: 'a', children: 'A' } },
+          { type: 'option', props: { value: 'b', children: 'B' } },
+        ],
+      })
+      expect(select.value).toBe('b')
+      return select
+    })
+    assign(root.value, { children: [{ type: 'option', props: { value: 'a', children: 'A' } }] })
+    await tick()
+    expect(root.value.selectedIndex).toBe(-1)
+    assign(root.value, { children: [{ type: 'option', props: { value: 'b', children: 'B' } }] })
+    await tick()
+    expect(root.value.value).toBe('b')
+    root.dispose()
+  })
+
+  it('reapplies a controlled value when option text supplies a new implicit value', async () => {
+    const label = createSignal('a')
+    const root = createRoot(
+      () =>
+        createElement({
+          type: 'select',
+          props: {
+            value: 'b',
+            children: {
+              type: 'optgroup',
+              props: { children: { type: 'option', props: { children: reactive(() => label()) } } },
+            },
+          },
+        }) as HTMLSelectElement,
+    )
+    expect(root.value.selectedIndex).toBe(-1)
+    label('b')
+    await tick()
+    expect(root.value.value).toBe('b')
+    label('c')
+    await tick()
+    expect(root.value.selectedIndex).toBe(-1)
+    root.dispose()
+  })
+})

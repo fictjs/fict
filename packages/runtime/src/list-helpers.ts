@@ -24,6 +24,7 @@ import { insertNodesBefore, removeNodes, toNodeArray } from './node-ops'
 import reconcileArrays from './reconcile'
 import { __fictIsHydrating, __fictIsSSR } from './resume'
 import { batch } from './scheduler'
+import { syncSelectValue } from './select-value'
 import { createSignal, effectScope, flush, getActiveSub, setActiveSub, type Signal } from './signal'
 import type { FictNode } from './types'
 
@@ -271,6 +272,7 @@ export function moveNodesBefore(parent: Node, nodes: Node[], anchor: Node | null
     }
     anchor = node
   }
+  syncSelectValue(parent)
 }
 
 /**
