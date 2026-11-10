@@ -27,6 +27,8 @@ import { createRenderBinding, createRenderTransaction } from './effect'
 import {
   HYDRATED_TEMPLATE_NODE,
   claimChildRange,
+  claimConditionalRange,
+  hydratedRangeFragment,
   getPendingHydrationRepairToken,
   suppressHydrationClaimsForPendingRepair,
   finalizePendingHydrationRepair,
@@ -3255,6 +3257,8 @@ export function createConditional(
   const trackBranchReads = options?.trackBranchReads === true
   const hostRoot = getCurrentRoot()
   const useProvided = !!(startOverride && endOverride)
+  const hydratedRange = useProvided ? null : claimConditionalRange()
+  const hydrationRepair = useProvided || hydratedRange ? null : getPendingHydrationRepairToken()
   const markerOwnerDocument =
     startOverride?.ownerDocument ??
     endOverride?.ownerDocument ??
@@ -3262,10 +3266,12 @@ export function createConditional(
     document
   const startMarker = useProvided
     ? startOverride!
-    : markerOwnerDocument.createComment('fict:cond:start')
-  const endMarker = useProvided ? endOverride! : markerOwnerDocument.createComment('fict:cond:end')
+    : (hydratedRange?.start ?? markerOwnerDocument.createComment('fict:cond:start'))
+  const endMarker = useProvided
+    ? endOverride!
+    : (hydratedRange?.end ?? markerOwnerDocument.createComment('fict:cond:end'))
   const fragment = useProvided ? startMarker : markerOwnerDocument.createDocumentFragment()
-  if (!useProvided) {
+  if (!useProvided && !hydratedRange) {
     ;(fragment as DocumentFragment).append(startMarker, endMarker)
   }
 
@@ -3273,7 +3279,7 @@ export function createConditional(
   let currentRoot: RootContext | null = null
   let lastCondition: boolean | undefined = undefined
   let pendingRender = false
-  let initialHydrating = __fictIsHydrating()
+  let initialHydrating = useProvided ? __fictIsHydrating() : !!hydratedRange
   let disposed = false
   const clearCurrentBranch = () => {
     const root = currentRoot
@@ -3512,15 +3518,20 @@ export function createConditional(
   }
 
   let dispose: Cleanup
+  const restoreHydrationClaims = suppressHydrationClaimsForPendingRepair(hydrationRepair)
   try {
     dispose = createRenderTransaction(runConditional)
   } catch (error) {
     clearCurrentBranch()
     throw error
+  } finally {
+    restoreHydrationClaims()
   }
 
   return {
-    marker: fragment,
+    marker: hydratedRange
+      ? hydratedRangeFragment(startMarker, endMarker)
+      : (finalizePendingHydrationRepair(hydrationRepair, fragment) as Comment | DocumentFragment),
     flush: () => {
       if (disposed) return
       if (pendingRender) {

@@ -332,6 +332,10 @@ export function claimChildRange(): { start: Comment; end: Comment } | null {
   return claimMarkerRange('fict:child-start', 'fict:child', 'reactive child', false)
 }
 
+export function claimConditionalRange(): { start: Comment; end: Comment } | null {
+  return claimMarkerRange('fict:cond:start', 'fict:cond:end', 'conditional', true)
+}
+
 export function claimErrorBoundaryRange(): { start: Comment; end: Comment } | null {
   const start = hydrationStack[hydrationStack.length - 1]?.cursor
   // Streamed error boundaries use the shared patch protocol's range markers.

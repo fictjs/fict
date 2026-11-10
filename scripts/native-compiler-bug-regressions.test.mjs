@@ -254,3 +254,47 @@ for (const initial of ['x', '']) {
     ])
   })
 }
+
+for (const control of ['if', 'switch']) {
+  test(`bug 32: ${control} return ranges hydrate and switch branches`, async () => {
+    const small = `<div><button onClick={() => { n = (n + 1) % 3 }}>next</button>small{n}</div>`
+    const big = `<p><button onClick={() => { n = (n + 1) % 3 }}>next</button>big{n}</p>`
+    const body =
+      control === 'if'
+        ? `if (n > 1) return ${big}; return ${small}`
+        : `switch(n) { case 2: return ${big}; default: return ${small} }`
+    const code = compile(`
+      import { $state, hydrate } from 'fict'
+      import { renderToString } from '@fictjs/ssr'
+      let root, preserved
+      const issues = []
+      function App() { let n = $state(0); ${body} }
+      export function mount(container) {
+        root = container
+        root.innerHTML = renderToString(() => <App />)
+        const first = root.querySelector('button')
+        const dispose = hydrate(() => <App />, root, { strictHydration: true, onHydrationIssue: issue => { issues.push(issue.code) } })
+        preserved = root.querySelector('button') === first
+        return dispose
+      }
+      export function observe() { return { text: root.textContent, preserved, issues } }
+    `)
+    const result = await executeDomCommonJs(code, {
+      mountExport: 'mount',
+      observeExport: 'observe',
+      steps: [
+        { kind: 'record', label: 'hydrated' },
+        { kind: 'click', selector: 'button' },
+        { kind: 'click', selector: 'button' },
+        { kind: 'record', label: 'big' },
+        { kind: 'click', selector: 'button' },
+        { kind: 'record', label: 'small' },
+      ],
+    })
+    assert.deepEqual(result, [
+      { label: 'hydrated', value: { text: 'nextsmall0', preserved: true, issues: [] } },
+      { label: 'big', value: { text: 'nextbig2', preserved: true, issues: [] } },
+      { label: 'small', value: { text: 'nextsmall0', preserved: true, issues: [] } },
+    ])
+  })
+}
