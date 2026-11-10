@@ -729,8 +729,8 @@ fn runtime_creator_kind(source: &str, imported: &str) -> Option<ReactiveExportKi
         "createSignal" => Some(ReactiveExportKind::Signal),
         "$async" => Some(ReactiveExportKind::Async),
         "createAsyncMemo" => Some(ReactiveExportKind::AsyncAccessor),
-        "createMemo" | "$memo" => Some(ReactiveExportKind::Memo),
-        "$store" => Some(ReactiveExportKind::Store),
+        "createMemo" | "$memo" | "prop" => Some(ReactiveExportKind::Memo),
+        "$store" | "mergeProps" => Some(ReactiveExportKind::Store),
         "createStore" if !matches!(source, "fict/internal" | "@fictjs/runtime/internal") => {
             Some(ReactiveExportKind::Store)
         }

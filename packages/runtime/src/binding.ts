@@ -1919,7 +1919,18 @@ export function createChildBinding(
     )
     preparedRoot = root
     try {
-      return withRootContext(root, getValue)
+      return withRootContext(root, () => {
+        let value = getValue()
+        // A compiled getter may return a public prop/signal accessor. Read it
+        // while tracking so VNode children subscribe to the actual value too.
+        const seen = new Set<() => unknown>()
+        while (isReactive(value)) {
+          if (seen.has(value)) return null
+          seen.add(value)
+          value = value() as FictNode
+        }
+        return value
+      })
     } catch (error) {
       releasePrepared()
       throw error

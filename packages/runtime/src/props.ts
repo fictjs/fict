@@ -420,16 +420,15 @@ function orderOwnKeys(keys: (string | symbol)[]): (string | symbol)[] {
 }
 
 type EmptyProps = Record<never, never>
+type PropValue<T> = T extends PropGetter<infer V> ? V : T
 
 type MergeRecord<T> =
   T extends PropGetter<infer P>
     ? {
-        [K in keyof NonNullable<P>]: NonNullable<P>[K] extends PropGetter<unknown>
-          ? NonNullable<P>[K]
-          : PropGetter<NonNullable<P>[K]>
+        [K in keyof NonNullable<P>]: PropValue<NonNullable<P>[K]>
       }
     : T extends object
-      ? T
+      ? { [K in keyof T]: PropValue<T[K]> }
       : EmptyProps
 
 type RequiredMergeKeys<T> = {
@@ -437,7 +436,9 @@ type RequiredMergeKeys<T> = {
 }[keyof T]
 
 type MergeValue<A, B, K extends PropertyKey> = K extends keyof B
-  ? B[K] | (K extends RequiredMergeKeys<B> ? never : K extends keyof A ? A[K] : never)
+  ?
+      | Exclude<B[K], undefined>
+      | (undefined extends B[K] ? (K extends keyof A ? A[K] : undefined) : never)
   : K extends keyof A
     ? A[K]
     : never
@@ -470,6 +471,20 @@ export function mergeProps<T extends Record<string, unknown>>(
 ): Record<string, unknown>
 export function mergeProps<T extends Record<string, unknown>>(
   ...sources: (MergeSource<T> | null | undefined)[]
+): Record<string, unknown> {
+  return mergePropsImpl(sources, true)
+}
+
+/** @internal JSX spreads use ordinary last-source-wins semantics, including undefined. */
+export function mergePropsRaw<T extends Record<string, unknown>>(
+  ...sources: (MergeSource<T> | null | undefined)[]
+): Record<string, unknown> {
+  return mergePropsImpl(sources, false)
+}
+
+function mergePropsImpl<T extends Record<string, unknown>>(
+  sources: (MergeSource<T> | null | undefined)[],
+  useDefaults: boolean,
 ): Record<string, unknown> {
   // Filter out null/undefined sources upfront and store as concrete type
   const validSources: MergeSource<T>[] = sources.filter((s): s is MergeSource<T> => s != null)
@@ -508,6 +523,11 @@ export function mergeProps<T extends Record<string, unknown>>(
       if (!raw || !hasEnumerableOwnProp(raw, prop)) continue
 
       const value = (raw as Record<string | symbol, unknown>)[prop]
+      if (useDefaults) {
+        const resolved = isPropGetter(value) ? value() : value
+        if (resolved === undefined) continue
+        return normalizePropsFunction(resolved)
+      }
       // Preserve prop getters - let child component's createPropsProxy unwrap lazily
       // Note: For Symbol properties, we still wrap in getter if source is dynamic
       if (isPropGetter(src) && !isPropGetter(value)) {
@@ -523,6 +543,7 @@ export function mergeProps<T extends Record<string, unknown>>(
   }
 
   const readDescriptorValue = (prop: string | symbol) => {
+    if (useDefaults) return readProp(prop)
     for (let i = validSources.length - 1; i >= 0; i--) {
       const src = validSources[i]!
       const raw = resolveSource(src)
@@ -566,7 +587,10 @@ export function mergeProps<T extends Record<string, unknown>>(
       }
     },
   })
-  mergedPropsSources.set(merged, validSources)
+  // Public merges have default fallback semantics and must be snapshotted as a
+  // resolved layer. Only compiler spreads can be flattened into ordinary layers.
+  if (useDefaults) proxyToRaw.set(merged, merged)
+  else mergedPropsSources.set(merged, validSources)
   return merged
 }
 

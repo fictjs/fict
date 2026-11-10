@@ -2,7 +2,8 @@ import { describe, expect, expectTypeOf, it } from 'vitest'
 
 import { createPortal, createRoot, mergeProps, prop, type MergedProps } from '../src/index'
 import { createSignal } from '../src/advanced'
-import type { PropGetter } from '../src/props'
+import { createPropsProxy, mergeProps as mergeSpread } from '../src/internal'
+import { materializePropsForSnapshot } from '../src/props'
 
 const tick = () => new Promise<void>(resolve => queueMicrotask(resolve))
 
@@ -57,7 +58,7 @@ describe('public portal and props contracts', () => {
     }>()
     const optional: { value?: boolean } = {}
     const defaults = mergeProps({ value: 1 }, optional, null, undefined)
-    expectTypeOf(defaults.value).toEqualTypeOf<number | boolean | undefined>()
+    expectTypeOf(defaults.value).toEqualTypeOf<number | boolean>()
     expect(defaults.value).toBe(1)
     expect(merged.value).toBe('two')
     const sources: { name: string }[] = []
@@ -66,7 +67,43 @@ describe('public portal and props contracts', () => {
     expect(empty.name).toBeUndefined()
 
     const dynamic = mergeProps(prop(() => ({ label: 'dynamic' })))
-    expectTypeOf(dynamic.label).toEqualTypeOf<PropGetter<string>>()
-    expect(dynamic.label()).toBe('dynamic')
+    expectTypeOf(dynamic.label).toEqualTypeOf<string>()
+    expect(dynamic.label).toBe('dynamic')
   })
+})
+
+it('resolves undefined defaults lazily across strings, symbols, getters and dynamic sources', () => {
+  const token = Symbol('token')
+  const value = createSignal<string | null | undefined>(undefined)
+  let fallbackReads = 0
+  const fallback = prop(() => {
+    fallbackReads++
+    return 'fallback'
+  })
+  const dynamic = prop(() => ({ label: value(), [token]: value() }))
+  const merged = mergeProps(
+    { label: fallback, [token]: 'symbol', zero: 1, empty: 'filled' },
+    dynamic,
+    { zero: 0, empty: '' },
+  )
+  expect(fallbackReads).toBe(0)
+  expectTypeOf(merged.label).toEqualTypeOf<string | null>()
+  expect(merged.label).toBe('fallback')
+  expect(merged[token]).toBe('symbol')
+  expect(merged.zero).toBe(0)
+  expect(merged.empty).toBe('')
+  expect(fallbackReads).toBe(1)
+  value('override')
+  expect(merged.label).toBe('override')
+  expect(merged[token]).toBe('override')
+  expect(fallbackReads).toBe(1)
+  value(null)
+  expect(merged.label).toBeNull()
+  value(undefined)
+  expect(merged.label).toBe('fallback')
+  expect(Object.getOwnPropertyDescriptor(merged, 'label')?.value).toBe('fallback')
+  expect(materializePropsForSnapshot(merged).label).toBe('fallback')
+  const spread = createPropsProxy(mergeSpread({ label: 'fallback' }, { label: undefined }))
+  expect(spread.label).toBeUndefined()
+  expect(materializePropsForSnapshot(spread).label).toBeUndefined()
 })

@@ -44015,6 +44015,7 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
             return match host {
                 RuntimeCallbackHost::Selector => self.selector_callbacks_are_owned(arguments),
                 RuntimeCallbackHost::ResourceRead => self.resource_getter_is_owned(arguments),
+                RuntimeCallbackHost::Props => arguments.iter().all(|argument| !argument.spread),
                 RuntimeCallbackHost::Snapshot
                 | RuntimeCallbackHost::Managed
                 | RuntimeCallbackHost::Computation

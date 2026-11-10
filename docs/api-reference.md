@@ -953,7 +953,7 @@ function UserProfile(props: { id: string }) {
 
 ### mergeProps
 
-Merge multiple props objects while keeping them reactive.
+Merge multiple props objects while keeping them reactive. Reads resolve cached prop getters lazily. Later defined values win; a missing property or `undefined` falls back to earlier sources. `null`, `false`, `0`, and the empty string override defaults. This public defaults helper differs from JSX spread syntax, where a later explicit `undefined` still replaces an earlier value.
 
 ```typescript
 function mergeProps<T extends object[]>(...sources: T): MergedProps<T>

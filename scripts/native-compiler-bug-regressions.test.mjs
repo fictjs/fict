@@ -1293,3 +1293,124 @@ for (const update of [
     assert.ok(!result.code)
   })
 }
+
+for (const fineGrainedDom of [true, false]) {
+  for (const factorySetup of [
+    "import { mergeProps, prop } from 'fict'",
+    "import { mergeProps as merge, prop as memoProp } from 'fict'; const mergeProps = merge; const prop = memoProp",
+    "import * as runtime from 'fict'; const mergeProps = runtime.mergeProps; const prop = runtime.prop",
+  ]) {
+    test(`bug 20: merged defaults and cached props stay live (${factorySetup}; fineGrainedDom=${fineGrainedDom})`, async () => {
+      const code = compile(
+        `
+        import { $state, render } from 'fict'
+        ${factorySetup}
+        let root
+        function Button(props) {
+          const merged = mergeProps({ class: 'btn', type: 'button' }, props)
+          const title = '[' + merged.class + ']'
+          const content = prop(() => props.label + ':' + merged.class)
+          return <button class={merged.class} type={merged.type} title={title}>{content}</button>
+        }
+        function App() {
+          let phase = $state(0)
+          const kind = phase === 1 ? 'hot' : phase === 2 ? null : undefined
+          return <div><a onClick={() => phase++}>next</a><Button class={kind} label={phase}/></div>
+        }
+        export function mount(container) { root = container; return render(() => <App />, root) }
+        export function observe() { const b = root.querySelector('button'); return [b.className, b.type, b.title, b.textContent] }
+      `,
+        { fineGrainedDom },
+      )
+      const result = await executeDomCommonJs(code, {
+        mountExport: 'mount',
+        observeExport: 'observe',
+        steps: [
+          { kind: 'record', label: 'default' },
+          { kind: 'click', selector: 'a' },
+          { kind: 'record', label: 'override' },
+          { kind: 'click', selector: 'a' },
+          { kind: 'record', label: 'null' },
+          { kind: 'click', selector: 'a' },
+          { kind: 'record', label: 'default again' },
+        ],
+      })
+      assert.deepEqual(result, [
+        { label: 'default', value: ['btn', 'button', '[btn]', '0:btn'] },
+        { label: 'override', value: ['hot', 'button', '[hot]', '1:hot'] },
+        { label: 'null', value: ['', 'button', '[null]', '2:null'] },
+        { label: 'default again', value: ['btn', 'button', '[btn]', '3:btn'] },
+      ])
+    })
+  }
+}
+
+for (const source of [
+  "import { mergeProps } from 'external'; function App(props) { const result = mergeProps({}, props); return <p>{result.title}</p> }",
+  "import { prop } from 'external'; function App(props) { const value = prop(() => props.title); return <p>{value}</p> }",
+  "import { prop } from 'fict'; function App(props) { const value = prop(async () => { await Promise.resolve(); return props.title }); return <p>{value}</p> }",
+  "import { prop as source } from 'fict'; declare const replace: any; function App(props) { let prop = source; prop = replace; const value = prop(() => props.title); return <p>{value}</p> }",
+]) {
+  test(`bug 20: external, replaced and async prop factories remain escape boundaries (${source})`, () => {
+    const result = native.transformSync({
+      code: source,
+      filename: '/prop-factory.tsx',
+      options: { dev: false, strictGuarantee: true },
+    })
+    assert.ok(result.diagnostics.some(d => ['FICT-R002', 'FICT-R005'].includes(d.code)))
+    assert.ok(!result.code)
+  })
+}
+
+for (const fineGrainedDom of [true, false]) {
+  test(`bug 20: exported props metadata preserves cross-module updates (fineGrainedDom=${fineGrainedDom})`, async () => {
+    const dependency = native.transformSync({
+      code: `import { mergeProps, prop } from 'fict'; import { createSignal } from 'fict/internal';
+        const value = createSignal(undefined);
+        export const settings = mergeProps({ title: 'default' }, prop(() => ({ title: value() })));
+        export const title = prop(() => settings.title + '!');
+        export function update() { value('next') }`,
+      filename: '/props-source.ts',
+      moduleKind: 'commonjs',
+      options: { dev: false, strictGuarantee: true },
+    })
+    assert.deepEqual(dependency.diagnostics, [])
+    assert.deepEqual(dependency.moduleMetadata.exports, { settings: 'store', title: 'memo' })
+    const consumer = native.transformSync({
+      code: `import { render } from 'fict'; import { settings, title, update } from './props-source';
+        let root;
+        function App() { const text = settings.title + ':' + title; return <button onClick={update}>{text}</button> }
+        export function mount(container) { root=container; return render(() => <App/>, root) }
+        export function observe() { return root.textContent }`,
+      filename: '/props-consumer.tsx',
+      moduleKind: 'commonjs',
+      metadata: [
+        {
+          request: './props-source',
+          resolvedId: '/props-source.ts',
+          status: 'resolved',
+          metadata: dependency.moduleMetadata,
+          fingerprint: 'sha256:props-source',
+        },
+      ],
+      options: { dev: false, strictGuarantee: true, fineGrainedDom },
+    })
+    assert.deepEqual(consumer.diagnostics, [])
+    const code = `const dependency = {exports:{}};
+      (function(require,module,exports){${dependency.code}\n})(require,dependency,dependency.exports);
+      (function(require,module,exports){${consumer.code}\n})(name => name === './props-source' ? dependency.exports : require(name),module,exports);`
+    const result = await executeDomCommonJs(code, {
+      mountExport: 'mount',
+      observeExport: 'observe',
+      steps: [
+        { kind: 'record', label: 'initial' },
+        { kind: 'click', selector: 'button' },
+        { kind: 'record', label: 'updated' },
+      ],
+    })
+    assert.deepEqual(result, [
+      { label: 'initial', value: 'default:default!' },
+      { label: 'updated', value: 'next:next!' },
+    ])
+  })
+}

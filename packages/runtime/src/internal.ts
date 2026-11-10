@@ -106,7 +106,7 @@ export {
   __fictProp,
   __fictPropsRest,
   createPropsProxy,
-  mergeProps,
+  mergePropsRaw as mergeProps,
   prop,
   keyed,
 } from './props'

@@ -202,6 +202,17 @@ impl<'a> Visit<'a> for FactoryDeclarations<'_> {
                         Some("read"),
                         RuntimeCallbackHost::ResourceRead,
                     );
+                } else if matches!(source, "fict" | "@fictjs/runtime") && name == "prop" {
+                    self.reactive(&declarator.id, None);
+                } else if matches!(source, "fict" | "@fictjs/runtime") && name == "mergeProps" {
+                    if let Some(path) = self.path(&declarator.id, None) {
+                        self.facts
+                            .runtime_paths
+                            .insert(self.aliases.resolve(&path), RuntimeBindingKind::Container);
+                        self.facts
+                            .runtime_paths
+                            .insert(path, RuntimeBindingKind::Container);
+                    }
                 } else if name == "useTransition" && matches!(source, "fict" | "@fictjs/runtime") {
                     self.register(&declarator.id, Some("1"), RuntimeCallbackHost::Managed);
                     self.reactive(&declarator.id, Some("0"));
