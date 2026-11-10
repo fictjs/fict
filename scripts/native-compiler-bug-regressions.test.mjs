@@ -1795,3 +1795,60 @@ for (const fineGrainedDom of [true, false]) {
       })
   })
 }
+
+for (const fineGrainedDom of [true, false]) {
+  test(`bug 6: same-module hook members feed derived declarations and effects (fineGrainedDom=${fineGrainedDom})`, async () => {
+    const code = compile(
+      `import{$state,$memo,$effect,render}from'fict';let root;
+      function useBase(){let n=$state(1);const twice=$memo(()=>n*2);return {n,twice,inc:()=>n++}}
+      function App(){const base=useBase();const tripled=base.n*3;const label='n='+base.n;const big=base.n>2;const six=base.twice*3;$effect(()=>{document.title='n'+base.n});return <p onClick={base.inc}>{tripled}|{label}|{big?'big':'small'}|{six}</p>}
+      export function mount(el){root=el;return render(()=><App/>,el)}export function observe(){return [root.textContent,document.title]}
+    `,
+      { fineGrainedDom },
+    )
+    assert.deepEqual(
+      await executeDomCommonJs(code, {
+        mountExport: 'mount',
+        observeExport: 'observe',
+        steps: [
+          { kind: 'record', label: 'initial' },
+          { kind: 'click', selector: 'p' },
+          { kind: 'record', label: 'second' },
+          { kind: 'click', selector: 'p' },
+          { kind: 'record', label: 'third' },
+        ],
+      }),
+      [
+        { label: 'initial', value: ['3|n=1|small|6', 'n1'] },
+        { label: 'second', value: ['6|n=2|small|12', 'n2'] },
+        { label: 'third', value: ['9|n=3|big|18', 'n3'] },
+      ],
+    )
+  })
+  test(`bug 6: same-module hook tuples remain dependencies in another hook (fineGrainedDom=${fineGrainedDom})`, async () => {
+    const code = compile(
+      `import{$state,$effect,render}from'fict';let root;
+      function useBase(){let n=$state(1);return [n,()=>n++]}
+      function useDerived(){const base=useBase();const tripled=base[0]*3;const label=()=>tripled;return {label,inc:base[1]}}
+      function App(){const derived=useDerived();return <p onClick={derived.inc}>{derived.label()}</p>}
+      export function mount(el){root=el;return render(()=><App/>,el)}export function observe(){return root.textContent}
+    `,
+      { fineGrainedDom },
+    )
+    assert.deepEqual(
+      await executeDomCommonJs(code, {
+        mountExport: 'mount',
+        observeExport: 'observe',
+        steps: [
+          { kind: 'record', label: 'initial' },
+          { kind: 'click', selector: 'p' },
+          { kind: 'record', label: 'updated' },
+        ],
+      }),
+      [
+        { label: 'initial', value: '3' },
+        { label: 'updated', value: '6' },
+      ],
+    )
+  })
+}

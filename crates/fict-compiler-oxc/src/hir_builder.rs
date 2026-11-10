@@ -2354,6 +2354,23 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             &mutable_alias_symbols,
             &static_hook_aliases,
         );
+        // Return accessors were previously known only to emit-time read rewrites.
+        // Seed the core dependency graph with their existing runtime representation
+        // before derived declarations and effect advisories are planned.
+        for (&symbol, shape) in &reactive_symbols.hook_return_shapes {
+            if let Some(&binding) = self.symbol_to_binding.get(&symbol) {
+                self.runtime_bindings.push(fict_hir::RuntimeBindingFact {
+                    binding,
+                    kind: if shape.direct {
+                        fict_hir::RuntimeBindingKind::Accessor
+                    } else {
+                        fict_hir::RuntimeBindingKind::Container
+                    },
+                });
+            }
+        }
+        self.runtime_bindings.sort_unstable();
+        self.runtime_bindings.dedup();
         self.validate_state_method_calls(
             &calls.calls,
             &reactive_symbols.state,
@@ -2887,7 +2904,6 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             facts: Vec::new(),
         };
         dependencies.visit_program(program);
-        propagate_reactive_symbols(&mut reactive_symbols, &dependencies.facts, |_| true);
         let hook_return_shapes = collect_local_hook_return_shapes(
             program,
             self.semantic.scoping(),
@@ -2897,6 +2913,8 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             &binding_to_symbol,
             &self.macro_bindings,
         );
+        reactive_symbols.extend(hook_return_shapes.keys().copied());
+        propagate_reactive_symbols(&mut reactive_symbols, &dependencies.facts, |_| true);
         let mut escape_reactive_symbols = source_escape_reactive_symbols;
         // Value snapshots passed as ordinary arguments retain the legacy props boundary.
         // Callback captures must also follow props-derived aliases: reading an inferred memo
@@ -10557,9 +10575,14 @@ fn collect_local_hook_return_shapes(
     calls
         .iter()
         .filter_map(|call| {
+            let callee_symbol = binding_to_symbol.get(&call.binding?)?;
+            if scoping.symbol_is_mutated(*callee_symbol) {
+                return None;
+            }
             let shape = shapes_by_binding.get(&call.binding?)?.clone();
             let result = call.direct_variable_binding?;
-            Some((*binding_to_symbol.get(&result)?, shape))
+            let symbol = *binding_to_symbol.get(&result)?;
+            (!scoping.symbol_is_mutated(symbol)).then_some((symbol, shape))
         })
         .collect()
 }
