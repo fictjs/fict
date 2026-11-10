@@ -1216,7 +1216,6 @@ export function insert(
     __fictIsHydrating() &&
     !ownsMarker &&
     expectedMarker?.nodeType === 8 &&
-    (expectedPreviousSibling === null || expectedPreviousSibling?.nodeType === 3) &&
     hydratedPreviousSibling?.nodeType === 3
   ) {
     const expectedStaticPrefix =

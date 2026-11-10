@@ -186,3 +186,71 @@ for (const fineGrainedDom of [true, false]) {
     ])
   })
 }
+
+for (const initial of ['x', '']) {
+  test(`bug 9: adjacent dynamic text claims SSR nodes (initial=${JSON.stringify(initial)})`, async () => {
+    const code = compile(`
+      import { $state, hydrate } from 'fict'
+      import { renderToString } from '@fictjs/ssr'
+      let root
+      const issues = []
+      function Pair(props) { return <><b>{props.a}</b><i>!</i></> }
+      function App() {
+        let a = $state(${JSON.stringify(initial)}), b = $state(1)
+        const rows = [1, 2]
+        return <div><button onClick={() => { a += 'y'; b++ }}>inc</button>
+          <p>{a}{b}{a}</p><p>{a} {b}</p><p><b>static</b>{b}</p>
+          <p>{b > 0 && <i>yes</i>}{b}</p><p><Pair a={a}/>{b}</p>
+          <ul>{rows.map(k => <li key={k}>{k}{b}</li>)}</ul>
+        </div>
+      }
+      export function mount(container) {
+        root = container
+        root.innerHTML = renderToString(() => <App />)
+        return hydrate(() => <App />, root, { strictHydration: true, onHydrationIssue: issue => { issues.push(issue.code) } })
+      }
+      export function observe() { return { text: Array.from(root.querySelectorAll('p,li'), element => element.textContent), issues } }
+    `)
+    const result = await executeDomCommonJs(code, {
+      mountExport: 'mount',
+      observeExport: 'observe',
+      steps: [
+        { kind: 'record', label: 'hydrated' },
+        { kind: 'click', selector: 'button' },
+        { kind: 'record', label: 'updated' },
+      ],
+    })
+    assert.deepEqual(result, [
+      {
+        label: 'hydrated',
+        value: {
+          text: [
+            `${initial}1${initial}`,
+            `${initial} 1`,
+            'static1',
+            'yes1',
+            `${initial}!1`,
+            '11',
+            '21',
+          ],
+          issues: [],
+        },
+      },
+      {
+        label: 'updated',
+        value: {
+          text: [
+            `${initial}y2${initial}y`,
+            `${initial}y 2`,
+            'static2',
+            'yes2',
+            `${initial}y!2`,
+            '12',
+            '22',
+          ],
+          issues: [],
+        },
+      },
+    ])
+  })
+}
