@@ -5675,13 +5675,22 @@ impl<'a> AstRewriter<'a, '_> {
                             &builder,
                         )),
                     ]);
-                    if track_branch_reads {
+                    if track_branch_reads || kind == ConditionalKind::LogicalAnd {
                         let mut properties = ArenaVec::new_in(&self.allocator);
-                        properties.push(self.object_property(
-                            span,
-                            "trackBranchReads",
-                            Expression::new_boolean_literal(span, true, &builder),
-                        ));
+                        if track_branch_reads {
+                            properties.push(self.object_property(
+                                span,
+                                "trackBranchReads",
+                                Expression::new_boolean_literal(span, true, &builder),
+                            ));
+                        }
+                        if kind == ConditionalKind::LogicalAnd {
+                            properties.push(self.object_property(
+                                span,
+                                "preserveFalsy",
+                                Expression::new_boolean_literal(span, true, &builder),
+                            ));
+                        }
                         arguments.push(Argument::from(Expression::new_object_expression(
                             span, properties, &builder,
                         )));

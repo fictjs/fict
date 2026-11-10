@@ -276,6 +276,8 @@ export interface BindingHandle {
 }
 
 export interface ConditionalBindingOptions {
+  /** Render the original falsy left operand of a logical AND expression. */
+  preserveFalsy?: boolean
   /**
    * When true, track signal reads inside active branch render callbacks and
    * re-run the branch callback on updates even if the top-level condition stays
@@ -3278,7 +3280,7 @@ function toPropertyName(name: string): string {
  * ```
  */
 export function createConditional(
-  condition: () => boolean,
+  condition: () => unknown,
   renderTrue: () => FictNode,
   createElementFn: CreateElementFn,
   renderFalse?: () => FictNode,
@@ -3339,7 +3341,12 @@ export function createConditional(
   // re-running when condition dependencies change but the boolean result stays same.
   // This is critical because re-running the effect would purge child effect deps
   // (like bindText) even if we early-return, breaking fine-grained reactivity.
-  const conditionMemo = computed(() => !!condition())
+  const conditionMemo = computed(() => {
+    const value = condition()
+    // AND returns its falsy operand. Reuse the evaluated value for its branch,
+    // and only collapse truthy operands to a shared branch key.
+    return options?.preserveFalsy && !value ? value : !!value
+  })
 
   const prepareBranch = (
     render: (() => FictNode) | undefined,
@@ -3453,8 +3460,10 @@ export function createConditional(
 
   const runConditional = () => {
     let cond: boolean
+    let conditionValue: unknown
     try {
-      cond = conditionMemo()
+      conditionValue = conditionMemo()
+      cond = !!conditionValue
     } catch (error) {
       if (initialHydrating) {
         currentNodes = collectBetween()
@@ -3468,12 +3477,15 @@ export function createConditional(
       return
     }
     pendingRender = false
+    const renderFalseBranch = options?.preserveFalsy
+      ? () => conditionValue as FictNode
+      : renderFalse
 
     if (initialHydrating && isHydratingActive()) {
       initialHydrating = false
       lastCondition = cond
 
-      const render = cond ? renderTrue : renderFalse
+      const render = cond ? renderTrue : renderFalseBranch
       if (!render) {
         currentNodes = collectBetween()
         return
@@ -3523,7 +3535,7 @@ export function createConditional(
       return
     }
 
-    if (!trackBranchReads) {
+    if (!trackBranchReads && !(options?.preserveFalsy && !cond)) {
       if (lastCondition === cond && currentNodes.length > 0) {
         return
       }
@@ -3531,7 +3543,7 @@ export function createConditional(
         return
       }
     } else if (lastCondition === cond) {
-      const render = cond ? renderTrue : renderFalse
+      const render = cond ? renderTrue : renderFalseBranch
       const next = prepareBranch(render, parent, true)
       if (next.handled) {
         return
@@ -3541,7 +3553,7 @@ export function createConditional(
       return
     }
 
-    const render = cond ? renderTrue : renderFalse
+    const render = cond ? renderTrue : renderFalseBranch
     const next = prepareBranch(render, parent, lastCondition !== undefined)
     if (next.handled) {
       return

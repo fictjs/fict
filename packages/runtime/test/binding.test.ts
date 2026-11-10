@@ -857,6 +857,52 @@ describe('Reactive DOM Binding', () => {
   })
 
   describe('createConditional', () => {
+    it('shares the logical AND operand with its branch and preserves falsy output', async () => {
+      const left = createSignal<unknown>(0)
+      let evaluations = 0
+      let mounts = 0
+      const owner = createRoot(() =>
+        createConditional(
+          () => {
+            evaluations++
+            return left()
+          },
+          () => {
+            mounts++
+            return { type: 'span', props: { children: 'true' } }
+          },
+          createElement,
+          undefined,
+          undefined,
+          undefined,
+          { preserveFalsy: true },
+        ),
+      )
+      container.appendChild(owner.value.marker)
+      expect(container.textContent).toBe('0')
+      expect(evaluations).toBe(1)
+      for (const [value, text] of [
+        [NaN, 'NaN'],
+        [false, ''],
+        [undefined, ''],
+        ['', ''],
+        [0n, '0'],
+        [1, 'true'],
+        [2, 'true'],
+        [0, '0'],
+      ] as const) {
+        const child = container.querySelector('span')
+        left(value)
+        await tick()
+        expect(container.textContent).toBe(text)
+        if (value === 2) expect(container.querySelector('span')).toBe(child)
+      }
+      expect(mounts).toBe(1)
+      owner.value.dispose()
+      owner.dispose()
+      expect(container.textContent).toBe('')
+    })
+
     it('does not track descendant materialization for ordinary branches', async () => {
       const visible = createSignal(true)
       const materializationState = createSignal(0)

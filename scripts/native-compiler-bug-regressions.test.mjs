@@ -5,7 +5,9 @@ import test from 'node:test'
 import { executeDomCommonJs } from './lib/compiler-dom-semantic-harness.mjs'
 
 const require = createRequire(import.meta.url)
-const native = require('../target/release/fict_compiler_napi.node')
+const native = require(
+  process.env.FICT_COMPILER_NATIVE_PATH ?? '../target/release/fict_compiler_napi.node',
+)
 
 function compile(code, options = {}) {
   const result = native.transformSync({
@@ -503,4 +505,66 @@ for (const fineGrainedDom of [true, false]) {
       })),
     )
   })
+}
+
+for (const fineGrainedDom of [true, false]) {
+  for (const ssr of [false, true]) {
+    test(`bug 8: AND preserves falsy operands and updates (fineGrainedDom=${fineGrainedDom}, ssr=${ssr})`, async () => {
+      const code = compile(
+        `
+        import { $state, render, hydrate } from 'fict'
+        import { renderToString } from '@fictjs/ssr'
+        let root, first
+        const issues = []
+        function App() {
+          let n = $state<any>(0)
+          return <div>
+            <button id="nan" onClick={() => n = NaN}>NaN</button>
+            <button id="false" onClick={() => n = false}>false</button>
+            <button id="bigint" onClick={() => n = 0n}>0n</button>
+            <button id="one" onClick={() => n = 1}>one</button>
+            <button id="two" onClick={() => n = 2}>two</button>
+            <button id="zero" onClick={() => n = 0}>zero</button>
+            <p>{n && <em>x</em>}</p><b>{n && 'txt'}</b>
+          </div>
+        }
+        export function mount(container) {
+          root = container
+          if (${ssr}) {
+            root.innerHTML = renderToString(() => <App />)
+            return hydrate(() => <App />, root, { strictHydration: true, onHydrationIssue: issue => issues.push(issue.code) })
+          }
+          return render(() => <App />, root)
+        }
+        export function observe() {
+          const node = root.querySelector('em')
+          if (node && !first) first = node
+          return [root.querySelector('p').textContent, root.querySelector('b').textContent, issues, ${fineGrainedDom} ? !node || node === first : true]
+        }
+      `,
+        { fineGrainedDom },
+      )
+      const steps = [{ kind: 'record', label: 'initial' }]
+      for (const value of ['nan', 'false', 'bigint', 'one', 'two', 'zero']) {
+        steps.push({ kind: 'click', selector: '#' + value }, { kind: 'record', label: value })
+      }
+      const result = await executeDomCommonJs(code, {
+        mountExport: 'mount',
+        observeExport: 'observe',
+        steps,
+      })
+      assert.deepEqual(
+        result,
+        [
+          ['initial', '0', '0'],
+          ['nan', 'NaN', 'NaN'],
+          ['false', '', ''],
+          ['bigint', '0', '0'],
+          ['one', 'x', 'txt'],
+          ['two', 'x', 'txt'],
+          ['zero', '0', '0'],
+        ].map(([label, a, b]) => ({ label, value: [a, b, [], true] })),
+      )
+    })
+  }
 }
