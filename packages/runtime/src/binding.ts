@@ -38,6 +38,7 @@ import {
   withHydrationRange,
   isHydratingActive,
 } from './hydration'
+import { registerInputValueSetter, syncInputValue } from './input-value'
 import {
   createRootContext,
   deferRootRefAssignments,
@@ -746,6 +747,7 @@ export function setAttr(el: Element, key: string, value: unknown): void {
     el.setAttribute(key, String(value))
   }
   if (key === 'value' || key === 'selected') syncSelectValue(el)
+  syncInputValue(el, key)
 }
 
 function isAttributeCurrent(
@@ -835,7 +837,15 @@ export function setElementProperty(el: Element, key: string, value: unknown): vo
     apply()
     return
   }
+  if (
+    key === 'value' &&
+    el.localName === 'input' &&
+    el.namespaceURI === 'http://www.w3.org/1999/xhtml'
+  ) {
+    registerInputValueSetter(el, () => setOrdinaryElementProperty(el, key, value))
+  }
   setOrdinaryElementProperty(el, key, value)
+  syncInputValue(el, key)
   if (el.localName === 'option' || key === 'textContent' || key === 'innerHTML') {
     syncSelectValue(el)
   }
@@ -3250,6 +3260,7 @@ function assignProp(
     assertValidDOMAttributeName(attributeName)
     if (value == null) node.removeAttribute(attributeName)
     else node.setAttribute(attributeName, String(value))
+    syncInputValue(node, attributeName)
     return value
   }
 
@@ -3293,7 +3304,10 @@ function assignProp(
       const target = node as unknown as Record<string, unknown>
       const targetProp =
         isCE && !isProperty && !isChildProp && !propAlias ? toPropertyName(propName) : propName
-      if (target[targetProp] === value && !(targetProp === 'value' && isHTMLSelect(node)))
+      if (
+        target[targetProp] === value &&
+        !(targetProp === 'value' && (isHTMLSelect(node) || node.localName === 'input'))
+      )
         return value
       setElementProperty(node, targetProp, value)
       return value
@@ -3325,6 +3339,7 @@ function assignProp(
     const next = String(value)
     if (node.getAttribute(attrName) !== next) node.setAttribute(attrName, next)
   }
+  syncInputValue(node, attrName)
   return value
 }
 

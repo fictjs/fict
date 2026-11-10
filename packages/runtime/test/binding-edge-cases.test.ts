@@ -4744,3 +4744,28 @@ describe('controlled select option changes', () => {
     root.dispose()
   })
 })
+
+describe('controlled input constraints', () => {
+  it('restores a clamped target after min/max attributes change', () => {
+    const input = document.createElement('input')
+    input.type = 'range'
+    setProp(input, 'value', 150)
+    expect(input.value).toBe('100')
+    assign(input, { 'attr:max': 200 })
+    expect(input.value).toBe('150')
+    assign(input, { 'attr:min': 175 })
+    expect(input.value).toBe('175')
+    assign(input, { 'attr:min': 0 })
+    expect(input.value).toBe('150')
+  })
+
+  it('registers a spread value even when it initially equals the live value', () => {
+    const input = document.createElement('input')
+    input.type = 'range'
+    input.value = '50'
+    assign(input, { value: '50', min: 100, max: 200 })
+    expect(input.value).toBe('100')
+    assign(input, { min: 0 })
+    expect(input.value).toBe('50')
+  })
+})

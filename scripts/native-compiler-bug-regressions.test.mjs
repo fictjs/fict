@@ -987,3 +987,49 @@ for (const fineGrainedDom of [true, false]) {
     ])
   })
 }
+
+for (const fineGrainedDom of [true, false]) {
+  test(`bug 12: input values survive later constraint and type bindings (fineGrainedDom=${fineGrainedDom})`, async () => {
+    const code = compile(
+      `
+      import { $state, render } from 'fict'
+      let root
+      function App() {
+        let value = $state(150), limit = $state(200), kind = $state('range')
+        return <div>
+          <input type="range" value={value} min={0} max={limit}/>
+          <input type="range" value={value} max="200"/>
+          <input value={value} max={limit} type="range"/>
+          <input value={value} type={kind} max={limit}/>
+          <input type="number" value={value} max={limit}/>
+          <button id="lower" onClick={() => { limit = 100 }}>lower</button>
+          <button id="raise" onClick={() => { limit = 200 }}>raise</button>
+          <button id="value" onClick={() => { value = 160 }}>value</button>
+        </div>
+      }
+      export function mount(container) { root = container; return render(() => <App/>, root) }
+      export function observe() { return Array.from(root.querySelectorAll('input'), i => i.value) }
+    `,
+      { fineGrainedDom },
+    )
+    const result = await executeDomCommonJs(code, {
+      mountExport: 'mount',
+      observeExport: 'observe',
+      steps: [
+        { kind: 'record', label: 'initial' },
+        { kind: 'click', selector: '#lower' },
+        { kind: 'record', label: 'lowered' },
+        { kind: 'click', selector: '#raise' },
+        { kind: 'record', label: 'raised' },
+        { kind: 'click', selector: '#value' },
+        { kind: 'record', label: 'updated' },
+      ],
+    })
+    assert.deepEqual(result, [
+      { label: 'initial', value: ['150', '150', '150', '150', '150'] },
+      { label: 'lowered', value: ['100', '150', '100', '100', '150'] },
+      { label: 'raised', value: ['150', '150', '150', '150', '150'] },
+      { label: 'updated', value: ['160', '160', '160', '160', '160'] },
+    ])
+  })
+}

@@ -56,6 +56,7 @@ import {
   withHydration,
   type HydrationIssueHandler,
 } from './hydration'
+import { syncInputValue } from './input-value'
 import { Fragment } from './jsx'
 import {
   createRootContext,
@@ -1325,6 +1326,11 @@ function shouldStringifyBooleanAttribute(key: string): boolean {
 }
 
 const setAttribute: AttributeSetter = (el: Element, key: string, value: unknown): void => {
+  applyAttribute(el, key, value)
+  syncInputValue(el, key)
+}
+
+const applyAttribute: AttributeSetter = (el: Element, key: string, value: unknown): void => {
   assertValidDOMAttributeName(key)
   if (typeof value === 'boolean' && shouldStringifyBooleanAttribute(key)) {
     el.setAttribute(key, String(value))
