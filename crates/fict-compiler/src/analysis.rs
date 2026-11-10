@@ -15,11 +15,11 @@ use crate::diagnostic_policy::{
     apply_diagnostic_policy, apply_diagnostic_suppressions, configured_diagnostic_severity,
 };
 use crate::effect_diagnostics::suppress_region_backed_effect_advisories;
-use crate::metadata_analysis::infer_local_hook_returns;
+use crate::metadata_analysis::{infer_local_hook_returns, run_core_with_hook_contracts};
 use crate::pipeline::{oxc_language, oxc_module_kind};
 use crate::{
     AnalyzeRequest, AnalyzeVerbosity, CompileRequestError, CompilerOptions, CorePassOptions,
-    FunctionPassAnalysis, NormalizedAnalyzeRequest, run_core_passes,
+    FunctionPassAnalysis, NormalizedAnalyzeRequest,
 };
 
 /// Severity shape preserved by the existing TypeScript tooling API.
@@ -367,7 +367,7 @@ fn analyze_normalized_inner(request: NormalizedAnalyzeRequest) -> AnalyzeResult 
         );
     }
 
-    let core = match run_core_passes(
+    let core = match run_core_with_hook_contracts(
         &hir,
         CorePassOptions {
             // Tooling traces source execution before optimizer compaction so source spans and
@@ -376,6 +376,7 @@ fn analyze_normalized_inner(request: NormalizedAnalyzeRequest) -> AnalyzeResult 
             strict_guarantee: request.compiler_options.strict_guarantee,
             ..CorePassOptions::default()
         },
+        build.frontend.as_ref(),
     ) {
         Ok(core) => core,
         Err(findings) => {

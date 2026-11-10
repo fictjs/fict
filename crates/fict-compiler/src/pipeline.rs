@@ -3,14 +3,14 @@ use crate::diagnostic_policy::{
     apply_diagnostic_policy, apply_diagnostic_suppressions, configured_diagnostic_severity,
 };
 use crate::effect_diagnostics::suppress_region_backed_effect_advisories;
-use crate::metadata_analysis::generate_module_metadata;
+use crate::metadata_analysis::{generate_module_metadata, run_core_with_hook_contracts};
 use crate::result::{INTERNAL_RECOVERY_HELP, failed_result, request_error_result};
 use crate::source_map::compose_source_maps;
 use crate::{
     CompileRequest, CompileResult, CompilerArtifact, CompilerArtifactKind, CompilerExplainArtifact,
     CompilerExplainEvent, CompilerExplainEventKind, CompilerInternalError, CompilerStats,
     CorePassOptions, HandlerArtifactMetadata, ModuleKind, NormalizedCompileRequest, RawSourceMap,
-    RequestLimits, SourceLanguage, run_core_passes,
+    RequestLimits, SourceLanguage,
 };
 use fict_compiler_oxc::{
     FrontendSuppression, HirBuildOptions, OxcCompileOptions, OxcModuleKind, OxcSourceLanguage,
@@ -245,13 +245,14 @@ fn compile_normalized_inner(request: NormalizedCompileRequest) -> CompileResult 
         attach_explain_if_requested(&mut result, &request, &source_events, &[]);
         return result;
     }
-    let core = match run_core_passes(
+    let core = match run_core_with_hook_contracts(
         &hir,
         CorePassOptions {
             optimize: request.options.optimize,
             strict_guarantee: request.options.strict_guarantee,
             ..CorePassOptions::default()
         },
+        Some(&frontend),
     ) {
         Ok(core) => core,
         Err(diagnostics) => {
@@ -1696,7 +1697,6 @@ mod tests {
                     const alternate = $state(1);
                     return {
                         direct: count,
-                        nested: [alternate],
                         conditional: flag ? count : alternate,
                         value: count + 1,
                     };
@@ -1747,11 +1747,6 @@ mod tests {
 
         assert!(result.code.contains("return count;"), "{}", result.code);
         assert!(result.code.contains("direct: count"), "{}", result.code);
-        assert!(
-            result.code.contains("nested: [alternate]"),
-            "{}",
-            result.code
-        );
         assert!(
             result.code.contains("flag ? count : alternate"),
             "{}",

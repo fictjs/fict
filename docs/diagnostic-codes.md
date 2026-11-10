@@ -726,7 +726,7 @@ state = { ...state, user: { ...state.user, name: 'Alice' } }
 
 **Fix:** Select between static property reads, or use `$store` for genuinely dynamic object keys. Store proxies track the actual key at runtime, including nested objects and immutable property aliases. Certified array indexing is also supported. Merely narrowing a key with a conditional or TypeScript type does not establish a static property path.
 
-### FICT-H002: Inconsistent hook return accessor shape
+### FICT-H002: Unsupported or inconsistent hook return accessor shape
 
 **Severity:** Error under `strictGuarantee` (default); Warning in opt-out builds.
 
@@ -739,6 +739,11 @@ require each slot to be consistently a plain value or consistently the same
 reactive accessor kind. A mixed shape is ambiguous: the consumer cannot both
 call `t.count()` and read `t.count`, and writable signal semantics are different
 from read-only memo semantics.
+
+The hook metadata contract supports a direct accessor or one flat object/tuple level.
+An inline nested return such as `return { nested: { count } }` also reports H002 when
+`count` remains an accessor. Expose it as a top-level member, or return an explicit
+callback such as `return { nested: { read: () => count } }` and call it at the consumer.
 
 ```ts
 function useThing(flag) {

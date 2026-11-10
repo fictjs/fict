@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use fict_compiler_oxc::{FictReturnShape, FrontendSummary, ReactiveValueKind};
 use fict_diagnostics::{
-    Diagnostic, DiagnosticCode, DiagnosticSeverity, GuaranteeClass, SourceSpan,
+    Diagnostic, DiagnosticBundle, DiagnosticCode, DiagnosticSeverity, GuaranteeClass, SourceSpan,
 };
 use fict_hir::{
     ArrayElement, BinaryOperator, BindingId, CallHost, DeclarationKind, FictMacroKind, FunctionId,
@@ -17,7 +17,112 @@ use fict_metadata::{
 };
 use fict_reactivity::{DependencyBase, ReactiveBindingKind};
 
-use crate::{CorePassOutput, FunctionPassAnalysis};
+use crate::{CorePassOptions, CorePassOutput, FunctionPassAnalysis, run_core_passes};
+
+/// Materialized hook returns can reveal dependencies in their callers. Grow the
+/// binding facts monotonically and reanalyze without repeating optimizer rewrites.
+/// Every additional round must establish at least one previously unknown binding.
+pub(crate) fn run_core_with_hook_contracts(
+    hir: &HirFile,
+    options: CorePassOptions,
+    frontend: Option<&FrontendSummary>,
+) -> Result<CorePassOutput, DiagnosticBundle> {
+    let mut core = run_core_passes(hir, options)?;
+    let Some(frontend) = frontend else {
+        return Ok(core);
+    };
+    if !core
+        .hir
+        .functions
+        .iter()
+        .any(|function| function.kind == FunctionKind::Hook)
+    {
+        return Ok(core);
+    }
+    let mut rounds = 0;
+    loop {
+        let facts = collect_local_facts(&core, frontend);
+        let reassigned = reassigned_bindings(&core.hir);
+        let known: BTreeSet<_> = core
+            .hir
+            .runtime_bindings
+            .iter()
+            .map(|fact| fact.binding)
+            .collect();
+        let mut added = Vec::new();
+        for function in &core.hir.functions {
+            for instruction in function.blocks.iter().flat_map(|block| &block.instructions) {
+                let HirInstructionKind::Declare {
+                    local,
+                    initializer: Some(value),
+                    ..
+                } = instruction.kind
+                else {
+                    continue;
+                };
+                let Some(binding) = function.locals[local.as_usize()].binding else {
+                    continue;
+                };
+                if known.contains(&binding) || reassigned.contains(&binding) {
+                    continue;
+                }
+                let Some(HirInstructionKind::Call(call)) = function
+                    .instruction_for_result(value)
+                    .map(|instruction| &instruction.kind)
+                else {
+                    continue;
+                };
+                let Some(shape) = hook_info_for_call(&core.hir, function, call, &facts.hooks)
+                else {
+                    continue;
+                };
+                if hook_info_is_empty(&shape) {
+                    continue;
+                }
+                added.push(fict_hir::RuntimeBindingFact {
+                    binding,
+                    kind: if shape.direct_accessor.is_some() {
+                        fict_hir::RuntimeBindingKind::Accessor
+                    } else {
+                        fict_hir::RuntimeBindingKind::Container
+                    },
+                });
+            }
+        }
+        if added.is_empty() {
+            break;
+        }
+        core.hir.runtime_bindings.extend(added);
+        core.hir.runtime_bindings.sort_unstable();
+        core.hir.runtime_bindings.dedup();
+        let mut next = run_core_passes(
+            &core.hir,
+            CorePassOptions {
+                optimize: false,
+                ..options
+            },
+        )?;
+        for (stage, duration) in core.stats.stage_durations_ns {
+            let total = next.stats.stage_durations_ns.entry(stage).or_default();
+            *total = total.saturating_add(duration);
+        }
+        for key in [
+            "constantsFolded",
+            "cseReplacements",
+            "deadValues",
+            "fixedPointIterations",
+        ] {
+            let total = next.stats.counters.entry(key.to_owned()).or_default();
+            *total = total.saturating_add(core.stats.counters.get(key).copied().unwrap_or(0));
+        }
+        core = next;
+        rounds += 1;
+    }
+    core.stats
+        .counters
+        .insert("hookContractRefinements".to_owned(), rounds);
+    Ok(core)
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct MetadataGeneration {
@@ -810,20 +915,23 @@ fn infer_hook_return(
     let async_locals =
         fict_reactivity::async_dependent_locals(file, function, &analysis.scopes, &imported_hooks);
     let mut materialized_bindings = known_bindings.clone();
-    if !async_locals.is_empty() {
-        let writes = fict_emit::collect_captured_write_bindings(file);
-        for (_, local, _) in fict_emit::derived_declarations(
-            file,
-            function,
-            Some(&analysis.scopes),
-            &writes,
-            &imported_hooks,
-        ) {
-            if async_locals.contains(&local)
-                && let Some(binding) = function.locals[local.as_usize()].binding
-            {
-                materialized_bindings.insert(binding, ReactiveExportKind::Async);
-            }
+    let writes = fict_emit::collect_captured_write_bindings(file);
+    for (_, local, _) in fict_emit::derived_declarations(
+        file,
+        function,
+        Some(&analysis.scopes),
+        &writes,
+        &imported_hooks,
+    ) {
+        if let Some(binding) = function.locals[local.as_usize()].binding {
+            materialized_bindings.insert(
+                binding,
+                if async_locals.contains(&local) {
+                    ReactiveExportKind::Async
+                } else {
+                    ReactiveExportKind::Memo
+                },
+            );
         }
     }
     let known_bindings = &materialized_bindings;
@@ -876,10 +984,8 @@ fn collect_hook_branch_shapes(
         branches.push(HookBranchShape::Direct(HookSlotShape::Plain));
         return;
     }
-    if known_async_value_read(function, value, known_bindings) {
-        branches.push(HookBranchShape::Direct(HookSlotShape::Accessor(
-            ReactiveExportKind::Async,
-        )));
+    if let Some(kind) = known_materialized_value_read(function, value, known_bindings) {
+        branches.push(HookBranchShape::Direct(HookSlotShape::Accessor(kind)));
         visiting.remove(&value);
         return;
     }
@@ -1040,9 +1146,56 @@ fn hook_slot_for_value(
     if !visiting.insert(value) {
         return HookSlotShape::Plain;
     }
-    if known_async_value_read(function, value, known_bindings) {
+    if let Some(kind) = known_materialized_value_read(function, value, known_bindings) {
         visiting.remove(&value);
-        return HookSlotShape::Accessor(ReactiveExportKind::Async);
+        return HookSlotShape::Accessor(kind);
+    }
+    if let Some(HirInstructionKind::Read { place }) =
+        defining_instruction(function, value).map(|instruction| &instruction.kind)
+        && let [projection] = place.projections.as_slice()
+    {
+        let initializer = match place.base {
+            PlaceBase::Value(value) => Some(value),
+            PlaceBase::Local(local) => stable_local_initializer(function, local),
+            PlaceBase::Ssa(name) => stable_local_initializer(function, name.local),
+            PlaceBase::Global(_) => None,
+        };
+        if let Some(initializer) = initializer {
+            let mut branches = Vec::new();
+            collect_hook_branch_shapes(
+                file,
+                function,
+                analysis,
+                known_bindings,
+                known_hooks,
+                initializer,
+                visiting,
+                &mut branches,
+            );
+            let key = match projection {
+                Projection::StaticProperty { name, .. } => Some(name.clone()),
+                Projection::Index { index, .. } => Some(index.to_string()),
+                Projection::ComputedProperty { .. } => None,
+            };
+            if let Some(key) = key {
+                let slot = consistent_hook_slot(branches.iter().map(|branch| {
+                    match branch {
+                        HookBranchShape::Object(properties)
+                        | HookBranchShape::Array(properties) => properties
+                            .get(&key)
+                            .copied()
+                            .unwrap_or(HookSlotShape::Plain),
+                        HookBranchShape::Direct(_) => HookSlotShape::Plain,
+                    }
+                }));
+                visiting.remove(&value);
+                return match slot {
+                    Ok(Some(kind)) => HookSlotShape::Accessor(kind),
+                    Ok(None) => HookSlotShape::Plain,
+                    Err(()) => HookSlotShape::Conflict,
+                };
+            }
+        }
     }
     if let Some(initializer) = stable_read_initializer(function, value) {
         let shape = hook_slot_for_value(
@@ -1058,6 +1211,35 @@ fn hook_slot_for_value(
         return shape;
     }
     let shape = match defining_instruction(function, value).map(|instruction| &instruction.kind) {
+        Some(HirInstructionKind::Object { .. } | HirInstructionKind::Array { .. }) => {
+            // The public hook contract describes a direct accessor or one flat
+            // object/tuple level. A nested accessor cannot be silently erased.
+            visiting.remove(&value);
+            let mut branches = Vec::new();
+            collect_hook_branch_shapes(
+                file,
+                function,
+                analysis,
+                known_bindings,
+                known_hooks,
+                value,
+                visiting,
+                &mut branches,
+            );
+            let nested = branches.iter().any(|branch| match branch {
+                HookBranchShape::Direct(slot) => *slot != HookSlotShape::Plain,
+                HookBranchShape::Object(properties) | HookBranchShape::Array(properties) => {
+                    properties
+                        .values()
+                        .any(|slot| *slot != HookSlotShape::Plain)
+                }
+            });
+            if nested {
+                HookSlotShape::Conflict
+            } else {
+                HookSlotShape::Plain
+            }
+        }
         Some(HirInstructionKind::Conditional {
             consequent,
             alternate,
@@ -1278,28 +1460,27 @@ fn static_nullish(
     result
 }
 
-fn known_async_value_read(
+fn known_materialized_value_read(
     function: &HirFunction,
     value: ValueId,
     bindings: &BTreeMap<BindingId, ReactiveExportKind>,
-) -> bool {
+) -> Option<ReactiveExportKind> {
     let Some(HirInstructionKind::Read { place }) =
         defining_instruction(function, value).map(|instruction| &instruction.kind)
     else {
-        return false;
+        return None;
     };
     if !place.projections.is_empty() {
-        return false;
+        return None;
     }
     let local = match place.base {
         PlaceBase::Local(local) => local,
         PlaceBase::Ssa(name) => name.local,
-        _ => return false,
+        _ => return None,
     };
     function.locals[local.as_usize()]
         .binding
-        .and_then(|binding| bindings.get(&binding))
-        == Some(&ReactiveExportKind::Async)
+        .and_then(|binding| bindings.get(&binding).copied())
 }
 
 fn stable_read_initializer(function: &HirFunction, value: ValueId) -> Option<ValueId> {
@@ -1317,6 +1498,10 @@ fn stable_read_initializer(function: &HirFunction, value: ValueId) -> Option<Val
         PlaceBase::Ssa(name) => name.local,
         PlaceBase::Global(_) | PlaceBase::Value(_) => return None,
     };
+    stable_local_initializer(function, local)
+}
+
+fn stable_local_initializer(function: &HirFunction, local: fict_hir::LocalId) -> Option<ValueId> {
     if function.locals.get(local.as_usize())?.declaration_kind != DeclarationKind::Const {
         return None;
     }
@@ -1668,12 +1853,12 @@ fn hook_conflict_diagnostic(
         DiagnosticCode::new("FICT-H002").expect("hook conflict diagnostic literal"),
         DiagnosticSeverity::Warning,
         format!(
-            "Hook {hook_name:?} returns {} with an inconsistent shape across branches; each slot must consistently be a plain value or the same reactive accessor kind",
+            "Hook {hook_name:?} returns {} with an unsupported or inconsistent accessor shape; slots must be flat and consistently be plain values or the same reactive accessor kind across branches",
             slots.join(", ")
         ),
     )
     .with_help(
-        "return a plain value from every branch or return the same signal, memo, or store shape from every branch",
+        "return a direct accessor or a flat object/tuple with the same signal, memo, or store shape from every branch; move nested accessors to top-level return members",
     )
     .with_guarantee_class(GuaranteeClass::Fallback);
     if let Some(primary) = span.or(function.origin.primary_span) {

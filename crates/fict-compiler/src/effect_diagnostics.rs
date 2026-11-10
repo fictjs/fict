@@ -7,8 +7,8 @@ use fict_hir::{
 };
 
 /// Remove the early E001 advisory only when verified EmitIR proves that the registered effect
-/// callback reads a control-flow-region accessor. The frontend cannot see that later rewrite and
-/// otherwise mistakes the region output for a non-reactive local snapshot.
+/// callback reads a control-flow-region or hook-return accessor. The frontend cannot see every
+/// later rewrite and otherwise mistakes these outputs for non-reactive local snapshots.
 pub(crate) fn suppress_region_backed_effect_advisories(
     diagnostics: &mut Vec<Diagnostic>,
     hir: Option<&HirFile>,
@@ -17,6 +17,15 @@ pub(crate) fn suppress_region_backed_effect_advisories(
     let (Some(hir), Some(emit)) = (hir, emit) else {
         return;
     };
+    let accessor_references: Vec<_> = emit
+        .functions
+        .iter()
+        .flat_map(|function| &function.operations)
+        .filter_map(|operation| match operation {
+            EmitOperation::ReadReactive { origin, .. } => Some(*origin),
+            _ => None,
+        })
+        .collect();
     let mut region_backed_effects = BTreeSet::new();
     for function in &emit.functions {
         let Some(owner) = hir.functions.get(function.source.as_usize()) else {
@@ -33,7 +42,7 @@ pub(crate) fn suppress_region_backed_effect_advisories(
             .flat_map(|output| &output.references)
             .copied()
             .collect();
-        if region_references.is_empty() {
+        if region_references.is_empty() && accessor_references.is_empty() {
             continue;
         }
         for operation in &function.operations {
@@ -54,6 +63,7 @@ pub(crate) fn suppress_region_backed_effect_advisories(
             };
             if region_references
                 .iter()
+                .chain(&accessor_references)
                 .any(|reference| directly_reads_reference(callback, *reference))
             {
                 region_backed_effects.insert(effect_span);

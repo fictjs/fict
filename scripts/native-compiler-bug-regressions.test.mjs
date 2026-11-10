@@ -1852,3 +1852,119 @@ for (const fineGrainedDom of [true, false]) {
     )
   })
 }
+
+for (const fineGrainedDom of [true, false]) {
+  test(`bug 18: implicit hook memos expose accurate return metadata and remain live (fineGrainedDom=${fineGrainedDom})`, async () => {
+    const source = `import{$state,$effect,render}from'fict';let root;
+      export function useBase(){let n=$state(1);const doubled=n*2;return {doubled,inc:()=>n++}}
+      export function useDirect(){let n=$state(2);const d=n*2;return d}
+      export function useTuple(){const base=useBase();const tripled=base.doubled*3;return [tripled,base.inc]}
+      export function useForward(){const base=useBase();return {value:base.doubled,inc:base.inc}}
+      function App(){const base=useBase();const direct=useDirect();const pair=useTuple();const forward=useForward();const extra=base.doubled+1;$effect(()=>{document.title='d'+base.doubled});return <div><p onClick={base.inc}>{base.doubled+1}|{extra}|{direct+1}</p><b onClick={pair[1]}>{pair[0]+1}</b><i onClick={forward.inc}>{forward.value+1}</i></div>}
+      export function mount(el){root=el;return render(()=><App/>,el)}export function observe(){return [root.textContent,document.title]}`
+    const result = native.transformSync({
+      code: source,
+      filename: '/hook-implicit.tsx',
+      moduleKind: 'commonjs',
+      options: { dev: false, strictGuarantee: true, fineGrainedDom },
+    })
+    assert.deepEqual(result.diagnostics, [])
+    assert.equal(result.moduleMetadata.hooks.useBase.objectProps.doubled, 'memo')
+    assert.equal(result.moduleMetadata.hooks.useDirect.directAccessor, 'memo')
+    assert.equal(result.moduleMetadata.hooks.useTuple.arrayProps['0'], 'memo')
+    assert.equal(result.moduleMetadata.hooks.useForward.objectProps.value, 'memo')
+    assert.deepEqual(
+      await executeDomCommonJs(result.code, {
+        mountExport: 'mount',
+        observeExport: 'observe',
+        steps: [
+          { kind: 'record', label: 'initial' },
+          { kind: 'click', selector: 'p' },
+          { kind: 'click', selector: 'b' },
+          { kind: 'click', selector: 'i' },
+          { kind: 'record', label: 'updated' },
+        ],
+      }),
+      [
+        { label: 'initial', value: ['3|3|573', 'd2'] },
+        { label: 'updated', value: ['5|5|5135', 'd4'] },
+      ],
+    )
+  })
+}
+
+for (const fineGrainedDom of [true, false]) {
+  test(`bug 18: published implicit hook metadata drives cross-module reads (fineGrainedDom=${fineGrainedDom})`, async () => {
+    const dependency = native.transformSync({
+      code: `import{$state}from'fict';import{createSignal}from'fict/advanced';const source=createSignal(2);export function update(){source(source()+1)}export function useDirect(){const doubled=source()*2;return doubled}export function useCounter(){let n=$state(1);const value=n*3;return {value,inc:()=>n++}}`,
+      filename: '/implicit-hooks.ts',
+      moduleKind: 'commonjs',
+      options: { dev: false, strictGuarantee: true },
+    })
+    assert.deepEqual(dependency.diagnostics, [])
+    const consumer = native.transformSync({
+      code: `import{render}from'fict';import{useDirect,useCounter,update}from'./implicit-hooks';let root;function App(){const direct=useDirect();const counter=useCounter();const text=direct+':'+counter.value;return <div><p onClick={update}>{text}</p><b onClick={counter.inc}>{counter.value+1}</b></div>}export function mount(el){root=el;return render(()=><App/>,el)}export function observe(){return root.textContent}`,
+      filename: '/implicit-consumer.tsx',
+      moduleKind: 'commonjs',
+      metadata: [
+        {
+          request: './implicit-hooks',
+          resolvedId: '/implicit-hooks.ts',
+          status: 'resolved',
+          metadata: dependency.moduleMetadata,
+          fingerprint: 'sha256:implicit-hooks',
+        },
+      ],
+      options: { dev: false, strictGuarantee: true, fineGrainedDom },
+    })
+    assert.deepEqual(consumer.diagnostics, [])
+    const code = `const dependency={exports:{}};(function(require,module,exports){${dependency.code}\n})(require,dependency,dependency.exports);(function(require,module,exports){${consumer.code}\n})(name=>name==='./implicit-hooks'?dependency.exports:require(name),module,exports);`
+    assert.deepEqual(
+      await executeDomCommonJs(code, {
+        mountExport: 'mount',
+        observeExport: 'observe',
+        steps: [
+          { kind: 'record', label: 'initial' },
+          { kind: 'click', selector: 'p' },
+          { kind: 'click', selector: 'b' },
+          { kind: 'record', label: 'updated' },
+        ],
+      }),
+      [
+        { label: 'initial', value: '4:34' },
+        { label: 'updated', value: '6:67' },
+      ],
+    )
+  })
+}
+
+for (const returned of ['{nested:{n}}', '[[n]]', '{nested:{d}}']) {
+  test(`bug 18: unsupported nested accessor returns fail closed (${returned})`, () => {
+    for (const strictGuarantee of [true, false]) {
+      const result = native.transformSync({
+        code: `import{$state}from'fict';export function useNested(){let n=$state(0);const d=n*2;return ${returned}}`,
+        filename: '/nested-hook.ts',
+        options: { dev: false, strictGuarantee },
+      })
+      const finding = result.diagnostics.find(d => d.code === 'FICT-H002')
+      assert.equal(
+        finding?.severity,
+        strictGuarantee ? 'error' : 'warning',
+        JSON.stringify(result.diagnostics),
+      )
+      assert.match(finding.help, /nested accessors/)
+      assert.ok(finding.primarySpan)
+      if (strictGuarantee) assert.ok(!result.code)
+    }
+  })
+}
+
+test('bug 18: callback objects and ordinary plain helpers do not gain accessor metadata', () => {
+  const result = native.transformSync({
+    code: `import{$state}from'fict';export function useCallbacks(){let n=$state(0);return {nested:{read:()=>n}}}export function useful(){const doubled=4;return {doubled}}`,
+    filename: '/plain-hook.ts',
+    options: { dev: false, strictGuarantee: true },
+  })
+  assert.deepEqual(result.diagnostics, [])
+  assert.deepEqual(result.moduleMetadata.hooks ?? {}, {})
+})
