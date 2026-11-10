@@ -8,7 +8,9 @@ const isDev =
 export interface CycleProtectionOptions {
   /** Enable configurable guards and warnings. Immutable hard limits always remain active. */
   enabled?: boolean
+  /** Maximum executions of the same effect in one flush (legacy option name). */
   maxFlushCyclesPerMicrotask?: number
+  /** Secondary per-effect execution limit; independent effects do not share a budget. */
   maxEffectRunsPerFlush?: number
   windowSize?: number
   highUsageRatio?: number
@@ -40,7 +42,7 @@ export const CYCLE_PROTECTION_HARD_LIMITS = Object.freeze({
 let setCycleProtectionOptions: (opts: CycleProtectionOptions) => void = () => {}
 let resetCycleProtectionStateForTests: () => void = () => {}
 let beginFlushGuard: () => void = () => {}
-let beforeEffectRunGuard: () => boolean = () => true
+let beforeEffectRunGuard: (effect?: object) => boolean = () => true
 let endFlushGuard: () => void = () => {}
 let enterRootGuard: (root: object) => boolean = () => true
 let exitRootGuard: (root: object) => void = () => {}
@@ -65,6 +67,9 @@ let options: Required<CycleProtectionOptions> = {
   ...defaultOptions,
 } as Required<CycleProtectionOptions>
 
+const anonymousEffect = {}
+let effectRunCounts = new WeakMap<object, number>()
+// Peak repeated executions of one effect, not the breadth of an acyclic graph.
 let effectRunsThisFlush = 0
 let windowUsage: CycleWindowEntry[] = []
 let rootDepth = new WeakMap<object, number>()
@@ -90,6 +95,7 @@ resetCycleProtectionStateForTests = () => {
   options = { ...defaultOptions } as Required<CycleProtectionOptions>
   enabled = defaultOptions.enabled
   effectRunsThisFlush = 0
+  effectRunCounts = new WeakMap<object, number>()
   windowUsage = []
   rootDepth = new WeakMap<object, number>()
   warnedRoots = new WeakSet<object>()
@@ -102,14 +108,17 @@ resetCycleProtectionStateForTests = () => {
 
 beginFlushGuard = () => {
   effectRunsThisFlush = 0
+  effectRunCounts = new WeakMap<object, number>()
   flushWarned = false
   // Reset backoff state for new flush
   backoffWarned50 = false
   backoffWarned75 = false
 }
 
-beforeEffectRunGuard = () => {
-  const next = ++effectRunsThisFlush
+beforeEffectRunGuard = (effect = anonymousEffect) => {
+  const next = (effectRunCounts.get(effect) ?? 0) + 1
+  effectRunCounts.set(effect, next)
+  effectRunsThisFlush = Math.max(effectRunsThisFlush, next)
   const limit = effectiveEffectRunLimit()
 
   // Backoff warnings at 50% and 75% of limit
@@ -121,7 +130,7 @@ beforeEffectRunGuard = () => {
       backoffWarned50 = true
       console.warn(
         `[fict] cycle guard: approaching effect limit (${Math.round(ratio * 100)}% of budget used)\n` +
-          `  - Current: ${next} effects, Limit: ${limit}\n` +
+          `  - Current: ${next} executions of one effect, Limit: ${limit}\n` +
           `  - Tip: Check for effects that trigger other effects in a loop.\n` +
           `  - Common causes: signal updates inside effects that read and write the same signal.`,
       )
@@ -129,7 +138,7 @@ beforeEffectRunGuard = () => {
       backoffWarned75 = true
       console.warn(
         `[fict] cycle guard: nearing effect limit (${Math.round(ratio * 100)}% of budget used)\n` +
-          `  - Current: ${next} effects, Limit: ${limit}\n` +
+          `  - Current: ${next} executions of one effect, Limit: ${limit}\n` +
           `  - Warning: Consider breaking the reactive dependency cycle.\n` +
           `  - Debug: Use browser devtools to identify the recursive effect chain.`,
       )
@@ -141,7 +150,7 @@ beforeEffectRunGuard = () => {
     if (options.devMode) {
       throw new Error(
         message +
-          `\n  - Effect runs: ${next}, Limit: ${limit}` +
+          `\n  - Effect runs: ${next} for one effect, Limit: ${limit}` +
           `\n  - This indicates a reactive cycle where effects keep triggering each other.` +
           `\n  - Check for patterns like: createEffect(() => { signal(); signal(newValue); })`,
       )
@@ -164,6 +173,7 @@ endFlushGuard = () => {
     recordWindowUsage(effectRunsThisFlush, effectiveEffectRunLimit())
   }
   effectRunsThisFlush = 0
+  effectRunCounts = new WeakMap<object, number>()
 }
 
 enterRootGuard = root => {

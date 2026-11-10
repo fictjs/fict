@@ -1598,8 +1598,8 @@ import { setCycleProtectionOptions } from 'fict/advanced'
 
 interface CycleProtectionOptions {
   enabled?: boolean // Default: dev-only (NODE_ENV !== 'production')
-  maxFlushCyclesPerMicrotask?: number // Default: 10,000
-  maxEffectRunsPerFlush?: number // Default: 20,000
+  maxFlushCyclesPerMicrotask?: number // Default: 10,000 executions per effect
+  maxEffectRunsPerFlush?: number // Default: 20,000 executions per effect
   windowSize?: number // Default: 5
   highUsageRatio?: number // Default: 0.8
   maxRootReentrantDepth?: number // Default: 10
@@ -1617,7 +1617,7 @@ function setCycleProtectionOptions(options: CycleProtectionOptions): void
 ```tsx
 import { setCycleProtectionOptions } from 'fict/advanced'
 
-// For large applications
+// For intentional finite feedback with many executions
 setCycleProtectionOptions({
   maxFlushCyclesPerMicrotask: 50000,
 })
@@ -1629,7 +1629,7 @@ setCycleProtectionOptions({
 })
 ```
 
-> **Note:** Cycle protection is enabled by default only in development mode. In production it is disabled by default, but you can opt-in via `setCycleProtectionOptions({ enabled: true })`.
+> **Note:** Cycle protection is enabled by default only in development mode. Production retains a hard ceiling of 100,000 executions per effect per flush. Independent effects do not share a budget. Enable lower diagnostic thresholds via `setCycleProtectionOptions({ enabled: true })`.
 
 For detailed documentation, see [Cycle Protection](./cycle-protection.md).
 

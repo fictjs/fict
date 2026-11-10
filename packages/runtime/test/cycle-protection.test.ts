@@ -34,14 +34,8 @@ describe('framework cycle protection', () => {
       })
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
       const s = createSignal(0)
-      createEffect(() => {
-        s()
-      })
-      createEffect(() => {
-        s()
-      })
-      createEffect(() => {
-        s()
+      const stop = createEffect(() => {
+        if (s() > 0) s(s() + 1)
       })
 
       s(1)
@@ -51,6 +45,7 @@ describe('framework cycle protection', () => {
           ([msg]) => typeof msg === 'string' && msg.includes('cycle protection triggered'),
         ),
       ).toBe(true)
+      stop()
       warn.mockRestore()
     })
 
@@ -65,9 +60,11 @@ describe('framework cycle protection', () => {
       const s = createSignal(0)
       let runsA = 0
       let runsB = 0
+      let feedback = true
       const disposeA = createEffect(() => {
         s()
         runsA++
+        if (feedback && s() > 0) s(s() + 1)
       })
       const disposeB = createEffect(() => {
         s()
@@ -83,13 +80,17 @@ describe('framework cycle protection', () => {
       const afterFailA = runsA
       const afterFailB = runsB
 
+      expect(
+        warn.mock.calls.some(([message]) => String(message).includes('flush-budget-exceeded')),
+      ).toBe(true)
+      feedback = false
       // Increase budget and ensure future updates still flush
       setCycleProtectionOptions({
         maxFlushCyclesPerMicrotask: 10,
         maxEffectRunsPerFlush: 10,
         devMode: false,
       })
-      s(2)
+      s(100)
       await tick()
       await tick()
 
@@ -107,13 +108,14 @@ describe('framework cycle protection', () => {
       const trigger = createSignal(0)
       const recovery = createSignal(0)
       let middleRuns = 0
+      let feedback = true
 
       const stopOuter = createEffect(() => {
         createEffect(() => {
           recovery()
           middleRuns++
           createEffect(() => {
-            trigger()
+            if (trigger() > 0 && feedback) trigger(trigger() + 1)
           })
         })
       })
@@ -129,6 +131,10 @@ describe('framework cycle protection', () => {
       trigger(1)
       await tick()
       const middleRunsAfterDrop = middleRuns
+      expect(
+        warn.mock.calls.some(([message]) => String(message).includes('flush-budget-exceeded')),
+      ).toBe(true)
+      feedback = false
 
       setCycleProtectionOptions({
         maxFlushCyclesPerMicrotask: 10,

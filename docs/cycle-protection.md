@@ -14,13 +14,13 @@ Fict's cycle protection monitors these patterns and provides helpful warnings in
 
 ## When Cycle Protection Activates
 
-The configurable guard is **enabled by default only in development mode** (`NODE_ENV !== 'production'`). Production defaults to immutable ceilings of 100,000 effect runs per flush and 100 re-entries of the same root. `setCycleProtectionOptions({ enabled: false })` cannot disable those ceilings. Internal canaries should enable the configurable tier explicitly and use lower thresholds so a regression is detected before the production hard limit.
+The configurable guard is **enabled by default only in development mode** (`NODE_ENV !== 'production'`). Production defaults to immutable ceilings of 100,000 executions of the same effect per flush and 100 re-entries of the same root. `setCycleProtectionOptions({ enabled: false })` cannot disable those ceilings. Internal canaries should enable the configurable tier explicitly and use lower thresholds so a regression is detected before the production hard limit.
 
 Detection triggers in three scenarios:
 
 | Trigger                   | Description                                                              |
 | ------------------------- | ------------------------------------------------------------------------ |
-| **Flush Budget Exceeded** | Too many effects ran in a single microtask flush                         |
+| **Flush Budget Exceeded** | The same effect ran too many times in one flush                          |
 | **Root Re-entry Depth**   | A root context was re-entered too deeply (recursive component execution) |
 | **High Usage Window**     | Multiple consecutive flush cycles used a high percentage of the budget   |
 
@@ -36,10 +36,10 @@ import { setCycleProtectionOptions } from 'fict/advanced'
 interface CycleProtectionOptions {
   /** Enable configurable guards and warnings (default: dev-only). Hard limits remain active. */
   enabled?: boolean
-  /** Maximum effect runs allowed per microtask flush (default: 10,000) */
+  /** Maximum executions of one effect per microtask flush (default: 10,000) */
   maxFlushCyclesPerMicrotask?: number
 
-  /** Maximum effect runs per flush (default: 20,000) */
+  /** Secondary per-effect execution limit (default: 20,000) */
   maxEffectRunsPerFlush?: number
 
   /** Number of flushes to track for high-usage detection (default: 5) */
@@ -116,18 +116,18 @@ setCycleProtectionOptions({ enabled: true })
 
 **Default:** `10,000`
 
-Maximum number of effect runs allowed within a single microtask flush. If exceeded, cycle protection will warn (or throw in devMode) and stop processing further effects.
+Maximum number of executions of the same effect within a single microtask flush. Independent effects have separate counters, so large acyclic fan-out updates do not consume a shared budget. If exceeded, cycle protection will warn (or throw in devMode) and stop processing further effects.
 
 Values above the immutable 100,000-run ceiling are clamped. Setting
 `enabled: false` selects that ceiling rather than disabling cycle safety.
 
 **When to adjust:**
 
-- Increase for large applications with many reactive computations
+- Increase only for intentional finite feedback that needs many executions
 - Decrease for stricter cycle detection during development
 
 ```tsx
-// Large app with complex reactive graph
+// Intentional finite feedback with many executions
 setCycleProtectionOptions({
   maxFlushCyclesPerMicrotask: 50000,
 })
@@ -144,7 +144,7 @@ setCycleProtectionOptions({
 
 **Default:** `20,000`
 
-Similar to `maxFlushCyclesPerMicrotask`, but tracks total effect runs across the flush. This provides a secondary limit.
+Similar to `maxFlushCyclesPerMicrotask`, it limits executions of each individual effect across the flush. The option names are retained for compatibility; neither limit caps the total number of independent effects.
 
 The effective limit is the lower of the two configured effect limits and the
 immutable 100,000-run ceiling.

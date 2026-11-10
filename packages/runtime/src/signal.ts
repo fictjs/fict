@@ -1419,9 +1419,9 @@ function flushQueues(): void {
   let highIndex = 0
   let lowIndex = 0
   let completed = false
-  const checkCycleGuard = () => {
+  const checkCycleGuard = (effect: EffectNode) => {
     try {
-      if (beforeEffectRunGuard()) return true
+      if (beforeEffectRunGuard(effect)) return true
     } catch (error) {
       // A guard failure must terminate the queue before propagating the error.
       // Ordinary effect errors still reschedule siblings in the finally block.
@@ -1441,7 +1441,7 @@ function flushQueues(): void {
         highIndex++
         continue
       }
-      if (!checkCycleGuard()) return
+      if (!checkCycleGuard(e)) return
       highIndex++
       e.queuedPriority = undefined
       runEffect(e)
@@ -1466,7 +1466,7 @@ function flushQueues(): void {
         lowIndex++
         continue
       }
-      if (!checkCycleGuard()) return
+      if (!checkCycleGuard(e)) return
       lowIndex++
       e.queuedPriority = undefined
       runEffect(e)
