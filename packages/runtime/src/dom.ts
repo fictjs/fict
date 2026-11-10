@@ -665,7 +665,7 @@ function createElementWithContext(
   }
 
   // Primitive values - text node
-  if (typeof node === 'string' || typeof node === 'number') {
+  if (typeof node === 'string' || typeof node === 'number' || typeof node === 'bigint') {
     return createTextNodeWithHydration(String(node), ownerDocument)
   }
 

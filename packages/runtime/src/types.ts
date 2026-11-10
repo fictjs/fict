@@ -26,7 +26,16 @@ export interface FictVNode {
  * Fict Node - represents any renderable value
  * This type covers all possible values that can appear in JSX
  */
-export type FictNode = FictVNode | FictNode[] | Node | string | number | boolean | null | undefined
+export type FictNode =
+  | FictVNode
+  | FictNode[]
+  | Node
+  | string
+  | number
+  | bigint
+  | boolean
+  | null
+  | undefined
 
 // ============================================================================
 // Reactive Types

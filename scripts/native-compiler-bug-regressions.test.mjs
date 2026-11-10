@@ -68,3 +68,35 @@ for (const detached of [false, true]) {
     ])
   })
 }
+
+for (const fineGrainedDom of [true, false]) {
+  test(`bug 2: bigint children render and update (fineGrainedDom=${fineGrainedDom})`, async () => {
+    const code = compile(
+      `
+      import { $state, render } from 'fict'
+      let root
+      function App() {
+        let count = $state(1n)
+        return <div><button onClick={() => count++}>inc</button>
+          <p>{count}</p><b>{0n}</b><i>{[2n, 3n]}</i></div>
+      }
+      export function mount(container) { root = container; return render(() => <App />, root) }
+      export function observe() { return ['p','b','i'].map(tag => root.querySelector(tag).textContent) }
+    `,
+      { fineGrainedDom },
+    )
+    const result = await executeDomCommonJs(code, {
+      mountExport: 'mount',
+      observeExport: 'observe',
+      steps: [
+        { kind: 'record', label: 'initial' },
+        { kind: 'click', selector: 'button' },
+        { kind: 'record', label: 'updated' },
+      ],
+    })
+    assert.deepEqual(result, [
+      { label: 'initial', value: ['1', '0', '23'] },
+      { label: 'updated', value: ['2', '0', '23'] },
+    ])
+  })
+}

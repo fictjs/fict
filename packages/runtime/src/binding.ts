@@ -1295,6 +1295,7 @@ export function insert(
         value === false ||
         typeof value === 'string' ||
         typeof value === 'number' ||
+        typeof value === 'bigint' ||
         typeof value === 'boolean'
 
       if (isPrimitive) {
@@ -1554,6 +1555,7 @@ export function insertBetween(
         value === false ||
         typeof value === 'string' ||
         typeof value === 'number' ||
+        typeof value === 'bigint' ||
         typeof value === 'boolean'
 
       if (isPrimitive) {
@@ -2576,6 +2578,7 @@ function bindAssignedChildren(
         value === false ||
         typeof value === 'string' ||
         typeof value === 'number' ||
+        typeof value === 'bigint' ||
         typeof value === 'boolean'
 
       if (isPrimitive) {
