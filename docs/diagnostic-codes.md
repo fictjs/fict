@@ -131,6 +131,12 @@ function CounterSafe() {
 
 **Why:** A `$state` variable is passed to an arbitrary function, which captures a snapshot value.
 
+This also applies to reactive value arguments of stateful hooks. Their state,
+effects and regions belong to setup and cannot be recreated by an inferred memo.
+Use `useCounter(untrack(() => count))` for an initial primitive snapshot, or define
+the hook to read an explicit manual signal accessor for live input. See the
+[hook input example](./compiler-spec.md#state--component-only).
+
 **Impact:** Updates may not propagate correctly to consumers outside the current scope.
 
 **Fix:**

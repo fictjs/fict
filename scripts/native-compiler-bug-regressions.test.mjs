@@ -1968,3 +1968,142 @@ test('bug 18: callback objects and ordinary plain helpers do not gain accessor m
   assert.deepEqual(result.diagnostics, [])
   assert.deepEqual(result.moduleMetadata.hooks ?? {}, {})
 })
+
+for (const [body, expression] of [
+  ['let local=$state(10);return local+n', 'useValue(count)'],
+  ['let local=$state(10);return {total:local+n}', 'useValue(count)'],
+  ["$effect(()=>{document.title='n'+n});return n*2", 'useValue(count)'],
+  ['const value=$memo(()=>n*3);return value', 'useValue(count)'],
+  ["let label='none';if(n>2)label='many';return {label:()=>label}", 'useValue(count)'],
+  ['let local=$state(10);return local+n', 'useValue(count+1)'],
+]) {
+  test(`bug 4: stateful hook snapshot arguments fail closed (${body}; ${expression})`, () => {
+    const source = `import{$state,$memo,$effect}from'fict';function useValue(n){${body}}function App(){let count=$state(1);const value=${expression};return <p onClick={()=>count++}>{value}</p>}`
+    const result = native.transformSync({
+      code: source,
+      filename: '/hook-snapshot.tsx',
+      options: { dev: false, strictGuarantee: true },
+    })
+    const finding = result.diagnostics.find(
+      d => d.code === 'FICT-S002' && /stateful hook/.test(d.message),
+    )
+    assert.equal(finding?.severity, 'error', JSON.stringify(result.diagnostics))
+    assert.ok(finding.primarySpan)
+    assert.ok(!result.code)
+    assert.ok(!result.diagnostics.some(d => d.guaranteeClass === 'internal'))
+  })
+}
+
+for (const fineGrainedDom of [true, false]) {
+  for (const optOut of [false, true]) {
+    test(`bug 4: hook setup stays stable with explicit or opt-out snapshots (fineGrainedDom=${fineGrainedDom}, optOut=${optOut})`, async () => {
+      const result = native.transformSync({
+        code: `import{$state,untrack,render,onMount}from'fict';let root,mounts=0;
+        function useValue(n){let local=$state(10);onMount(()=>mounts++);const total=local+n;return {total,inc:()=>local++}}
+        function App(){let count=$state(1);const value=useValue(${optOut ? 'count' : 'untrack(()=>count)'});return <div><button onClick={()=>count++}>outer</button><p onClick={value.inc}>{count}:{value.total}</p></div>}
+        export function mount(el){root=el;return render(()=><App/>,el)}export function observe(){return [root.querySelector('p').textContent,mounts]}`,
+        filename: '/hook-snapshot-runtime.tsx',
+        moduleKind: 'commonjs',
+        options: { dev: false, strictGuarantee: !optOut, fineGrainedDom },
+      })
+      if (optOut) {
+        assert.equal(result.diagnostics.length, 1)
+        assert.equal(result.diagnostics[0].severity, 'warning')
+        assert.equal(result.diagnostics[0].code, 'FICT-S002')
+      } else assert.deepEqual(result.diagnostics, [])
+      assert.deepEqual(
+        await executeDomCommonJs(result.code, {
+          mountExport: 'mount',
+          observeExport: 'observe',
+          steps: [
+            { kind: 'record', label: 'initial' },
+            { kind: 'click', selector: 'p' },
+            { kind: 'click', selector: 'button' },
+            { kind: 'record', label: 'updated' },
+          ],
+        }),
+        [
+          { label: 'initial', value: ['1:11', 1] },
+          { label: 'updated', value: ['2:12', 1] },
+        ],
+      )
+    })
+  }
+  test(`bug 4: manual accessor inputs preserve live values and hook state (fineGrainedDom=${fineGrainedDom})`, async () => {
+    const code = compile(
+      `import{$state,render,onMount}from'fict';import{createSignal}from'fict/advanced';let root,mounts=0;
+      function useValue(get){let local=$state(10);onMount(()=>mounts++);const total=local+get();return {total,inc:()=>local++}}
+      function App(){const count=createSignal(1);const value=useValue(count);return <div><button onClick={()=>count(count()+1)}>outer</button><p onClick={value.inc}>{count()}:{value.total}</p></div>}
+      export function mount(el){root=el;return render(()=><App/>,el)}export function observe(){return [root.querySelector('p').textContent,mounts]}`,
+      { fineGrainedDom },
+    )
+    assert.deepEqual(
+      await executeDomCommonJs(code, {
+        mountExport: 'mount',
+        observeExport: 'observe',
+        steps: [
+          { kind: 'record', label: 'initial' },
+          { kind: 'click', selector: 'p' },
+          { kind: 'click', selector: 'button' },
+          { kind: 'record', label: 'updated' },
+        ],
+      }),
+      [
+        { label: 'initial', value: ['1:11', 1] },
+        { label: 'updated', value: ['2:13', 1] },
+      ],
+    )
+  })
+  test(`bug 4: proven pure straight-line hooks keep reactive derivation (fineGrainedDom=${fineGrainedDom})`, async () => {
+    const code = compile(
+      `import{$state,render}from'fict';let root;function useDouble(n){const d=n*2;return d}function useForward(n){return useDouble(n)}function App(){let n=$state(1);const d=useForward(n);return <p onClick={()=>n++}>{d}</p>}export function mount(el){root=el;return render(()=><App/>,el)}export function observe(){return root.textContent}`,
+      { fineGrainedDom },
+    )
+    assert.deepEqual(
+      await executeDomCommonJs(code, {
+        mountExport: 'mount',
+        observeExport: 'observe',
+        steps: [
+          { kind: 'record', label: 'initial' },
+          { kind: 'click', selector: 'p' },
+          { kind: 'record', label: 'updated' },
+        ],
+      }),
+      [
+        { label: 'initial', value: '2' },
+        { label: 'updated', value: '4' },
+      ],
+    )
+  })
+}
+
+test('bug 4: aliases and metadata-backed imported hooks retain setup-only arguments', () => {
+  for (const declaration of [
+    'function useValue(n){let x=$state(1);return {x}}const invoke=useValue;',
+    "import{useValue as invoke}from'./hook';",
+  ]) {
+    const result = native.transformSync({
+      code: `import{$state}from'fict';${declaration}function App(){let count=$state(1);const value=invoke(count);return <p onClick={()=>count++}>{value.x+1}</p>}`,
+      filename: '/hook-setup-alias.tsx',
+      metadata: [
+        {
+          request: './hook',
+          resolvedId: '/hook.ts',
+          status: 'resolved',
+          metadata: {
+            version: 1,
+            exports: {},
+            hooks: { useValue: { objectProps: { x: 'signal' } } },
+          },
+          fingerprint: 'sha256:hook-setup',
+        },
+      ],
+      options: { dev: false, strictGuarantee: true },
+    })
+    assert.ok(
+      result.diagnostics.some(d => d.code === 'FICT-S002' && /stateful hook/.test(d.message)),
+      JSON.stringify(result.diagnostics),
+    )
+    assert.ok(!result.code)
+  }
+})

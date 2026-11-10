@@ -47,6 +47,7 @@ pub(crate) fn run_core_with_hook_contracts(
             .hir
             .runtime_bindings
             .iter()
+            .filter(|fact| fact.kind != fict_hir::RuntimeBindingKind::SetupValue)
             .map(|fact| fact.binding)
             .collect();
         let mut added = Vec::new();
@@ -92,6 +93,10 @@ pub(crate) fn run_core_with_hook_contracts(
         if added.is_empty() {
             break;
         }
+        let replaced: BTreeSet<_> = added.iter().map(|fact| fact.binding).collect();
+        core.hir
+            .runtime_bindings
+            .retain(|fact| !replaced.contains(&fact.binding));
         core.hir.runtime_bindings.extend(added);
         core.hir.runtime_bindings.sort_unstable();
         core.hir.runtime_bindings.dedup();

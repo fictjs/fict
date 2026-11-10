@@ -251,6 +251,8 @@ pub struct ImportBinding {
 /// Runtime representation certified by the frontend for an intact factory result.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum RuntimeBindingKind {
+    /// A setup call result that must never re-run as an inferred memo.
+    SetupValue,
     /// A stable factory method; reads do not require a derived memo.
     Stable,
     /// A manual accessor; authored calls and function identity are preserved.

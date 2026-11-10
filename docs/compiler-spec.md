@@ -508,7 +508,34 @@ Module-level `$state` is **forbidden**. `$state` must be created inside a compon
 
 Hook-style helpers named `useX` may create `$state`, but they must be invoked at the top level of a component or another `useX` helper (not inside loops/conditionals) so the compiler can attach them to the correct render context.
 
-Shared logic should be expressed as helpers that receive state from the caller rather than creating state themselves (e.g., `useCounter(count)` that derives from a passed-in signal).
+Stateful hooks execute during setup. A reactive value argument such as
+`useCounter(count)` would supply a snapshot; it does not make the hook run again.
+The compiler reports `FICT-S002` for that argument. Use `useCounter(untrack(() => count))`
+for an intentional initial primitive value. For live input, define the hook to read
+a manual signal accessor:
+
+```tsx
+import { $state } from 'fict'
+import { createSignal } from 'fict/advanced'
+
+function useTotal(readInput) {
+  let local = $state(10)
+  const total = local + readInput()
+  return { total, increment: () => local++ }
+}
+
+function Counter() {
+  const input = createSignal(1)
+  const result = useTotal(input)
+  return <button onClick={() => input(input() + 1)}>{result.total}</button>
+}
+```
+
+Only same-module hooks proven to be straight-line computations without reactive
+allocations, derived reactive locals, unknown calls or control-flow regions may
+participate in inferred memos. Imported hooks have setup semantics even when their
+return metadata is available. Disabling `strictGuarantee` permits the snapshot
+with a warning; it never permits repeating stateful setup in an inferred memo.
 
 ### `$store` — Module-Level Allowed (from `fict`)
 

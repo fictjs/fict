@@ -21,10 +21,10 @@ use fict_hir::{
     ModuleLocalExport, ModulePlan, MutationEffect, NumberLiteral, ObjectEntry, ObjectPropertyKind,
     Origin, PatternSummary, PropertyKey, Purity, ReactiveCallKind, ReactiveScopeHost,
     ReactiveScopeKind, RegionId, ScopeId, ScopeKind, StateMethodCallSemantics, StateReceiverKind,
-    StructuredSourceHint, SyntaxFragment, SyntaxFragmentId, SyntaxFragmentKind, SyntaxSummary,
-    TaggedTemplateQuasi, TemplateId, TerminatorKind, UnaryOperator, UpdateOperator, ValueId,
-    ValueKind, classify_state_method_call, classify_state_method_result, verify_hir,
-    verify_module_plan,
+    StructuredSourceHint, StructuredSourceKind, SyntaxFragment, SyntaxFragmentId,
+    SyntaxFragmentKind, SyntaxSummary, TaggedTemplateQuasi, TemplateId, TerminatorKind,
+    UnaryOperator, UpdateOperator, ValueId, ValueKind, classify_state_method_call,
+    classify_state_method_result, verify_hir, verify_module_plan,
 };
 use fict_metadata::{
     HookReturnInfo, MetadataResolutionStatus, ModuleReactiveMetadata, ReactiveExportKind,
@@ -1755,6 +1755,7 @@ struct Builder<'source, 'semantic> {
     macro_bindings: BTreeMap<BindingId, FictMacroKind>,
     reactive_bindings: BTreeMap<BindingId, RuntimeReactiveClassification>,
     runtime_bindings: Vec<fict_hir::RuntimeBindingFact>,
+    stateful_hook_calls: BTreeSet<(u32, u32)>,
     reactive_namespace_sources: BTreeMap<BindingId, String>,
     unavailable_metadata_sources: BTreeSet<String>,
     configured_scope_names: BTreeSet<String>,
@@ -2012,6 +2013,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             macro_bindings,
             reactive_bindings,
             runtime_bindings: Vec::new(),
+            stateful_hook_calls: BTreeSet::new(),
             reactive_namespace_sources,
             unavailable_metadata_sources,
             configured_scope_names: option_names,
@@ -2421,6 +2423,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             &member_accesses.facts,
             &jsx.roots,
         );
+        self.classify_stateful_hook_calls(&calls.calls, &static_hook_aliases, &reactive_symbols);
         let storage_origin = match storage_origin::analyze(
             &self.functions,
             self.analysis_budgets.max_storage_origin_block_visits,
@@ -2893,7 +2896,13 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
         reactive_symbols.extend(
             self.runtime_bindings
                 .iter()
-                .filter(|fact| fact.kind != fict_hir::RuntimeBindingKind::Stable)
+                .filter(|fact| {
+                    matches!(
+                        fact.kind,
+                        fict_hir::RuntimeBindingKind::Accessor
+                            | fict_hir::RuntimeBindingKind::Container
+                    )
+                })
                 .filter_map(|fact| binding_to_symbol.get(&fact.binding).copied()),
         );
         reactive_symbols.extend(component_parameter_symbols.iter().copied());
@@ -3473,6 +3482,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             call_facts: &call_facts,
             macro_bindings: &self.macro_bindings,
             local_hook_bindings: &local_hook_bindings,
+            stateful_hook_calls: &self.stateful_hook_calls,
             runtime_imports: &runtime_imports,
             known_arrays,
             state_symbols: &reactive.state,
@@ -3512,6 +3522,11 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
         };
         for fact in collector.diagnostics {
             let (code, message, help) = match fact.kind {
+                EscapeDiagnosticKind::HookSnapshot => (
+                    "FICT-S002",
+                    "a stateful hook receives a reactive value snapshot; hook setup cannot be repeated by an inferred memo".to_owned(),
+                    "for an intentional initial value, pass untrack(() => value); for live input, define the hook to read a manual signal accessor",
+                ),
                 EscapeDiagnosticKind::StateSnapshot => (
                     "FICT-S002",
                     "state variable is passed as an argument; this passes a value snapshot and may escape component scope".to_owned(),
@@ -4033,6 +4048,191 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                 .with_guarantee_class(GuaranteeClass::Fallback),
             );
         }
+    }
+
+    fn classify_stateful_hook_calls(
+        &mut self,
+        calls: &[CallFact],
+        aliases: &StaticHookAliases,
+        reactive: &ReactiveSymbolAnalysis,
+    ) {
+        let hook_bindings: BTreeSet<_> = self
+            .functions
+            .iter()
+            .filter(|function| function.kind == FunctionKind::Hook)
+            .filter_map(|function| function.binding)
+            .collect();
+        let binding_symbols: BTreeMap<_, _> = self
+            .symbol_to_binding
+            .iter()
+            .map(|(symbol, binding)| (*binding, *symbol))
+            .collect();
+        let imported_hooks: BTreeSet<_> = self
+            .frontend
+            .bindings
+            .iter()
+            .filter(|binding| {
+                binding.import.as_ref().is_some_and(|import| {
+                    import.hook_return.is_some()
+                        || requires_imported_hook_metadata(binding, import, None)
+                })
+            })
+            .filter_map(|binding| self.old_to_new.get(&binding.id.index()).copied())
+            .collect();
+        let targets: Vec<_> = calls
+            .iter()
+            .map(|call| {
+                let path = call
+                    .callee_reference
+                    .as_ref()
+                    .and_then(|place| static_alias_path_from_place(place, true))
+                    .or_else(|| {
+                        call.binding
+                            .and_then(|binding| binding_symbols.get(&binding).copied())
+                            .map(StaticAliasPath::root)
+                    })?;
+                let resolved = aliases.resolve(&path);
+                if !resolved.properties.is_empty() {
+                    return None;
+                }
+                let symbol = resolved.binding_root()?;
+                self.symbol_to_binding.get(&symbol).copied()
+            })
+            .collect();
+        let mut calls_by_owner: BTreeMap<_, Vec<_>> = BTreeMap::new();
+        for (index, call) in calls.iter().enumerate() {
+            calls_by_owner.entry(call.owner).or_default().push(index);
+        }
+        let reactive_bindings: BTreeSet<_> = reactive
+            .reactive
+            .iter()
+            .filter_map(|symbol| self.symbol_to_binding.get(symbol).copied())
+            .collect();
+        let mut pending = BTreeMap::new();
+        let mut dependents: BTreeMap<_, Vec<_>> = BTreeMap::new();
+        let mutated_bindings: BTreeSet<_> = self
+            .symbol_to_binding
+            .iter()
+            .filter_map(|(symbol, binding)| {
+                self.semantic
+                    .scoping()
+                    .symbol_is_mutated(*symbol)
+                    .then_some(*binding)
+            })
+            .collect();
+        for function in self
+            .functions
+            .iter()
+            .filter(|function| function.kind == FunctionKind::Hook)
+        {
+            let Some(binding) = function.binding else {
+                continue;
+            };
+            if mutated_bindings.contains(&binding) {
+                continue;
+            }
+            // Only prove replayability for straight-line hooks without reactive
+            // allocations, derived locals, unknown calls, or region-producing control flow.
+            if function.blocks.iter().any(|block| {
+                block
+                    .source_hint
+                    .as_ref()
+                    .is_some_and(|hint| hint.kind != StructuredSourceKind::LexicalBlock)
+            }) || function.locals.iter().any(|local| {
+                local.kind != LocalKind::Capture
+                    && local
+                        .binding
+                        .is_some_and(|binding| reactive_bindings.contains(&binding))
+            }) {
+                continue;
+            }
+            let mut dependencies = BTreeSet::new();
+            let safe = calls_by_owner
+                .get(&function.id)
+                .into_iter()
+                .flatten()
+                .all(|&index| {
+                    let call = &calls[index];
+                    if call
+                        .binding
+                        .is_some_and(|binding| self.macro_bindings.contains_key(&binding))
+                        || call.reactive_kind.is_some()
+                        || call.runtime_creation_kind.is_some()
+                    {
+                        return false;
+                    }
+                    if call.pure {
+                        return true;
+                    }
+                    if let Some(target) =
+                        targets[index].filter(|target| hook_bindings.contains(target))
+                    {
+                        dependencies.insert(target);
+                        true
+                    } else {
+                        false
+                    }
+                });
+            if !safe {
+                continue;
+            }
+            pending.insert(binding, dependencies.len());
+            for dependency in dependencies {
+                dependents.entry(dependency).or_default().push(binding);
+            }
+        }
+        let mut ready: VecDeque<_> = pending
+            .iter()
+            .filter_map(|(&binding, &count)| (count == 0).then_some(binding))
+            .collect();
+        let mut replayable = BTreeSet::new();
+        while let Some(binding) = ready.pop_front() {
+            replayable.insert(binding);
+            for dependent in dependents.get(&binding).into_iter().flatten() {
+                let remaining = pending
+                    .get_mut(dependent)
+                    .expect("registered hook dependency");
+                *remaining -= 1;
+                if *remaining == 0 {
+                    ready.push_back(*dependent);
+                }
+            }
+        }
+        let existing: BTreeSet<_> = self
+            .runtime_bindings
+            .iter()
+            .map(|fact| fact.binding)
+            .collect();
+        for (index, call) in calls.iter().enumerate() {
+            let known_hook = targets[index].is_some_and(|binding| {
+                hook_bindings.contains(&binding) || imported_hooks.contains(&binding)
+            });
+            if (call.hook.is_none() && !known_hook)
+                || targets[index].is_some_and(|binding| replayable.contains(&binding))
+            {
+                continue;
+            }
+            self.stateful_hook_calls
+                .insert((call.span.start(), call.span.end()));
+            if let Some(binding) = call
+                .direct_variable_binding
+                .filter(|binding| !existing.contains(binding))
+            {
+                self.runtime_bindings.push(fict_hir::RuntimeBindingFact {
+                    binding,
+                    kind: call
+                        .binding
+                        .and_then(|callee| {
+                            self.imported_hook_direct_kind(callee, call.callee_reference.as_ref())
+                        })
+                        .map_or(fict_hir::RuntimeBindingKind::SetupValue, |kind| {
+                            fict_hir::RuntimeBindingKind::HookBinding(kind)
+                        }),
+                });
+            }
+        }
+        self.runtime_bindings.sort_unstable();
+        self.runtime_bindings.dedup();
     }
 
     fn validate_hook_placement(&mut self, calls: &[CallFact]) {
@@ -42792,6 +42992,7 @@ fn collect_callback_timings(
 
 #[derive(Debug)]
 enum EscapeDiagnosticKind {
+    HookSnapshot,
     StateSnapshot,
     ReactiveValue,
     CallbackCapture(BTreeSet<SymbolId>),
@@ -42831,6 +43032,7 @@ struct ReactiveEscapeCollector<'facts, 'semantic, 'reactive> {
     call_facts: &'facts BTreeMap<(u32, u32), &'facts CallFact>,
     macro_bindings: &'facts BTreeMap<BindingId, FictMacroKind>,
     local_hook_bindings: &'facts BTreeSet<BindingId>,
+    stateful_hook_calls: &'facts BTreeSet<(u32, u32)>,
     runtime_imports: &'facts runtime_callbacks::RuntimeImports,
     known_arrays: &'facts BTreeSet<SymbolId>,
     state_symbols: &'reactive BTreeSet<SymbolId>,
@@ -43154,6 +43356,27 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
         let macro_kind = binding.and_then(|binding| self.macro_bindings.get(&binding).copied());
         let store = fact.reactive_kind == Some(ReactiveCallKind::Store);
         let local_hook = binding.is_some_and(|binding| self.local_hook_bindings.contains(&binding));
+        let stateful_hook = self
+            .stateful_hook_calls
+            .contains(&(call.span.start, call.span.end));
+        if stateful_hook {
+            for argument in arguments {
+                if self.callback_captures(*argument).is_empty()
+                    && !self.reactive_references(*argument).is_empty()
+                    && !self.snapshots.permits_argument(
+                        self.scoping,
+                        self.callback_aliases,
+                        Some(fact.owner),
+                        *argument,
+                    )
+                {
+                    self.diagnostics.push(EscapeDiagnosticFact {
+                        kind: EscapeDiagnosticKind::HookSnapshot,
+                        span: argument.span,
+                    });
+                }
+            }
+        }
         let runtime_host =
             self.runtime_imports
                 .host(self.scoping, self.callback_aliases, &call.callee);
@@ -43166,7 +43389,8 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
                     | runtime_callbacks::RuntimeCallbackHost::AsyncComputation
             )
         });
-        let state_arguments_allowed = store
+        let state_arguments_allowed = stateful_hook
+            || store
             || local_hook
             || state_argument_import
             || fact.runtime_creation_kind == Some(RuntimeReactiveCreationKind::NamespaceMemo)

@@ -409,13 +409,21 @@ pub fn analyze_shapes(
         for definition in &ssa.definitions {
             let runtime = function.locals[definition.name.local.as_usize()]
                 .binding
-                .and_then(|binding| runtime_bindings.get(&binding));
+                .and_then(|binding| runtime_bindings.get(&binding))
+                // SetupValue describes the initializer, not every later SSA
+                // assignment to its authored binding. A reassignment from an
+                // alias must inherit that alias class's shape.
+                .filter(|kind| {
+                    **kind != fict_hir::RuntimeBindingKind::SetupValue
+                        || !alias_sources.contains_key(&definition.name)
+                });
             let next = if let Some(kind) = runtime {
                 let mut shape = unknown_shape(ShapeSource::RuntimeBinding(*kind));
-                shape.kind = if *kind == fict_hir::RuntimeBindingKind::Stable {
-                    ShapeKind::Function
-                } else {
-                    ShapeKind::Reactive
+                shape.kind = match kind {
+                    fict_hir::RuntimeBindingKind::Stable => ShapeKind::Function,
+                    fict_hir::RuntimeBindingKind::SetupValue => ShapeKind::Unknown,
+                    fict_hir::RuntimeBindingKind::Accessor
+                    | fict_hir::RuntimeBindingKind::Container => ShapeKind::Reactive,
                 };
                 Some(shape)
             } else if let Some(source) = alias_sources.get(&definition.name) {
