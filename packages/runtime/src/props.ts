@@ -419,6 +419,55 @@ function orderOwnKeys(keys: (string | symbol)[]): (string | symbol)[] {
   return [...indexKeys, ...stringKeys, ...symbolKeys]
 }
 
+type EmptyProps = Record<never, never>
+
+type MergeRecord<T> =
+  T extends PropGetter<infer P>
+    ? {
+        [K in keyof NonNullable<P>]: NonNullable<P>[K] extends PropGetter<unknown>
+          ? NonNullable<P>[K]
+          : PropGetter<NonNullable<P>[K]>
+      }
+    : T extends object
+      ? T
+      : EmptyProps
+
+type RequiredMergeKeys<T> = {
+  [K in keyof T]-?: EmptyProps extends Pick<T, K> ? never : K
+}[keyof T]
+
+type MergeValue<A, B, K extends PropertyKey> = K extends keyof B
+  ? B[K] | (K extends RequiredMergeKeys<B> ? never : K extends keyof A ? A[K] : never)
+  : K extends keyof A
+    ? A[K]
+    : never
+
+type MergeRecords<A, B> = {
+  [K in RequiredMergeKeys<A> | RequiredMergeKeys<B>]: MergeValue<A, B, K>
+} & {
+  [K in Exclude<keyof A | keyof B, RequiredMergeKeys<A> | RequiredMergeKeys<B>>]?: MergeValue<
+    A,
+    B,
+    K
+  >
+}
+
+/** Property types from each source, with later sources taking precedence. */
+export type MergedProps<T extends readonly unknown[], Acc = EmptyProps> = T extends readonly [
+  infer First,
+  ...infer Rest,
+]
+  ? MergedProps<Rest, MergeRecords<Acc, MergeRecord<First>>>
+  : number extends T['length']
+    ? MergeRecords<Acc, Partial<MergeRecord<T[number]>>>
+    : { [K in keyof Acc]: Acc[K] }
+
+export function mergeProps<T extends readonly (object | null | undefined)[]>(
+  ...sources: T
+): MergedProps<T>
+export function mergeProps<T extends Record<string, unknown>>(
+  ...sources: (MergeSource<T> | null | undefined)[]
+): Record<string, unknown>
 export function mergeProps<T extends Record<string, unknown>>(
   ...sources: (MergeSource<T> | null | undefined)[]
 ): Record<string, unknown> {

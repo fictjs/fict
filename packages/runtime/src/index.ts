@@ -81,7 +81,7 @@ export {
 // Props Utilities (Public)
 // ============================================================================
 
-export { prop, mergeProps, keyed } from './props'
+export { prop, mergeProps, keyed, type MergedProps } from './props'
 
 // ============================================================================
 // Types

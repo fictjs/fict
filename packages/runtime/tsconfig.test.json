@@ -20,6 +20,7 @@
     "test/async-transition.test.ts",
     "test/list-helpers.test.ts",
     "test/props-call-values.test.ts",
+    "test/public-props-portal.test.ts",
     "test/binding-edge-cases.test.ts",
     "test/runtime-abi.test.ts",
     "../compiler/src/types/**/*.d.ts"

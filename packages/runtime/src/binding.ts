@@ -3621,17 +3621,33 @@ export function createShow(
  * @example
  * ```ts
  * createPortal(
- *   document.body,
  *   () => jsx(Modal, { children: 'Hello' }),
- *   createElement
+ *   document.body
  * )
  * ```
  */
+export function createPortal(children: () => FictNode, target: Element | string): BindingHandle
+/** @internal Compatibility overload for compiler/runtime consumers. */
 export function createPortal(
   container: ParentNode & Node,
   render: () => FictNode,
   createElementFn: CreateElementFn,
+): BindingHandle
+export function createPortal(
+  childrenOrContainer: (() => FictNode) | (ParentNode & Node),
+  targetOrRender: Element | string | (() => FictNode),
+  createElementFn: CreateElementFn | undefined = registeredCreateElement,
 ): BindingHandle {
+  const publicSignature = typeof childrenOrContainer === 'function'
+  const container = publicSignature
+    ? typeof targetOrRender === 'string'
+      ? (getCurrentRoot()?.ownerDocument ?? document).querySelector(targetOrRender)
+      : (targetOrRender as Element)
+    : childrenOrContainer
+  const render = publicSignature ? childrenOrContainer : (targetOrRender as () => FictNode)
+  if (!container) throw new Error(`[fict] Portal target not found: ${String(targetOrRender)}`)
+  const create = createElementFn
+  if (!create) throw new Error('[fict] Portal rendering requires the DOM runtime')
   // Capture the parent root BEFORE any effects run
   // This is needed because createRenderEffect will push/pop its own root context
   const parentRoot = getCurrentRoot()
@@ -3685,7 +3701,7 @@ export function createPortal(
       try {
         const output = render()
         if (output != null && output !== false) {
-          const el = untrack(() => createElementFn(output))
+          const el = untrack(() => create(output))
           nodes = toNodeArray(el, root.ownerDocument ?? markerOwnerDocument)
           clearCurrentContent()
           if (marker.parentNode) {
