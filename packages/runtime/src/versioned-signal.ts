@@ -31,7 +31,7 @@ export function createVersionedSignal<T>(
   const version = createSignal(0)
 
   const bumpVersion = () => {
-    const next = version() + 1
+    const next = untrack(() => version()) + 1
     version(next)
   }
 
@@ -42,8 +42,7 @@ export function createVersionedSignal<T>(
       return value()
     },
     write: (next: T) => {
-      const prev = value()
-      if (!equals(prev, next)) {
+      if (!untrack(() => equals(value(), next))) {
         value(next)
         return
       }

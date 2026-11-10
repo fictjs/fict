@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 
-import { createEffect } from '../src/index'
-import { createVersionedSignal } from '../src/advanced'
+import { createEffect, batch } from '../src/index'
+import { createVersionedSignal, createSignal } from '../src/advanced'
 
 const tick = () =>
   new Promise<void>(resolve =>
@@ -11,6 +11,28 @@ const tick = () =>
   )
 
 describe('createVersionedSignal', () => {
+  it.each(['write', 'force'] as const)('does not subscribe a writer through %s', mode => {
+    const source = createSignal(0)
+    const value = createVersionedSignal(0)
+    let runs = 0
+    const stop = createEffect(() => {
+      const next = source()
+      // Bound the original regression so this test cannot hang the process.
+      if (++runs > 20) return
+      if (mode === 'write') value.write(next)
+      else value.force()
+    })
+    try {
+      batch(() => source(1))
+      expect(runs).toBe(2)
+      batch(() => value.write(2))
+      batch(() => value.force())
+      expect(runs).toBe(2)
+    } finally {
+      stop()
+    }
+  })
+
   it('notifies readers when writing identical values', async () => {
     const counter = createVersionedSignal(0)
     const observed: number[] = []

@@ -1419,6 +1419,20 @@ function flushQueues(): void {
   let highIndex = 0
   let lowIndex = 0
   let completed = false
+  const checkCycleGuard = () => {
+    try {
+      if (beforeEffectRunGuard()) return true
+    } catch (error) {
+      // A guard failure must terminate the queue before propagating the error.
+      // Ordinary effect errors still reschedule siblings in the finally block.
+      dropQueuesAfterGuardFailure()
+      completed = true
+      throw error
+    }
+    dropQueuesAfterGuardFailure()
+    completed = true
+    return false
+  }
   try {
     // 1. Process all high-priority effects first
     while (highIndex < highPriorityQueue.length) {
@@ -1427,11 +1441,7 @@ function flushQueues(): void {
         highIndex++
         continue
       }
-      if (!beforeEffectRunGuard()) {
-        dropQueuesAfterGuardFailure()
-        completed = true
-        return
-      }
+      if (!checkCycleGuard()) return
       highIndex++
       e.queuedPriority = undefined
       runEffect(e)
@@ -1456,11 +1466,7 @@ function flushQueues(): void {
         lowIndex++
         continue
       }
-      if (!beforeEffectRunGuard()) {
-        dropQueuesAfterGuardFailure()
-        completed = true
-        return
-      }
+      if (!checkCycleGuard()) return
       lowIndex++
       e.queuedPriority = undefined
       runEffect(e)
