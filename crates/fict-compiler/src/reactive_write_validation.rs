@@ -1762,6 +1762,7 @@ pub(crate) fn validate_reactive_writes(
                         if value_receiver_call_is_proven_safe(function, place) {
                             continue;
                         }
+                        let mut method_diagnostics = DiagnosticBundle::default();
                         validation.validate_place_write(
                             function,
                             InstructionLocation {
@@ -1770,8 +1771,13 @@ pub(crate) fn validate_reactive_writes(
                             },
                             place,
                             instruction.origin,
-                            &mut diagnostics,
+                            &mut method_diagnostics,
                         );
+                        for mut diagnostic in method_diagnostics.into_sorted() {
+                            diagnostic.message = "method call on a state-derived value may mutate its receiver; the receiver family or method implementation is not proven read-only".to_owned();
+                            diagnostic.help = Some("use a compiler-certified read-only receiver and method, replace the whole source state value, or use $store for nested mutation".to_owned());
+                            diagnostics.push(diagnostic);
+                        }
                     }
                     _ => {}
                 }

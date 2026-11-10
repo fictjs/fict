@@ -462,10 +462,11 @@ closures/accessors. Reading a region output directly in the hook owner (for exam
 The diagnostic is also required when `lazyConditional: false` disables the EmitIR
 `ConditionalReturn` capability for an otherwise supported reactive return.
 
-**Impact:** In opt-out builds, reactivity remains semantic-first, but updates may execute broader
-code paths than supported branch-return or story-block regions. For active branch reads, branch
-output can be remounted to keep events, refs, style/class object handling, prop removal, and
-cleanup semantics correct. DOM identity inside that remounted branch is not guaranteed.
+**Impact:** Opt-out builds permit this unsupported shape; they do not guarantee that it remains
+reactive. A predicate may be evaluated only during component setup. For example,
+`if (props.fail) throw new Error()` can ignore later changes to `props.fail`. Other fallback
+shapes can execute broader code paths or remount branch output, so DOM identity is not
+guaranteed either. Use opt-out only to investigate a boundary, not as a reactivity fix.
 
 **Fix:** Use supported `if-return` / `switch-return` / equivalent `try` return shapes, or
 expression-only branching in JSX (`cond ? <A/> : <B/>`, logical expressions). In hooks, read a
@@ -593,11 +594,14 @@ error: `strictGuarantee: false` and `warningLevels` cannot downgrade or suppress
 
 ### FICT-X003: Inline function in JSX
 
-**Severity:** Hint
+**Severity:** Warning
 
 **Why:** A non-event inline function is passed as a JSX prop.
 
-**Impact:** In Fict, normal DOM event handlers are usually fine because handler references stay stable. This hint is for non-event props where child components may care about reference identity (for example memoized render props).
+**Impact:** This advisory concerns non-event props whose receiving component may compare callback
+identity (for example a render prop cache). It does not imply that a Fict component re-renders
+or that every inline callback changes identity on a reactive update. Normal DOM event handlers
+are excluded. Use `warningLevels` to adjust this advisory for your project.
 
 **Fix:** If needed, extract to a named function:
 

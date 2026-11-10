@@ -2962,7 +2962,20 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                             .is_some_and(|path| aliases.path_is_intact(&path))
             );
             if !read_only {
-                self.report_nested_reactive_mutation(call.span);
+                self.diagnostics.push(
+                    Diagnostic::new(
+                        DiagnosticCode::new("FICT-M").expect("diagnostic literal"),
+                        if self.strict_guarantee {
+                            DiagnosticSeverity::Error
+                        } else {
+                            DiagnosticSeverity::Warning
+                        },
+                        "method call on a $state value may mutate its receiver; the receiver family or method implementation is not proven read-only",
+                    )
+                    .with_primary_span(call.span)
+                    .with_help("use a compiler-certified read-only receiver and method, replace the whole source state value, or use $store for nested mutation")
+                    .with_guarantee_class(GuaranteeClass::Fallback),
+                );
             }
         }
     }
@@ -3064,7 +3077,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                 Diagnostic::new(
                     DiagnosticCode::new("FICT-X003").expect("diagnostic literal"),
                     DiagnosticSeverity::Warning,
-                    "Inline function in JSX props may cause unnecessary re-renders.",
+                    "Inline non-event JSX callback identity may matter to the receiving component.",
                 )
                 .with_primary_span(span)
                 .with_guarantee_class(GuaranteeClass::Advisory),
@@ -3484,7 +3497,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                 EscapeDiagnosticKind::StateSnapshot => (
                     "FICT-S002",
                     "state variable is passed as an argument; this passes a value snapshot and may escape component scope".to_owned(),
-                    "pass an accessor or place the read inside a known reactive scope",
+                    "for an intentional primitive snapshot, use untrack(() => consumer(value)); live reads require a runtime API with a documented accessor and lifetime contract",
                 ),
                 EscapeDiagnosticKind::ReactiveValue => (
                     "FICT-R002",

@@ -1636,3 +1636,102 @@ test('bug 21: useContext placement exemption follows the runtime import identity
   assert.ok(result.diagnostics.some(d => d.code === 'FICT-PLACEMENT-HOOK-CONTROL'))
   assert.ok(!result.code)
 })
+
+for (const [expression, expected] of [
+  ['state.label()', /method call.*not proven read-only/],
+  ['state.items.map(item => item.name.includes(query))', /method call.*not proven read-only/],
+  ["state.name = 'next'", /nested mutation/],
+]) {
+  test(`bug 14: mutation diagnostics distinguish calls from writes (${expression})`, () => {
+    const result = native.transformSync({
+      code: `import {$state} from 'fict';function App(){let state=$state({name:'old',items:[{name:'a'}],label(){return 'a'}});let query=$state('a');const value=${expression};return <p>{value}</p>}`,
+      filename: '/diagnostic-method.tsx',
+      options: { dev: false, strictGuarantee: true },
+    })
+    const finding = result.diagnostics.find(d => d.code === 'FICT-M' && expected.test(d.message))
+    assert.ok(finding, JSON.stringify(result.diagnostics))
+    assert.equal(finding.severity, 'error')
+    assert.ok(finding.primarySpan)
+  })
+}
+
+test('bug 14: snapshot help is actionable even inside an effect', () => {
+  const result = native.transformSync({
+    code: `import {$state,$effect} from 'fict';function App(){let count=$state(0);$effect(()=>console.log(count));return <p>{count}</p>}`,
+    filename: '/diagnostic-snapshot.tsx',
+    options: { dev: false, strictGuarantee: true },
+  })
+  const finding = result.diagnostics.find(d => d.code === 'FICT-S002')
+  assert.ok(finding, JSON.stringify(result.diagnostics))
+  assert.match(finding.help, /primitive snapshot.*untrack/)
+  assert.doesNotMatch(finding.help, /place the read inside/)
+  compile(
+    `import {$state,$effect,untrack} from 'fict';function App(){let count=$state(0);$effect(()=>{const snapshot=count;untrack(()=>console.log(snapshot))});return <p>{count}</p>}`,
+  )
+})
+
+test('bug 14: inline callback advisory describes identity and documents its actual severity', () => {
+  const result = native.transformSync({
+    code: `function Child(props){return <p/>}function App(){return <Child renderLabel={()=>'label'}/>}`,
+    filename: '/diagnostic-callback.tsx',
+    options: { dev: false, strictGuarantee: true },
+  })
+  const finding = result.diagnostics.find(d => d.code === 'FICT-X003')
+  assert.equal(finding?.severity, 'warning')
+  assert.match(finding.message, /callback identity/)
+  assert.doesNotMatch(finding.message, /re-render/)
+  const docs = readFileSync(new URL('../docs/diagnostic-codes.md', import.meta.url), 'utf8')
+  assert.match(docs, /### FICT-X003:[\s\S]*?\*\*Severity:\*\* Warning/)
+})
+
+test('bug 14: manual signal dependencies update memos without M001', async () => {
+  const code = compile(
+    `import{createSignal}from'fict/advanced';import{createMemo,render}from'fict';let root;function App(){const items=createSignal([1,2,3]);const length=createMemo(()=>items().length);return <div><button onClick={()=>items([1,2,3,4])}>add</button><p>{length()}</p></div>}export function mount(el){root=el;return render(()=><App/>,el)}export function observe(){return root.querySelector('p').textContent}`,
+  )
+  assert.deepEqual(
+    await executeDomCommonJs(code, {
+      mountExport: 'mount',
+      observeExport: 'observe',
+      steps: [
+        { kind: 'record', label: 'initial' },
+        { kind: 'click', selector: 'button' },
+        { kind: 'record', label: 'updated' },
+      ],
+    }),
+    [
+      { label: 'initial', value: '3' },
+      { label: 'updated', value: '4' },
+    ],
+  )
+})
+
+test('bug 14: R006 opt-out can retain a setup snapshot and is documented as unsupported', async () => {
+  const source = `import{$state,render}from'fict';let root;function Child(props){if(props.fail)throw new Error('failed');return <p>ready</p>}function App(){let fail=$state(false);return <div><button onClick={()=>fail=true}>fail</button><Child fail={fail}/></div>}export function mount(el){root=el;return render(()=><App/>,el)}export function observe(){return root.querySelector('p').textContent}`
+  for (const strictGuarantee of [true, false]) {
+    const result = native.transformSync({
+      code: source,
+      filename: '/diagnostic-control.tsx',
+      moduleKind: 'commonjs',
+      options: { dev: false, strictGuarantee },
+    })
+    const finding = result.diagnostics.find(d => d.code === 'FICT-R006')
+    assert.equal(
+      finding?.severity,
+      strictGuarantee ? 'error' : 'warning',
+      JSON.stringify(result.diagnostics),
+    )
+    if (strictGuarantee) assert.ok(!result.code)
+    else
+      assert.deepEqual(
+        await executeDomCommonJs(result.code, {
+          mountExport: 'mount',
+          observeExport: 'observe',
+          steps: [
+            { kind: 'click', selector: 'button' },
+            { kind: 'record', label: 'snapshot' },
+          ],
+        }),
+        [{ label: 'snapshot', value: 'ready' }],
+      )
+  }
+})
