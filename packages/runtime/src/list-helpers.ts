@@ -735,23 +735,13 @@ function createFineGrainedKeyedList<T>(
     return nodes
   }
 
-  // Initial mounting waits for a usable namespace/parent. Once started, the owner
-  // can park this DOM in Suspense; keep reading its source while disconnected so
-  // settlement does not erase the list's dependencies before the boundary resumes.
+  // A shared parent supplies the namespace even when it is detached. Rendering
+  // must finish before onMount, and detached render containers are supported.
   const getUsableParent = (): (ParentNode & Node) | null => {
     const endParent = container.endMarker.parentNode
     const startParent = container.startMarker.parentNode
     if (endParent && startParent && endParent === startParent) {
-      const parentNode = endParent as ParentNode & Node
-      if (parentNode.nodeType === 11) {
-        if (isShadowRoot(parentNode)) {
-          const host = parentNode.host
-          if (!effectStarted && 'isConnected' in host && !host.isConnected) return null
-        }
-        return parentNode
-      }
-      if (!effectStarted && 'isConnected' in parentNode && !parentNode.isConnected) return null
-      return parentNode
+      return endParent as ParentNode & Node
     }
     return null
   }

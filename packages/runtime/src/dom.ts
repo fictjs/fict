@@ -60,6 +60,7 @@ import { Fragment } from './jsx'
 import {
   createRootContext,
   destroyRoot,
+  flushDeferredMounts,
   flushOnMount,
   handleSuspend,
   pushRoot,
@@ -277,6 +278,12 @@ const renderOwners = new WeakMap<HTMLElement, RootContext>()
  */
 export function render(view: () => FictNode, container: HTMLElement): () => void {
   const root = createRootContext()
+  let committed = false
+  const mountBoundary = {
+    deferred: new Set<RootContext>(),
+    shouldDefer: () => !committed,
+  }
+  root.mountBoundary = mountBoundary
   root.ownerDocument = container.ownerDocument ?? document
   const prev = pushRoot(root)
   let dom: DOMElement = undefined as unknown as DOMElement
@@ -319,6 +326,8 @@ export function render(view: () => FictNode, container: HTMLElement): () => void
     }
     container.setAttribute('data-fict-fine-grained', '1')
 
+    committed = true
+    flushDeferredMounts(mountBoundary)
     flushOnMount(root)
 
     completed = true

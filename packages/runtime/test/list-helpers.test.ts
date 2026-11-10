@@ -835,7 +835,7 @@ describe('List Helpers', () => {
       list.dispose()
     })
 
-    it('defers keyed list diffing until container is connected', async () => {
+    it('renders and updates keyed lists in detached containers', async () => {
       const calls: number[] = []
       const items = createSignal([1, 2, 3])
       const detached = document.createElement('div')
@@ -857,12 +857,18 @@ describe('List Helpers', () => {
 
       detached.appendChild(list.marker)
       list.flush?.()
+      expect(detached.textContent).toBe('123')
       await tick()
-      expect(calls.length).toBe(0)
+      expect(calls.length).toBe(1)
+
+      items([3, 4])
+      await tick()
+      expect(detached.textContent).toBe('34')
+      expect(calls.length).toBe(2)
 
       document.body.appendChild(detached)
       await tick()
-      expect(calls.length).toBe(1)
+      expect(calls.length).toBe(2)
 
       list.dispose()
       detached.remove()
