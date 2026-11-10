@@ -145,3 +145,44 @@ for (const expression of [
     ])
   })
 }
+
+for (const fineGrainedDom of [true, false]) {
+  test(`bug 39: empty text hydrates strictly and updates (fineGrainedDom=${fineGrainedDom})`, async () => {
+    const code = compile(
+      `
+      import { $state, hydrate } from 'fict'
+      import { renderToString } from '@fictjs/ssr'
+      let root, first, preserved
+      const issues = []
+      function App() {
+        let n = $state(1)
+        return <div><button onClick={() => n++}>inc</button>
+          {n > 0 && <span>{n} item{n !== 1 ? 's' : ''} left</span>}</div>
+      }
+      export function mount(container) {
+        root = container
+        root.innerHTML = renderToString(() => <App />)
+        first = root.querySelector('span')
+        const dispose = hydrate(() => <App />, root, { strictHydration: true, onHydrationIssue: issue => { issues.push(issue.code) } })
+        preserved = root.querySelector('span') === first
+        return dispose
+      }
+      export function observe() { return { text: root.querySelector('span').textContent, same: preserved, issues } }
+    `,
+      { fineGrainedDom },
+    )
+    const result = await executeDomCommonJs(code, {
+      mountExport: 'mount',
+      observeExport: 'observe',
+      steps: [
+        { kind: 'record', label: 'hydrated' },
+        { kind: 'click', selector: 'button' },
+        { kind: 'record', label: 'updated' },
+      ],
+    })
+    assert.deepEqual(result, [
+      { label: 'hydrated', value: { text: '1 item left', same: true, issues: [] } },
+      { label: 'updated', value: { text: '2 items left', same: true, issues: [] } },
+    ])
+  })
+}

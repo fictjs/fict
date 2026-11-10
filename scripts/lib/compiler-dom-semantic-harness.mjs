@@ -101,6 +101,8 @@ function installDom(dom) {
 }
 
 function requireRuntime(request) {
+  if (request === '@fictjs/ssr')
+    return require(path.join(repositoryRoot, 'packages/ssr/dist/index.node.cjs'))
   if (request === 'fict' || request === '@fictjs/runtime') return runtime
   if (
     request === 'fict/internal' ||

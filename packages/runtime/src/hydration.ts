@@ -199,6 +199,11 @@ export function claimText(value: string, fallback: () => Text): Text {
     ctx.pendingRepair = undefined
     return mountFallback(ctx, fallbackNode, repair) as Text
   }
+  // HTML serialization omits empty text nodes. Materialize the client slot
+  // without consuming its next sibling; range validation still detects extras.
+  if (value === '' && (ctx.cursor?.nodeType !== 3 || (ctx.cursor as Text).data !== '')) {
+    return mountFallback(ctx, fallback(), captureHydrationRepairPlan(ctx, ctx.cursor, 0)) as Text
+  }
   if (!ctx.cursor || ctx.cursor === ctx.boundary) {
     const repair = captureHydrationRepairPlan(ctx, null, 0)
     emitHydrationIssue(ctx, {

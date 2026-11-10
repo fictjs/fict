@@ -20,6 +20,27 @@ const container = (html: string) => {
 const view = (text: string): FictNode => ({ type: 'b', props: { children: text } })
 
 describe('public eager hydration ownership', () => {
+  it('materializes omitted empty text without consuming adjacent elements or text', () => {
+    const root = container('<b>end</b>tail')
+    const first = root.firstChild
+    const tail = root.lastChild
+    const issues: string[] = []
+    disposers.push(
+      hydrate(
+        () => ['', { type: 'b', props: { children: ['', 'end', ''] } }, '', 'tail', ''],
+        root,
+        {
+          strictHydration: true,
+          onHydrationIssue: issue => issues.push(issue.code),
+        },
+      ),
+    )
+    expect(root.querySelector('b')).toBe(first)
+    expect(root.textContent).toBe('endtail')
+    expect(root.contains(tail)).toBe(true)
+    expect(issues).toEqual([])
+  })
+
   it.each([false, true])(
     'keeps fragment DOM connected and preserves user input (VNode fragment=%s)',
     vnode => {
