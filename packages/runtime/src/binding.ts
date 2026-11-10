@@ -29,6 +29,8 @@ import {
   claimChildRange,
   claimConditionalRange,
   hydratedRangeFragment,
+  hydrateFragment,
+  claimText,
   getPendingHydrationRepairToken,
   suppressHydrationClaimsForPendingRepair,
   finalizePendingHydrationRepair,
@@ -54,7 +56,7 @@ import {
   withRootContext,
   type RootContext,
 } from './lifecycle'
-import { toNodeArray, removeNodes, insertNodesBefore } from './node-ops'
+import { toNodeArray, removeNodes, insertNodesBefore, takeHydratedInsertStart } from './node-ops'
 import { runOutsideComponentRender } from './render-phase'
 import { __fictIsHydrating, __fictIsSSR } from './resume'
 import { batch } from './scheduler'
@@ -1304,6 +1306,50 @@ export function insert(
     currentNodes = insertedNodes
   }
 
+  const hydrateInitialContent = (start: Node, root: RootContext): void => {
+    const prev = pushRoot(root)
+    let primitive = false
+    let committed = false
+    try {
+      const fragment = withHydrationRange(start, marker, markerOwnerDocument, () =>
+        hydrateFragment(markerOwnerDocument, () => {
+          // A helper or children getter can itself create template nodes, so
+          // evaluation must run inside the same range as materialization.
+          const value = getValue()
+          primitive =
+            value == null || ['string', 'number', 'bigint', 'boolean'].includes(typeof value)
+          if (primitive) {
+            if (value != null && typeof value !== 'boolean') {
+              const text = String(value)
+              claimText(text, () => markerOwnerDocument.createTextNode(text))
+            }
+          } else if (createFn) {
+            // The DOM array path preserves live hydration nodes and gives
+            // reactive functions their own child binding without reparenting.
+            untrack(() =>
+              createFn!(typeof value === 'function' && isReactive(value) ? [value] : value),
+            )
+          }
+        }),
+      )
+      currentNodes = toNodeArray(fragment, markerOwnerDocument)
+      currentText =
+        primitive && currentNodes.length === 1 && currentNodes[0]?.nodeType === 3
+          ? (currentNodes[0] as Text)
+          : null
+      currentRoot = primitive ? null : root
+      initialHydrating = false
+      if (primitive) destroyRoot(root)
+      committed = !primitive
+    } catch (error) {
+      rollbackRootAfterFailure(root)
+      throw error
+    } finally {
+      popRoot(prev)
+      if (committed) flushOnMount(root)
+    }
+  }
+
   let dispose: Cleanup
   try {
     dispose = createRenderTransaction(() => {
@@ -1311,6 +1357,11 @@ export function insert(
       const parentNode = marker.parentNode as (ParentNode & Node) | null
       const root = createRootContext(hostRoot)
       configureRootForDOMParent(root, parentNode ?? parent, markerOwnerDocument)
+      const hydrationStart = takeHydratedInsertStart(marker)
+      if (initialHydrating && isHydratingActive() && hydrationStart && createFn) {
+        hydrateInitialContent(currentText ?? hydrationStart, root)
+        return
+      }
       const evaluationRoot = pushRoot(root)
       let value: FictNode
       try {

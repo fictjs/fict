@@ -7,10 +7,20 @@ import { isDocumentFragmentLike, isNodeLike } from './dom-guards'
 import { HYDRATED_TEMPLATE_NODE } from './hydration'
 
 const HYDRATED_FRAGMENT_NODES = Symbol.for('fict:hydration-fragment-nodes')
+const HYDRATED_INSERT_START = Symbol('fict:hydration-insert-start')
 const DOCUMENT_FRAGMENT_NODE = 11
 
 type HydratedFragment = DocumentFragment & { [HYDRATED_FRAGMENT_NODES]?: Node[] }
 type HydratedTemplateNode = Node & { [HYDRATED_TEMPLATE_NODE]?: Node }
+type HydratedInsertMarker = Node & { [HYDRATED_INSERT_START]?: Node }
+
+/** Consume the first server node skipped while resolving an insertion marker. */
+export function takeHydratedInsertStart(marker: Node): Node | undefined {
+  const target = marker as HydratedInsertMarker
+  const start = target[HYDRATED_INSERT_START]
+  delete target[HYDRATED_INSERT_START]
+  return start
+}
 
 function getHydratedFragmentNodes(node: Node): Node[] | undefined {
   if (node.nodeType !== DOCUMENT_FRAGMENT_NODE) return undefined
@@ -261,6 +271,7 @@ function getHydratedChildAtPathIndex(current: Node, expected: Node, index: numbe
   for (let expectedIndex = 0; expectedIndex <= index; expectedIndex += 1) {
     const expectedChild = expectedChildren[expectedIndex]
     if (!expectedChild) return null
+    const rangeStart = actualChildren[actualIndex]
     while (
       actualIndex < actualChildren.length &&
       !isHydrationPathCompatible(expectedChild, actualChildren[actualIndex]!)
@@ -269,7 +280,14 @@ function getHydratedChildAtPathIndex(current: Node, expected: Node, index: numbe
     }
     if (actualIndex >= actualChildren.length) return null
     if (expectedIndex === index) {
-      return attachHydratedTemplateNode(actualChildren[actualIndex]!, expectedChild)
+      const actual = attachHydratedTemplateNode(actualChildren[actualIndex]!, expectedChild)
+      if (expectedChild.nodeType === 8 && rangeStart) {
+        Object.defineProperty(actual, HYDRATED_INSERT_START, {
+          configurable: true,
+          value: rangeStart,
+        })
+      }
+      return actual
     }
     actualIndex += 1
   }

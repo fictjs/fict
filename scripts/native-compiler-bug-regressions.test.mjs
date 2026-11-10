@@ -568,3 +568,92 @@ for (const fineGrainedDom of [true, false]) {
     })
   }
 }
+
+for (const fineGrainedDom of [true, false]) {
+  test(`bug 33: inserted elements and wrapper children claim their SSR range (fineGrainedDom=${fineGrainedDom})`, async () => {
+    const code = compile(
+      `
+      import { $state, hydrate } from 'fict'
+      import { renderToString } from '@fictjs/ssr'
+      let root, before
+      const issues = []
+      function Wrap(props) { return <section>{props.children}</section> }
+      function Layout(props) { return <article>{props.children}</article> }
+      function header(title) { return <h1>{title}</h1> }
+      function row(item) { return <li>{item}</li> }
+      function Rows(props) { return <ol>{props.items.map(row)}</ol> }
+      function App() {
+        let n = $state(0), items = $state(['a', 'b']), empty = $state([])
+        const mixed = n ? 'value' : <em>mixed</em>
+        return <div><button onClick={() => { n++; items = [...items, 'c']; empty = ['new'] }}>inc</button>
+          <Wrap><i>{n}</i></Wrap>
+          <Layout><Wrap><strong>{n}</strong></Wrap></Layout>
+          <div id="headers">{header('H')}</div>
+          <ul>{items.map(row)}</ul>
+          <aside>{n || <em>fallback</em>}</aside>
+          <Rows items={items}/><div id="mixed">{mixed}</div><div id="empty">{empty.map(row)}</div>
+        </div>
+      }
+      export function mount(container) {
+        root = container
+        root.innerHTML = renderToString(() => <App />)
+        before = Array.from(root.querySelectorAll('i,strong,h1,li,em'))
+        return hydrate(() => <App />, root, { strictHydration: true, onHydrationIssue: issue => issues.push(issue.code) })
+      }
+      export function observe() {
+        return {
+          i: root.querySelector('section').textContent, nested: root.querySelector('article').textContent,
+          headers: root.querySelector('#headers').textContent, rows: root.querySelector('ul').textContent,
+          aside: root.querySelector('aside').textContent, mixed: root.querySelector('#mixed').textContent, empty: root.querySelector('#empty').textContent, delegatedRows: root.querySelector('ol').textContent, issues,
+          count: root.querySelectorAll('i,strong,h1,li,em').length,
+          initialIdentity: before.every(node => root.contains(node)),
+        }
+      }
+    `,
+      { fineGrainedDom },
+    )
+    const result = await executeDomCommonJs(code, {
+      mountExport: 'mount',
+      observeExport: 'observe',
+      steps: [
+        { kind: 'record', label: 'initial' },
+        { kind: 'click', selector: 'button' },
+        { kind: 'record', label: 'updated' },
+      ],
+    })
+    assert.deepEqual(result, [
+      {
+        label: 'initial',
+        value: {
+          i: '0',
+          nested: '0',
+          headers: 'H',
+          rows: 'ab',
+          aside: 'fallback',
+          mixed: 'mixed',
+          empty: '',
+          delegatedRows: 'ab',
+          issues: [],
+          count: 9,
+          initialIdentity: true,
+        },
+      },
+      {
+        label: 'updated',
+        value: {
+          i: '1',
+          nested: '1',
+          headers: 'H',
+          rows: 'abc',
+          aside: '1',
+          mixed: 'value',
+          empty: 'new',
+          delegatedRows: 'abc',
+          issues: [],
+          count: 10,
+          initialIdentity: false,
+        },
+      },
+    ])
+  })
+}
