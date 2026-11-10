@@ -6,6 +6,29 @@ import { getCurrentRoot } from '../src/lifecycle'
 import { effect as rawEffect } from '../src/signal'
 
 describe('selector predicates', () => {
+  it('reads the latest source imperatively before flush and inside a batch', () => {
+    const selected = createSignal(1)
+    const root = createRoot(() => ({
+      matches: createSelector(() => selected()),
+      custom: createSelector<number, string>(
+        () => selected(),
+        (key, value) => key === `row-${value}`,
+      ),
+    }))
+    try {
+      const { matches, custom } = root.value
+      selected(2)
+      expect([matches(2), matches(1), custom('row-2')]).toEqual([true, false, true])
+      batch(() => {
+        selected(3)
+        expect([matches(3), matches(2), custom('row-3')]).toEqual([true, false, true])
+      })
+      expect(matches(3)).toBe(true)
+    } finally {
+      root.dispose()
+    }
+  })
+
   it('compares keys with the source instead of comparing successive sources', () => {
     const selected = createSignal(1)
     const values: boolean[] = []

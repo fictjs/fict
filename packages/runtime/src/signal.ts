@@ -2584,6 +2584,7 @@ export function createSelector<T, U = T>(
   equalityFn: (key: U, value: T) => boolean = selectorStrictEquality,
 ): (key: U) => boolean {
   let current = untrack(source)
+  let stopped = false
   const observers = new Map<U, SelectorObserver>()
   const usesStrictEquality = equalityFn === selectorStrictEquality
 
@@ -2613,13 +2614,14 @@ export function createSelector<T, U = T>(
     current = next
   })
   registerManagedEffectCleanup(() => {
+    stopped = true
     dispose()
     observers.clear()
   })
 
   return (key: U) => {
     // Imperative reads need the current answer, not a retained subscription.
-    if (activeSub === undefined) return equalityFn(key, current)
+    if (activeSub === undefined) return equalityFn(key, stopped ? current : untrack(source))
 
     let observer = observers.get(key)
     if (!observer) {
