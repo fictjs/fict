@@ -2,12 +2,14 @@
 
 use super::*;
 use fict_hir::{RuntimeBindingFact, RuntimeBindingKind};
+use oxc::ast::ast::Argument;
 use runtime_callbacks::{RuntimeCallbackHost, RuntimeImports};
 
 #[derive(Default)]
 pub(super) struct FactoryCallbacks {
     hosts: BTreeMap<StaticAliasPath, RuntimeCallbackHost>,
     runtime_paths: BTreeMap<StaticAliasPath, RuntimeBindingKind>,
+    signal_receivers: BTreeMap<StaticAliasPath, StateReceiverKind>,
     pub(super) resource_getters: BTreeSet<(u32, u32)>,
 }
 
@@ -27,6 +29,13 @@ impl FactoryCallbacks {
             facts: Self::default(),
         };
         declarations.visit_program(program);
+        let mut writes = SignalWrites {
+            scoping,
+            aliases,
+            imports,
+            receivers: &mut declarations.facts.signal_receivers,
+        };
+        writes.visit_program(program);
         let mut getters = ResourceGetters {
             scoping,
             aliases,
@@ -202,7 +211,41 @@ impl<'a> Visit<'a> for FactoryDeclarations<'_> {
                         Some("read"),
                         RuntimeCallbackHost::ResourceRead,
                     );
-                } else if matches!(source, "fict" | "@fictjs/runtime") && name == "prop" {
+                } else if matches!(name.as_str(), "createSignal" | "signal")
+                    && matches!(
+                        source,
+                        "fict/advanced"
+                            | "fict/internal"
+                            | "@fictjs/runtime/advanced"
+                            | "@fictjs/runtime/internal"
+                    )
+                {
+                    self.reactive(&declarator.id, None);
+                    if let Some(path) = self.path(&declarator.id, None) {
+                        self.facts
+                            .hosts
+                            .insert(self.aliases.resolve(&path), RuntimeCallbackHost::Signal);
+                        let receiver = call
+                            .type_arguments
+                            .as_ref()
+                            .and_then(|types| types.params.first())
+                            .and_then(|ty| classify_state_receiver_type(self.scoping, ty))
+                            .or_else(|| {
+                                call.arguments
+                                    .first()
+                                    .and_then(Argument::as_expression)
+                                    .map(|value| {
+                                        classify_state_receiver_expression(self.scoping, value)
+                                    })
+                            })
+                            .unwrap_or(StateReceiverKind::Unknown);
+                        self.facts
+                            .signal_receivers
+                            .insert(self.aliases.resolve(&path), receiver);
+                    }
+                } else if matches!(source, "fict" | "@fictjs/runtime")
+                    && matches!(name.as_str(), "prop" | "useDeferredValue")
+                {
                     self.reactive(&declarator.id, None);
                 } else if matches!(source, "fict" | "@fictjs/runtime") && name == "mergeProps" {
                     if let Some(path) = self.path(&declarator.id, None) {
@@ -296,5 +339,209 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
                     .is_some_and(|timing| !timing.may_suspend && !timing.may_return_iterator)
             })
         })
+    }
+}
+
+struct SignalWrites<'a> {
+    scoping: &'a Scoping,
+    aliases: &'a StaticHookAliases,
+    imports: &'a RuntimeImports,
+    receivers: &'a mut BTreeMap<StaticAliasPath, StateReceiverKind>,
+}
+
+impl SignalWrites<'_> {
+    fn signal_read(&self, expression: &Expression<'_>) -> Option<StaticAliasPath> {
+        let Expression::CallExpression(call) = expression.get_inner_expression() else {
+            return None;
+        };
+        if !call.arguments.is_empty() {
+            return None;
+        }
+        let path = self
+            .aliases
+            .resolve(&static_alias_source_path(self.scoping, &call.callee)?);
+        self.receivers.contains_key(&path).then_some(path)
+    }
+
+    fn invalidate_reads(&mut self, expression: &Expression<'_>) {
+        struct Reads<'a, 'b>(&'a SignalWrites<'b>, BTreeSet<StaticAliasPath>);
+        impl<'a> Visit<'a> for Reads<'_, '_> {
+            fn visit_expression(&mut self, expression: &Expression<'a>) {
+                if let Some(path) = self.0.signal_read(expression) {
+                    self.1.insert(path);
+                }
+                oxc::ast_visit::walk::walk_expression(self, expression);
+            }
+        }
+        let mut reads = Reads(self, BTreeSet::new());
+        reads.visit_expression(expression);
+        for path in reads.1 {
+            self.receivers.insert(path, StateReceiverKind::Unknown);
+        }
+    }
+}
+
+impl<'a> Visit<'a> for SignalWrites<'_> {
+    fn visit_variable_declarator(&mut self, declaration: &VariableDeclarator<'a>) {
+        if let BindingPattern::BindingIdentifier(binding) = &declaration.id
+            && let Some(symbol) = binding.symbol_id.get()
+            && !self.aliases.path_is_intact(&StaticAliasPath::root(symbol))
+            && let Some(value) = &declaration.init
+            && let Some(path) = self.signal_read(value)
+        {
+            self.receivers.insert(path, StateReceiverKind::Unknown);
+        }
+        walk_variable_declarator(self, declaration);
+    }
+
+    fn visit_assignment_expression(&mut self, expression: &AssignmentExpression<'a>) {
+        match &expression.left {
+            AssignmentTarget::StaticMemberExpression(member) => {
+                self.invalidate_reads(&member.object)
+            }
+            AssignmentTarget::ComputedMemberExpression(member) => {
+                self.invalidate_reads(&member.object)
+            }
+            _ => {}
+        }
+        oxc::ast_visit::walk::walk_assignment_expression(self, expression);
+    }
+
+    fn visit_call_expression(&mut self, call: &CallExpression<'a>) {
+        let signal = static_alias_source_path(self.scoping, &call.callee)
+            .map(|path| self.aliases.resolve(&path))
+            .filter(|path| self.receivers.contains_key(path));
+        if !call.arguments.is_empty()
+            && let Some(path) = &signal
+            && let Some(receiver) = self.receivers.get_mut(path)
+        {
+            let next = call
+                .arguments
+                .first()
+                .and_then(Argument::as_expression)
+                .map(|value| classify_state_receiver_expression(self.scoping, value));
+            if next != Some(*receiver) {
+                *receiver = StateReceiverKind::Unknown;
+            }
+        }
+        let runtime_host = self
+            .imports
+            .host(self.scoping, self.aliases, &call.callee)
+            .is_some();
+        let member_receiver = call.callee.get_member_expr().and_then(|member| {
+            let path = self.signal_read(member.object())?;
+            let family = *self.receivers.get(&path)?;
+            let method = member.static_property_name()?;
+            Some((
+                path,
+                classify_state_method_call(family, method)
+                    == StateMethodCallSemantics::ReadOnlyReceiver,
+            ))
+        });
+        if signal.is_none()
+            && !runtime_host
+            && !member_receiver
+                .as_ref()
+                .is_some_and(|(_, readonly)| *readonly)
+        {
+            for argument in &call.arguments {
+                if let Some(expression) = argument.as_expression() {
+                    self.invalidate_reads(expression);
+                }
+            }
+        }
+        if let Some((path, false)) = member_receiver {
+            self.receivers.insert(path, StateReceiverKind::Unknown);
+        }
+        walk_call_expression(self, call);
+    }
+}
+
+impl FactoryCallbacks {
+    pub(super) fn expression_receiver(
+        &self,
+        scoping: &Scoping,
+        aliases: &StaticHookAliases,
+        expression: &Expression<'_>,
+    ) -> StateReceiverKind {
+        let Expression::CallExpression(call) = expression.get_inner_expression() else {
+            return StateReceiverKind::Unknown;
+        };
+        if call.optional {
+            return StateReceiverKind::Unknown;
+        }
+        if call.arguments.is_empty()
+            && let Some(path) = static_alias_source_path(scoping, &call.callee)
+            && aliases.path_is_intact(&path)
+            && aliases.path_is_intact(&aliases.resolve(&path))
+            && let Some(receiver) = self.signal_receivers.get(&aliases.resolve(&path))
+        {
+            return *receiver;
+        }
+        let Some(member) = call.callee.get_member_expr() else {
+            return StateReceiverKind::Unknown;
+        };
+        let Some(method) = member.static_property_name() else {
+            return StateReceiverKind::Unknown;
+        };
+        let receiver = self.expression_receiver(scoping, aliases, member.object());
+        if !aliases.builtin_prototype_method_is_intact(receiver, method) {
+            return StateReceiverKind::Unknown;
+        }
+        classify_state_method_result(receiver, method)
+    }
+
+    pub(super) fn memo_contracts(
+        &self,
+        program: &Program<'_>,
+        scoping: &Scoping,
+        aliases: &StaticHookAliases,
+    ) -> memo_side_effects::RuntimeCallContracts {
+        let mut collector = SignalMethodCalls {
+            facts: self,
+            scoping,
+            aliases,
+            contracts: Default::default(),
+        };
+        collector.visit_program(program);
+        collector.contracts
+    }
+}
+
+struct SignalMethodCalls<'a> {
+    facts: &'a FactoryCallbacks,
+    scoping: &'a Scoping,
+    aliases: &'a StaticHookAliases,
+    contracts: memo_side_effects::RuntimeCallContracts,
+}
+
+impl<'a> Visit<'a> for SignalMethodCalls<'_> {
+    fn visit_call_expression(&mut self, call: &CallExpression<'a>) {
+        let span = (call.span.start, call.span.end);
+        if !call.arguments.is_empty()
+            && let Some(path) = static_alias_source_path(self.scoping, &call.callee)
+            && self
+                .facts
+                .signal_receivers
+                .contains_key(&self.aliases.resolve(&path))
+        {
+            self.contracts.writes.insert(span);
+        }
+        if let Some(member) = call.callee.get_member_expr()
+            && let Some(method) = member.static_property_name()
+        {
+            let receiver =
+                self.facts
+                    .expression_receiver(self.scoping, self.aliases, member.object());
+            if classify_state_method_call(receiver, method)
+                == StateMethodCallSemantics::ReadOnlyReceiver
+                && self
+                    .aliases
+                    .builtin_prototype_method_is_intact(receiver, method)
+            {
+                self.contracts.readonly_methods.insert(span);
+            }
+        }
+        walk_call_expression(self, call);
     }
 }

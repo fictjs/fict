@@ -103,6 +103,12 @@ const MUTATING_MEMBER_PROPERTIES: &[&str] = &[
     "replaceWith",
 ];
 
+#[derive(Default)]
+pub(super) struct RuntimeCallContracts {
+    pub(super) readonly_methods: BTreeSet<(u32, u32)>,
+    pub(super) writes: BTreeSet<(u32, u32)>,
+}
+
 /// Locate imported `$memo`/`createMemo` calls whose shallow callback alternatives perform work
 /// during memo evaluation. Nested closures, object methods, getters, and instance field
 /// initializers are deliberately lazy; direct IIFEs, class static initialization, JSX expression
@@ -111,10 +117,12 @@ pub(super) fn collect(
     program: &Program<'_>,
     scoping: &Scoping,
     memo_calls: &BTreeSet<(u32, u32)>,
+    runtime_calls: &RuntimeCallContracts,
 ) -> Vec<SourceSpan> {
     let mut collector = MemoCallCollector {
         scoping,
         memo_calls,
+        runtime_calls,
         spans: Vec::new(),
     };
     collector.visit_program(program);
@@ -124,6 +132,7 @@ pub(super) fn collect(
 struct MemoCallCollector<'facts, 'semantic> {
     scoping: &'semantic Scoping,
     memo_calls: &'facts BTreeSet<(u32, u32)>,
+    runtime_calls: &'facts RuntimeCallContracts,
     spans: Vec<SourceSpan>,
 }
 
@@ -131,7 +140,8 @@ impl<'a> Visit<'a> for MemoCallCollector<'_, '_> {
     fn visit_call_expression(&mut self, call: &CallExpression<'a>) {
         if self.memo_calls.contains(&(call.span.start, call.span.end))
             && let Some(argument) = call.arguments.first().and_then(Argument::as_expression)
-            && let Some(span) = first_side_effectful_callback(argument, self.scoping)
+            && let Some(span) =
+                first_side_effectful_callback(argument, self.scoping, self.runtime_calls)
         {
             self.spans.push(span);
         }
@@ -142,41 +152,45 @@ impl<'a> Visit<'a> for MemoCallCollector<'_, '_> {
 fn first_side_effectful_callback(
     expression: &Expression<'_>,
     scoping: &Scoping,
+    runtime_calls: &RuntimeCallContracts,
 ) -> Option<SourceSpan> {
     match expression {
         Expression::ArrowFunctionExpression(function) => {
-            callback_has_side_effects_arrow(function, scoping).then(|| source_span(function.span))
-        }
-        Expression::FunctionExpression(function) => {
-            callback_has_side_effects_function(function, scoping)
+            callback_has_side_effects_arrow(function, scoping, runtime_calls)
                 .then(|| source_span(function.span))
         }
-        Expression::SequenceExpression(sequence) => sequence
-            .expressions
-            .last()
-            .and_then(|expression| first_side_effectful_callback(expression, scoping)),
+        Expression::FunctionExpression(function) => {
+            callback_has_side_effects_function(function, scoping, runtime_calls)
+                .then(|| source_span(function.span))
+        }
+        Expression::SequenceExpression(sequence) => {
+            sequence.expressions.last().and_then(|expression| {
+                first_side_effectful_callback(expression, scoping, runtime_calls)
+            })
+        }
         Expression::ConditionalExpression(conditional) => {
-            first_side_effectful_callback(&conditional.consequent, scoping)
-                .or_else(|| first_side_effectful_callback(&conditional.alternate, scoping))
+            first_side_effectful_callback(&conditional.consequent, scoping, runtime_calls).or_else(
+                || first_side_effectful_callback(&conditional.alternate, scoping, runtime_calls),
+            )
         }
         Expression::LogicalExpression(logical) => {
-            first_side_effectful_callback(&logical.left, scoping)
-                .or_else(|| first_side_effectful_callback(&logical.right, scoping))
+            first_side_effectful_callback(&logical.left, scoping, runtime_calls)
+                .or_else(|| first_side_effectful_callback(&logical.right, scoping, runtime_calls))
         }
         Expression::ParenthesizedExpression(wrapper) => {
-            first_side_effectful_callback(&wrapper.expression, scoping)
+            first_side_effectful_callback(&wrapper.expression, scoping, runtime_calls)
         }
         Expression::TSAsExpression(wrapper) => {
-            first_side_effectful_callback(&wrapper.expression, scoping)
+            first_side_effectful_callback(&wrapper.expression, scoping, runtime_calls)
         }
         Expression::TSTypeAssertion(wrapper) => {
-            first_side_effectful_callback(&wrapper.expression, scoping)
+            first_side_effectful_callback(&wrapper.expression, scoping, runtime_calls)
         }
         Expression::TSNonNullExpression(wrapper) => {
-            first_side_effectful_callback(&wrapper.expression, scoping)
+            first_side_effectful_callback(&wrapper.expression, scoping, runtime_calls)
         }
         Expression::TSSatisfiesExpression(wrapper) => {
-            first_side_effectful_callback(&wrapper.expression, scoping)
+            first_side_effectful_callback(&wrapper.expression, scoping, runtime_calls)
         }
         _ => None,
     }
@@ -185,27 +199,34 @@ fn first_side_effectful_callback(
 fn callback_has_side_effects_arrow(
     function: &ArrowFunctionExpression<'_>,
     scoping: &Scoping,
+    runtime_calls: &RuntimeCallContracts,
 ) -> bool {
-    let mut analyzer = MemoSideEffectAnalyzer::new(scoping);
+    let mut analyzer = MemoSideEffectAnalyzer::new(scoping, runtime_calls);
     analyzer.visit_arrow_body(function);
     analyzer.found
 }
 
-fn callback_has_side_effects_function(function: &Function<'_>, scoping: &Scoping) -> bool {
-    let mut analyzer = MemoSideEffectAnalyzer::new(scoping);
+fn callback_has_side_effects_function(
+    function: &Function<'_>,
+    scoping: &Scoping,
+    runtime_calls: &RuntimeCallContracts,
+) -> bool {
+    let mut analyzer = MemoSideEffectAnalyzer::new(scoping, runtime_calls);
     analyzer.visit_function_body_if_present(function);
     analyzer.found
 }
 
 struct MemoSideEffectAnalyzer<'semantic> {
     scoping: &'semantic Scoping,
+    runtime_calls: &'semantic RuntimeCallContracts,
     found: bool,
 }
 
 impl<'semantic> MemoSideEffectAnalyzer<'semantic> {
-    fn new(scoping: &'semantic Scoping) -> Self {
+    fn new(scoping: &'semantic Scoping, runtime_calls: &'semantic RuntimeCallContracts) -> Self {
         Self {
             scoping,
+            runtime_calls,
             found: false,
         }
     }
@@ -281,6 +302,13 @@ impl<'semantic> MemoSideEffectAnalyzer<'semantic> {
     }
 
     fn is_effectful_call(&self, call: &CallExpression<'_>) -> bool {
+        let span = (call.span.start, call.span.end);
+        if self.runtime_calls.writes.contains(&span) {
+            return true;
+        }
+        if self.runtime_calls.readonly_methods.contains(&span) {
+            return false;
+        }
         let Some(name) = self.call_name(&call.callee) else {
             return true;
         };
@@ -431,6 +459,45 @@ impl<'a> Visit<'a> for MemoSideEffectAnalyzer<'_> {
         }
         if self.visit_direct_iife(&call.callee) {
             return;
+        }
+        if self
+            .runtime_calls
+            .readonly_methods
+            .contains(&(call.span.start, call.span.end))
+            && call
+                .callee
+                .get_member_expr()
+                .and_then(|member| member.static_property_name())
+                .is_some_and(|method| {
+                    matches!(
+                        method,
+                        "map"
+                            | "filter"
+                            | "flatMap"
+                            | "forEach"
+                            | "some"
+                            | "every"
+                            | "find"
+                            | "findIndex"
+                            | "findLast"
+                            | "findLastIndex"
+                            | "reduce"
+                            | "reduceRight"
+                            | "toSorted"
+                    )
+                })
+        {
+            // These built-ins invoke their callback during memo evaluation.
+            // An unknown callback cannot certify a pure computation.
+            let inspected = call
+                .arguments
+                .first()
+                .and_then(Argument::as_expression)
+                .is_some_and(|callback| self.visit_direct_iife(callback));
+            if !inspected || self.found {
+                self.found = true;
+                return;
+            }
         }
         self.found = self.is_effectful_call(call);
     }

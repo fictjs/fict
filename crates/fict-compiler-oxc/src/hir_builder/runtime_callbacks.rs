@@ -80,11 +80,13 @@ impl RuntimeImports {
             "createSelector" => Some(RuntimeCallbackHost::Selector),
             "render" | "hydrate" => Some(RuntimeCallbackHost::Render),
             "untrack" => Some(RuntimeCallbackHost::Snapshot),
-            "createEffect" | "createMemo" | "createRenderEffect" | "prop" => {
+            "createEffect" | "createMemo" | "createRenderEffect" | "prop" | "useDeferredValue" => {
                 Some(RuntimeCallbackHost::Computation)
             }
             "mergeProps" => Some(RuntimeCallbackHost::Props),
-            "batch" | "startTransition" | "runInScope" => Some(RuntimeCallbackHost::Managed),
+            "batch" | "startTransition" | "runInScope" | "onMount" | "onCleanup" | "onDestroy" => {
+                Some(RuntimeCallbackHost::Managed)
+            }
             _ => None,
         }
     }
@@ -100,6 +102,7 @@ pub(super) enum RuntimeCallbackHost {
     Selector,
     ResourceRead,
     Props,
+    Signal,
 }
 
 impl ReactiveEscapeCollector<'_, '_, '_> {

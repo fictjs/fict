@@ -2373,14 +2373,26 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             &proven_receivers,
             &static_hook_aliases,
         );
-        self.validate_advisory_diagnostics(program, &calls.calls, &reactive_symbols.reactive);
-        self.validate_memo_side_effects(program, &calls.calls);
+        let memo_contracts = factory_callbacks.memo_contracts(
+            program,
+            self.semantic.scoping(),
+            &static_hook_aliases,
+        );
+        self.validate_advisory_diagnostics(
+            program,
+            &calls.calls,
+            &reactive_symbols.reactive,
+            &memo_contracts,
+        );
+        self.validate_memo_side_effects(program, &calls.calls, &memo_contracts);
         self.validate_inline_jsx_functions(program);
         self.validate_native_jsx_spreads(program);
         self.validate_dynamic_property_access(
             program,
             &reactive_symbols.reactive,
             &proven_receivers,
+            &calls.calls,
+            &static_hook_aliases,
         );
         self.validate_reactive_jsx_writes(program, &reactive_symbols.reactive);
         self.apply_call_classification(&calls.calls);
@@ -2960,11 +2972,49 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
         program: &Program<'_>,
         reactive_symbols: &BTreeSet<SymbolId>,
         receivers: &BTreeMap<SymbolId, StateReceiverKind>,
+        calls: &[CallFact],
+        aliases: &StaticHookAliases,
     ) {
+        let mut stores = BTreeSet::new();
+        let binding_symbols: BTreeMap<_, _> = self
+            .symbol_to_binding
+            .iter()
+            .map(|(symbol, binding)| (*binding, *symbol))
+            .collect();
+        for call in calls {
+            if call.reactive_kind == Some(ReactiveCallKind::Store)
+                && let Some(binding) = call.direct_variable_binding
+                && let Some(&symbol) = binding_symbols.get(&binding)
+                && !self.semantic.scoping().symbol_is_mutated(symbol)
+            {
+                stores.insert(StaticAliasPath::root(symbol));
+            }
+        }
+        for binding in &self.frontend.bindings {
+            let Some(import) = &binding.import else {
+                continue;
+            };
+            let path = StaticAliasPath::root(SymbolId::from_usize(binding.id.as_usize()));
+            if import.reactive == Some(fict_hir::ImportedReactiveKind::Store) {
+                stores.insert(path.clone());
+            }
+            for member in &import.reactive_members {
+                if member.kind == fict_hir::ImportedReactiveKind::Store {
+                    let mut member_path = path.clone();
+                    for key in &member.path {
+                        member_path = member_path.with_property(key.clone());
+                    }
+                    stores.insert(member_path);
+                }
+            }
+        }
+        extend_store_aliases(program, self.semantic.scoping(), &mut stores);
         let mut dynamic = DynamicReactivePropertyCollector {
             scoping: self.semantic.scoping(),
             reactive_symbols,
             receivers,
+            aliases,
+            stores: &stores,
             spans: BTreeSet::new(),
         };
         dynamic.visit_program(program);
@@ -3022,7 +3072,12 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
         }
     }
 
-    fn validate_memo_side_effects(&mut self, program: &Program<'_>, calls: &[CallFact]) {
+    fn validate_memo_side_effects(
+        &mut self,
+        program: &Program<'_>,
+        calls: &[CallFact],
+        runtime_calls: &memo_side_effects::RuntimeCallContracts,
+    ) {
         let memo_calls = calls
             .iter()
             .filter(|call| {
@@ -3044,7 +3099,9 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
         } else {
             DiagnosticSeverity::Warning
         };
-        for span in memo_side_effects::collect(program, self.semantic.scoping(), &memo_calls) {
+        for span in
+            memo_side_effects::collect(program, self.semantic.scoping(), &memo_calls, runtime_calls)
+        {
             self.diagnostics.push(
                 Diagnostic::new(
                     DiagnosticCode::new("FICT-M003").expect("diagnostic literal"),
@@ -9972,13 +10029,25 @@ impl<'a> Visit<'a> for CallCollector<'_, '_> {
             runtime_reactive.and_then(|classification| classification.reactive_kind);
         let runtime_creation_kind =
             runtime_reactive.and_then(|classification| classification.creation_kind);
-        let hook = classify_hook_call(
-            self.scoping,
-            &call.callee,
-            self.symbol_to_binding,
-            self.hook_bindings,
-            self.namespace_imports,
-        );
+        // Context reads do not allocate hook slots and can follow ordinary
+        // control flow. Only intact Fict imports receive that contract.
+        let context_read = self
+            .runtime_imports
+            .resolve(self.scoping, self.static_aliases, &call.callee)
+            .is_some_and(|(source, name)| {
+                name == "useContext" && matches!(source, "fict" | "@fictjs/runtime")
+            });
+        let hook = if context_read {
+            None
+        } else {
+            classify_hook_call(
+                self.scoping,
+                &call.callee,
+                self.symbol_to_binding,
+                self.hook_bindings,
+                self.namespace_imports,
+            )
+        };
         let arguments: Vec<_> = call
             .arguments
             .iter()
@@ -43056,6 +43125,7 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
             matches!(
                 host,
                 runtime_callbacks::RuntimeCallbackHost::Render
+                    | runtime_callbacks::RuntimeCallbackHost::Signal
                     | runtime_callbacks::RuntimeCallbackHost::Computation
                     | runtime_callbacks::RuntimeCallbackHost::AsyncComputation
             )
@@ -43929,6 +43999,15 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
         expression: &Expression<'_>,
         expected: StateReceiverKind,
     ) -> bool {
+        if expected != StateReceiverKind::Unknown
+            && self.factory_callbacks.expression_receiver(
+                self.scoping,
+                self.callback_aliases,
+                expression,
+            ) == expected
+        {
+            return true;
+        }
         match expression.get_inner_expression() {
             Expression::NewExpression(expression) => {
                 classify_global_state_constructor(self.scoping, &expression.callee) == expected
@@ -44015,7 +44094,9 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
             return match host {
                 RuntimeCallbackHost::Selector => self.selector_callbacks_are_owned(arguments),
                 RuntimeCallbackHost::ResourceRead => self.resource_getter_is_owned(arguments),
-                RuntimeCallbackHost::Props => arguments.iter().all(|argument| !argument.spread),
+                RuntimeCallbackHost::Props | RuntimeCallbackHost::Signal => {
+                    arguments.iter().all(|argument| !argument.spread)
+                }
                 RuntimeCallbackHost::Snapshot
                 | RuntimeCallbackHost::Managed
                 | RuntimeCallbackHost::Computation
@@ -44041,6 +44122,13 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
         };
         let mut receiver_kind =
             classify_state_receiver_assignment(self.scoping, receiver, self.proven_receivers);
+        if receiver_kind == StateReceiverKind::Unknown {
+            receiver_kind = self.factory_callbacks.expression_receiver(
+                self.scoping,
+                self.callback_aliases,
+                receiver,
+            );
+        }
         if receiver_kind == StateReceiverKind::Unknown && self.is_known_array_receiver(receiver) {
             receiver_kind = StateReceiverKind::Array;
         }
@@ -45028,10 +45116,68 @@ fn is_safe_global_path(path: &StaticAliasPath) -> bool {
     }
 }
 
+fn store_covers_path(stores: &BTreeSet<StaticAliasPath>, path: &StaticAliasPath) -> bool {
+    let mut prefix = path.clone();
+    loop {
+        if stores.contains(&prefix) {
+            return true;
+        }
+        if prefix.properties.pop().is_none() {
+            return false;
+        }
+    }
+}
+
+fn extend_store_aliases(
+    program: &Program<'_>,
+    scoping: &Scoping,
+    stores: &mut BTreeSet<StaticAliasPath>,
+) {
+    struct Collector<'a> {
+        scoping: &'a Scoping,
+        dependents: BTreeMap<SymbolId, Vec<(SymbolId, StaticAliasPath)>>,
+    }
+    impl<'a> Visit<'a> for Collector<'_> {
+        fn visit_variable_declarator(&mut self, declaration: &VariableDeclarator<'a>) {
+            if let BindingPattern::BindingIdentifier(binding) = &declaration.id
+                && let Some(target) = binding.symbol_id.get()
+                && !self.scoping.symbol_is_mutated(target)
+                && let Some(source) = declaration.init.as_ref()
+                && let Some(source) = static_alias_source_path(self.scoping, source)
+                && let Some(root) = source.binding_root()
+            {
+                self.dependents
+                    .entry(root)
+                    .or_default()
+                    .push((target, source));
+            }
+            walk_variable_declarator(self, declaration);
+        }
+    }
+    let mut collector = Collector {
+        scoping,
+        dependents: BTreeMap::new(),
+    };
+    collector.visit_program(program);
+    let mut pending: VecDeque<_> = stores
+        .iter()
+        .filter_map(StaticAliasPath::binding_root)
+        .collect();
+    while let Some(root) = pending.pop_front() {
+        for (target, source) in collector.dependents.get(&root).into_iter().flatten() {
+            if store_covers_path(stores, source) && stores.insert(StaticAliasPath::root(*target)) {
+                pending.push_back(*target);
+            }
+        }
+    }
+}
+
 struct DynamicReactivePropertyCollector<'semantic, 'reactive> {
     scoping: &'semantic Scoping,
     reactive_symbols: &'reactive BTreeSet<SymbolId>,
     receivers: &'reactive BTreeMap<SymbolId, StateReceiverKind>,
+    aliases: &'reactive StaticHookAliases,
+    stores: &'reactive BTreeSet<StaticAliasPath>,
     spans: BTreeSet<(u32, u32)>,
 }
 
@@ -45046,6 +45192,14 @@ impl<'a> Visit<'a> for DynamicReactivePropertyCollector<'_, '_> {
             Expression::StringLiteral(_) | Expression::NumericLiteral(_)
         );
         if !literal_property
+            && !expression_root_symbol(self.scoping, &member.object).is_some_and(|symbol| {
+                let path = self.aliases.resolve(&StaticAliasPath::root(symbol));
+                store_covers_path(self.stores, &path)
+                    || static_alias_source_path(self.scoping, &member.object).is_some_and(|path| {
+                        let path = self.aliases.resolve(&path);
+                        store_covers_path(self.stores, &path)
+                    })
+            })
             && !matches!(member.object.get_inner_expression(), Expression::Identifier(identifier)
                 if identifier_symbol(self.scoping, identifier)
                     .and_then(|symbol| self.receivers.get(&symbol))

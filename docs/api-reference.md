@@ -127,28 +127,34 @@ $effect(fn: () => void | (() => void))
 **Example:**
 
 ```tsx
+import { $effect } from 'fict'
+import { createSignal } from 'fict/advanced'
+
 function Timer() {
-  let seconds = $state(0)
+  const seconds = createSignal(0)
 
   // Basic effect
   $effect(() => {
-    console.log(`Seconds: ${seconds}`)
+    console.log(`Seconds: ${seconds()}`)
   })
 
   // Effect with cleanup
   $effect(() => {
-    const id = setInterval(() => seconds++, 1000)
+    const id = setInterval(() => seconds(seconds() + 1), 1000)
     return () => clearInterval(id) // cleanup
   })
 
   // Depend on external API
   $effect(() => {
-    document.title = `Timer: ${seconds}s`
+    document.title = `Timer: ${seconds()}s`
   })
 
-  return <div>Elapsed: {seconds}s</div>
+  return <div>Elapsed: {seconds()}s</div>
 }
 ```
+
+Manual accessors make reads and writes explicit in callbacks retained by browser timers.
+The effect cleanup cancels the timer when its owner is disposed.
 
 **Notes:**
 
@@ -1778,6 +1784,7 @@ If duplicate keys are detected in the same list:
 
 ```tsx
 import { $state, $effect, render, onMount } from 'fict'
+import { createSignal } from 'fict/advanced'
 
 interface Todo {
   id: number
@@ -1786,8 +1793,9 @@ interface Todo {
 }
 
 function TodoApp() {
-  let todos = $state<Todo[]>([])
-  let inputText = $state('')
+  // Manual accessors make persistence snapshots explicit.
+  const todos = createSignal<Todo[]>([])
+  let inputText = $state<string>('')
   let filter = $state<'all' | 'active' | 'completed'>('all')
   let nextId = 1
 
@@ -1795,55 +1803,55 @@ function TodoApp() {
   onMount(() => {
     const saved = localStorage.getItem('todos')
     if (saved) {
-      todos = JSON.parse(saved)
-      nextId = Math.max(...todos.map(t => t.id), 0) + 1
+      todos(JSON.parse(saved))
+      nextId = Math.max(...todos().map(t => t.id), 0) + 1
     }
   })
 
   // Save to localStorage
   $effect(() => {
-    localStorage.setItem('todos', JSON.stringify(todos))
+    localStorage.setItem('todos', JSON.stringify(todos()))
   })
 
   // Computed values
   const filteredTodos = () => {
     switch (filter) {
       case 'active':
-        return todos.filter(t => !t.completed)
+        return todos().filter(t => !t.completed)
       case 'completed':
-        return todos.filter(t => t.completed)
+        return todos().filter(t => t.completed)
       default:
-        return todos
+        return todos()
     }
   }
 
-  const activeCount = () => todos.filter(t => !t.completed).length
-  const completedCount = () => todos.filter(t => t.completed).length
+  const activeCount = () => todos().filter(t => !t.completed).length
+  const completedCount = () => todos().filter(t => t.completed).length
 
   // Actions
   const addTodo = () => {
     if (!inputText.trim()) return
-    todos = [
-      ...todos,
+    todos([
+      ...todos(),
       {
         id: nextId++,
         text: inputText.trim(),
         completed: false,
       },
-    ]
+    ])
     inputText = ''
   }
 
   const toggleTodo = (id: number) => {
-    todos = todos.map(t => (t.id === id ? { ...t, completed: !t.completed } : t))
+    todos(todos().map(t => (t.id === id ? { ...t, completed: !t.completed } : t)))
   }
 
   const removeTodo = (id: number) => {
-    todos = todos.filter(t => t.id !== id)
+    todos(todos().filter(t => t.id !== id))
   }
 
   const clearCompleted = () => {
-    todos = todos.filter(t => !t.completed)
+    todos(todos().filter(t => !t.completed))
   }
 
   return (
@@ -1873,7 +1881,7 @@ function TodoApp() {
       </ul>
 
       {/* Footer */}
-      {todos.length > 0 && (
+      {todos().length > 0 && (
         <div class="footer">
           <span>{activeCount()} items left</span>
 

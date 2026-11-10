@@ -132,9 +132,8 @@ Dynamic object access cannot always be narrowed at compile time.
 // Before
 const value = settings[userInput]
 
-// After: narrow the supported keys.
-const key = userInput === 'compact' || userInput === 'theme' ? userInput : 'theme'
-const value = settings[key]
+// After: select between static property reads.
+const value = userInput === 'compact' ? settings.compact : settings.theme
 ```
 
 For truly dynamic maps, use `$store` so runtime path tracking owns the

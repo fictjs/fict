@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { createRequire } from 'node:module'
+import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
 import { executeDomCommonJs } from './lib/compiler-dom-semantic-harness.mjs'
@@ -1414,3 +1415,224 @@ for (const fineGrainedDom of [true, false]) {
     ])
   })
 }
+
+for (const fineGrainedDom of [true, false]) {
+  test(`bug 21: store keys, manual signal memos, deferred values and lifecycle hosts update (fineGrainedDom=${fineGrainedDom})`, async () => {
+    const code = compile(
+      `
+      import { $state, $store, createMemo, useDeferredValue, onMount, render } from 'fict'
+      import { createSignal } from 'fict/advanced'
+      let root
+      function App() {
+        const store=$store({labels:{a:'A',b:'B'},items:['x','y']})
+        const labels=store.labels
+        let key=$state('a'), index=$state(0), query=$state('first'), mounted=$state(0)
+        const items=createSignal([1,2,3]), threshold=createSignal(1)
+        const filtered=createMemo(()=>items().filter(n=>n>threshold()))
+        const count=createMemo(()=>items().length)
+        const deferred=useDeferredValue(()=>query)
+        onMount(()=>{mounted=1})
+        return <div><button onClick={()=>{key='b';index=1;query='next';items([1,2,3,4]);threshold(2)}}>update</button>
+          <button id="mutate" onClick={()=>{store.labels.b='BB'}}>mutate</button>
+          <p>{store.labels[key]}:{labels[key]}:{store.items[index]}:{mounted}</p>
+          <b>{filtered().join(',')}:{count()}</b><i>{deferred()}</i></div>
+      }
+      export function mount(container){root=container;return render(()=><App/>,root)}
+      export function observe(){return ['p','b','i'].map(tag=>root.querySelector(tag).textContent)}
+    `,
+      { fineGrainedDom },
+    )
+    const result = await executeDomCommonJs(code, {
+      mountExport: 'mount',
+      observeExport: 'observe',
+      steps: [
+        { kind: 'record', label: 'initial' },
+        { kind: 'click', selector: 'button' },
+        { kind: 'record', label: 'updated' },
+        { kind: 'click', selector: '#mutate' },
+        { kind: 'record', label: 'store write' },
+      ],
+    })
+    assert.deepEqual(result, [
+      { label: 'initial', value: ['A:A:x:1', '2,3:3', 'first'] },
+      { label: 'updated', value: ['B:B:y:1', '3,4:4', 'next'] },
+      { label: 'store write', value: ['BB:BB:y:1', '3,4:4', 'next'] },
+    ])
+  })
+
+  test(`bug 21: conditional context reads and props resource getters compile and update (fineGrainedDom=${fineGrainedDom})`, async () => {
+    const code = compile(
+      `
+      import { $state, createContext, useContext, hasContext, render } from 'fict'
+      import { resource } from 'fict/plus'
+      import { reactive } from 'fict/advanced'
+      const Ctx=createContext('default')
+      const users=resource(async (_, id)=>'user-'+id)
+      let root
+      function Child(props){
+        const user=users.read(reactive(()=>props.id))
+        if(hasContext(Ctx)){const theme=useContext(Ctx);return <p><b>{theme}</b><i>{user.data}</i></p>}
+        return null
+      }
+      function App(){let id=$state(1);return <div><button onClick={()=>id++}>next</button><Ctx.Provider value="provided"><Child id={id}/></Ctx.Provider></div>}
+      export function mount(container){root=container;return render(()=><App/>,root)}
+      export function observe(){return root.querySelector('p').textContent}
+    `,
+      { fineGrainedDom },
+    )
+    const result = await executeDomCommonJs(code, {
+      mountExport: 'mount',
+      observeExport: 'observe',
+      steps: [
+        { kind: 'record', label: 'initial' },
+        { kind: 'click', selector: 'button' },
+        { kind: 'record', label: 'updated' },
+      ],
+    })
+    assert.deepEqual(result, [
+      { label: 'initial', value: 'provideduser-1' },
+      { label: 'updated', value: 'provideduser-2' },
+    ])
+  })
+
+  const apiReference = readFileSync(new URL('../docs/api-reference.md', import.meta.url), 'utf8')
+  test(`bug 21: the published Timer example updates and clears its timer (fineGrainedDom=${fineGrainedDom})`, async () => {
+    const source = apiReference
+      .slice(apiReference.indexOf('### $effect'))
+      .match(/```tsx\n([\s\S]*?)\n```/)[1]
+    compile(source, { fineGrainedDom })
+    const code = compile(
+      `import {render} from 'fict';let root,tick,cleared=0;const setInterval=fn=>{tick=fn;return 1};const clearInterval=()=>{cleared++};
+      ${source}
+      export function advance(){tick()}
+      export function mount(container){root=container;return render(()=><Timer/>,root)}
+      export function observe(){return [root.textContent,document.title,cleared]}
+    `,
+      { fineGrainedDom },
+    )
+    const result = await executeDomCommonJs(code, {
+      mountExport: 'mount',
+      observeExport: 'observe',
+      steps: [
+        { kind: 'record', label: 'initial' },
+        { kind: 'call', exportName: 'advance' },
+        { kind: 'record', label: 'ticked' },
+        { kind: 'dispose' },
+        { kind: 'record', label: 'disposed' },
+      ],
+    })
+    assert.deepEqual(result, [
+      { label: 'initial', value: ['Elapsed: 0s', 'Timer: 0s', 0] },
+      { label: 'ticked', value: ['Elapsed: 1s', 'Timer: 1s', 0] },
+      { label: 'disposed', value: ['', 'Timer: 1s', 1] },
+    ])
+  })
+
+  test(`bug 21: the published Todo example creates, completes and persists todos (fineGrainedDom=${fineGrainedDom})`, async () => {
+    const source = apiReference
+      .slice(apiReference.indexOf('## Full Example: Todo App'))
+      .match(/```tsx\n([\s\S]*?)\n```/)[1]
+    compile(source, { fineGrainedDom })
+    const code = compile(
+      source.replace(
+        "render(() => <TodoApp />, document.getElementById('app')!)",
+        `let root;
+      export function mount(container){root=container;return render(()=><TodoApp/>,root)}
+      export function observe(){return {rows:root.querySelectorAll('li').length, text:root.querySelector('li span')?.textContent, saved:JSON.parse(localStorage.getItem('todos'))}}
+    `,
+      ),
+      { fineGrainedDom },
+    )
+    const result = await executeDomCommonJs(code, {
+      mountExport: 'mount',
+      observeExport: 'observe',
+      steps: [
+        {
+          kind: 'dispatch',
+          selector: '.input-section input',
+          event: 'input',
+          constructor: 'Event',
+          init: { bubbles: true },
+          assign: { value: 'task' },
+        },
+        { kind: 'click', selector: '.input-section button' },
+        { kind: 'record', label: 'added' },
+        {
+          kind: 'dispatch',
+          selector: 'li input',
+          event: 'change',
+          constructor: 'Event',
+          init: { bubbles: true },
+          assign: { checked: true },
+        },
+        { kind: 'record', label: 'completed' },
+      ],
+    })
+    assert.deepEqual(result, [
+      {
+        label: 'added',
+        value: { rows: 1, text: 'task', saved: [{ id: 1, text: 'task', completed: false }] },
+      },
+      {
+        label: 'completed',
+        value: { rows: 1, text: 'task', saved: [{ id: 1, text: 'task', completed: true }] },
+      },
+    ])
+  })
+}
+
+for (const [setup, expression] of [
+  [
+    'const items=createSignal([1,2,3]);',
+    "items().filter(n=>{document.title='changed';return true})",
+  ],
+  ['const items=createSignal([1,2,3]);', 'items([4,5])'],
+  ['const items=createSignal([1,2,3]);', 'items().sort()'],
+  ['const items=createSignal([1,2,3]);Array.prototype.filter=external;', 'items().filter(n=>n>1)'],
+  ['const items=createSignal([1,2,3]);items(external);', 'items().filter(n=>n>1)'],
+  ['const items=createSignal([1,2,3]);items().filter=external;', 'items().filter(n=>n>1)'],
+  [
+    'const items=createSignal([1,2,3]);const alias=items();alias.filter=external;',
+    'items().filter(n=>n>1)',
+  ],
+  ['const items=createSignal([1,2,3]);external(items());', 'items().filter(n=>n>1)'],
+]) {
+  test(`bug 21: manual memo contracts reject mutations and uncertified receivers (${setup} ${expression})`, () => {
+    const result = native.transformSync({
+      code: `import{createSignal}from'fict/advanced';import{createMemo}from'fict';declare const external:any;function App(){${setup}const value=createMemo(()=>${expression});return <p>{value()}</p>}`,
+      filename: '/memo-contract.tsx',
+      options: { dev: false, strictGuarantee: true },
+    })
+    assert.ok(
+      result.diagnostics.some(d => d.code === 'FICT-M003'),
+      JSON.stringify(result.diagnostics),
+    )
+    assert.ok(!result.code)
+  })
+}
+
+for (const source of [
+  "import{$state}from'fict';import{onMount}from'external';function App(){let n=$state(0);onMount(()=>n++);return <p>{n}</p>}",
+  "import{$state,onMount}from'fict';function App(){let n=$state(0);onMount(async()=>{await Promise.resolve();n++});return <p>{n}</p>}",
+  "import{$state,useDeferredValue}from'fict';function App(){let n=$state(0);const value=useDeferredValue(async()=>{await Promise.resolve();return n});return <p>{value()}</p>}",
+]) {
+  test(`bug 21: runtime host contracts exclude foreign and asynchronous callbacks (${source})`, () => {
+    const result = native.transformSync({
+      code: source,
+      filename: '/runtime-host.tsx',
+      options: { dev: false, strictGuarantee: true },
+    })
+    assert.ok(result.diagnostics.some(d => ['FICT-R002', 'FICT-R005'].includes(d.code)))
+    assert.ok(!result.code)
+  })
+}
+
+test('bug 21: useContext placement exemption follows the runtime import identity', () => {
+  const result = native.transformSync({
+    code: "import{useContext}from'external';function App(props){if(props.on){const value=useContext({});return <p>{value}</p>}return null}",
+    filename: '/context-host.tsx',
+    options: { dev: false, strictGuarantee: true },
+  })
+  assert.ok(result.diagnostics.some(d => d.code === 'FICT-PLACEMENT-HOOK-CONTROL'))
+  assert.ok(!result.code)
+})

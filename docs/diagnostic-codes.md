@@ -716,11 +716,11 @@ state = { ...state, user: { ...state.user, name: 'Alice' } }
 
 **Severity:** Error (default)
 
-**Why:** Dynamic property access (e.g., `obj[key]`) widens dependency tracking.
+**Why:** Dynamic access to a shallow reactive object or component props cannot always be assigned a precise static dependency path.
 
-**Impact:** More updates than necessary.
+**Impact:** Dependency tracking may be broader than the compiler can guarantee.
 
-**Fix:** Prefer static property access where possible.
+**Fix:** Select between static property reads, or use `$store` for genuinely dynamic object keys. Store proxies track the actual key at runtime, including nested objects and immutable property aliases. Certified array indexing is also supported. Merely narrowing a key with a conditional or TypeScript type does not establish a static property path.
 
 ### FICT-H002: Inconsistent hook return accessor shape
 

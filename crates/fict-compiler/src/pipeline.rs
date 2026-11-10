@@ -6839,7 +6839,7 @@ mod tests {
                 .iter()
                 .filter(|diagnostic| diagnostic.code.as_str() == "FICT-H")
                 .count(),
-            8,
+            7,
             "{:?}",
             strict.diagnostics
         );
@@ -6860,7 +6860,7 @@ mod tests {
                 .iter()
                 .filter(|diagnostic| diagnostic.code.as_str() == "FICT-H")
                 .count(),
-            8,
+            7,
             "{:?}",
             fallback.diagnostics
         );

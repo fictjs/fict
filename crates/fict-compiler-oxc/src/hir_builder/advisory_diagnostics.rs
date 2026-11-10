@@ -30,9 +30,10 @@ impl Builder<'_, '_> {
         program: &Program<'_>,
         calls: &[CallFact],
         reactive_symbols: &BTreeSet<SymbolId>,
+        runtime_calls: &memo_side_effects::RuntimeCallContracts,
     ) {
         self.validate_component_advisories();
-        self.validate_callback_dependencies(program, calls, reactive_symbols);
+        self.validate_callback_dependencies(program, calls, reactive_symbols, runtime_calls);
         self.diagnostics
             .extend(jsx_list_advisories(program, self.semantic.scoping()));
     }
@@ -74,14 +75,19 @@ impl Builder<'_, '_> {
         program: &Program<'_>,
         calls: &[CallFact],
         reactive_symbols: &BTreeSet<SymbolId>,
+        runtime_calls: &memo_side_effects::RuntimeCallContracts,
     ) {
         let memo_calls: BTreeSet<_> = calls
             .iter()
             .filter(|call| self.reactive_callback_kind(call) == Some(FictMacroKind::Memo))
             .map(|call| (call.span.start(), call.span.end()))
             .collect();
-        let side_effectful_memos =
-            memo_side_effects::collect(program, self.semantic.scoping(), &memo_calls);
+        let side_effectful_memos = memo_side_effects::collect(
+            program,
+            self.semantic.scoping(),
+            &memo_calls,
+            runtime_calls,
+        );
 
         for call in calls {
             let Some(kind @ (FictMacroKind::Effect | FictMacroKind::Memo)) =

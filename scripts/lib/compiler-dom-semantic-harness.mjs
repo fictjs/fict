@@ -6,12 +6,14 @@ const require = createRequire(import.meta.url)
 const repositoryRoot = path.resolve(import.meta.dirname, '../..')
 const { JSDOM } = require('../../packages/runtime/node_modules/jsdom')
 const runtime = require(path.join(repositoryRoot, 'packages/runtime/dist/index.cjs'))
+const fict = require(path.join(repositoryRoot, 'packages/fict/dist/index.cjs'))
 const internal = require(path.join(repositoryRoot, 'packages/runtime/dist/internal.cjs'))
 
 const DOM_GLOBALS = [
   'window',
   'document',
   'navigator',
+  'localStorage',
   'Node',
   'Element',
   'HTMLElement',
@@ -103,7 +105,12 @@ function installDom(dom) {
 function requireRuntime(request) {
   if (request === '@fictjs/ssr')
     return require(path.join(repositoryRoot, 'packages/ssr/dist/index.node.cjs'))
-  if (request === 'fict' || request === '@fictjs/runtime') return runtime
+  if (request === 'fict') return fict
+  if (request === '@fictjs/runtime') return runtime
+  if (request === 'fict/advanced' || request === '@fictjs/runtime/advanced')
+    return require(path.join(repositoryRoot, 'packages/runtime/dist/advanced.cjs'))
+  if (request === 'fict/plus')
+    return require(path.join(repositoryRoot, 'packages/fict/dist/plus.cjs'))
   if (
     request === 'fict/internal' ||
     request === '@fictjs/runtime/internal' ||
