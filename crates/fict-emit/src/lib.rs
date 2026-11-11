@@ -11,10 +11,10 @@ mod runtime_abi;
 mod verify;
 
 pub use ir::{
-    CleanupOwner, ComponentChild, ComponentProp, ComponentTarget, ConditionalKind,
-    ControlFlowRegionOutput, DomBindingKind, DomNamespace, DomTextSegment, EmitContext,
-    EmitControlArm, EmitFunction, EmitModulePlan, EmitOperation, EmitPreviewComponent,
-    EmitPreviewHandler, EmitPreviewLexicalCapture, EmitPreviewLocalHandler,
+    CleanupOwner, ComponentChild, ComponentProp, ComponentRoot, ComponentRootHazard,
+    ComponentTarget, ConditionalKind, ControlFlowRegionOutput, DomBindingKind, DomNamespace,
+    DomTextSegment, EmitContext, EmitControlArm, EmitFunction, EmitModulePlan, EmitOperation,
+    EmitPreviewComponent, EmitPreviewHandler, EmitPreviewLexicalCapture, EmitPreviewLocalHandler,
     EmitPreviewModuleCapture, EmitPreviewPlan, EmitPreviewPropCapture, EmitPreviewPropRestCapture,
     EmitProgram, EmitPropBinding, EmitPropCheck, EmitPropMode, EmitPropsDefault, EmitPropsPlan,
     EmitPropsRest, EmitSlotId, EmitTemporary, EmitTemporaryId, EmitValueRef, EventOptions,

@@ -70,6 +70,9 @@ for (const fixture of inputs.fixtures) {
     const rustDiagnostics = diagnosticSignature(result.diagnostics)
     if (fixture.diagnosticDeviation === undefined) {
       assert.deepEqual(rustDiagnostics, babelDiagnostics, `${fixture.id} diagnostics`)
+    } else if (fixture.diagnosticDeviation === 'rust-reports-non-jsx-component-control-flow') {
+      assert.deepEqual(babelDiagnostics, ['FICT-S002:warning'], fixture.id)
+      assert.deepEqual(rustDiagnostics, ['FICT-R006:warning', 'FICT-S002:warning'], fixture.id)
     } else if (fixture.diagnosticDeviation === 'rust-removes-spurious-hook-member-escape-warning') {
       assert.deepEqual(babelDiagnostics, ['FICT-R005:warning', 'FICT-R005:warning'], fixture.id)
       assert.deepEqual(rustDiagnostics, [], fixture.id)
@@ -128,6 +131,7 @@ test('Babel semantic oracle contains no unreferenced or duplicate fixtures', () 
       .map(fixture => [fixture.id, fixture.diagnosticDeviation]),
     [
       ['structured-hook-return', 'rust-removes-spurious-hook-member-escape-warning'],
+      ['reactive-loop-control', 'rust-reports-non-jsx-component-control-flow'],
       ['vnode-event-order', 'rust-adds-unproven-reactive-receiver-warning'],
       ['reactive-generator-deferred-order', 'rust-removes-spurious-generator-receiver-warnings'],
       [

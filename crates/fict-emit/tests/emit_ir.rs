@@ -142,6 +142,7 @@ fn program() -> EmitProgram {
                     origin: origin(),
                 },
                 EmitOperation::Return {
+                    component_root: None,
                     value: Some(EmitValueRef::Temporary(EmitTemporaryId::new(0))),
                     origin: origin(),
                 },

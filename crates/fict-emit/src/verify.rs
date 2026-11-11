@@ -1118,6 +1118,28 @@ fn verify_operations(
                     ));
                 }
             }
+            EmitOperation::Return {
+                value,
+                component_root: Some(_),
+                origin,
+            } => {
+                if hir_function.kind != fict_hir::FunctionKind::Component
+                    || value.is_none()
+                    || origin.primary_span.is_none()
+                    || !hir_function.blocks.iter().any(|block| {
+                        block.terminator.origin == *origin
+                            && matches!(
+                                block.terminator.kind,
+                                fict_hir::TerminatorKind::Return { value: Some(_) }
+                            )
+                    })
+                {
+                    diagnostics.push(emit_error(
+                        "FICT-EMIT-COMPONENT-ROOT",
+                        "component root plan must identify an owned return value",
+                    ));
+                }
+            }
             EmitOperation::CreateVNode {
                 template,
                 source_result,

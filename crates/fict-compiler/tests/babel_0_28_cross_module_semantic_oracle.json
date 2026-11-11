@@ -13,8 +13,8 @@
       "@babel/plugin-transform-typescript": "7.28.5"
     },
     "oracleInputsSha256": "7bc78b189623061ad89541a3d56c63f656222089e8b9430fa0963d2eca82ec5f",
-    "semanticHarnessSha256": "50d0509a05ba1c98724cfdb8e59de0c2d100378d34305abc04fd1609551c32cb",
-    "bundlerHarnessSha256": "32447a4620fa2ff5423f04b8fe61278efa5c8453d1118b64934bbb71b715849d",
+    "semanticHarnessSha256": "a6e6371775371991e1383a2dd66f0956e43db9ed53b63aca69c7b85a8831ee7f",
+    "bundlerHarnessSha256": "a49fa804fc2c2f4c2eb52803bf76c0bc4399e2665d6150948e5330871e773cfa",
     "runtimeExecutionModel": "frozen-babel-and-live-rust-graphs-share-synthetic-runtime",
     "bundlerPackage": "webpack@5.105.2",
     "sharedRuntimePackage": "@fictjs/runtime@0.36.0",

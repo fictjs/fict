@@ -2331,3 +2331,217 @@ test('bug 3: destructuring a stateful hook in opt-out mode never repeats setup',
     ],
   )
 })
+
+for (const fineGrainedDom of [true, false]) {
+  for (const hydrated of [false, true]) {
+    test(`bug 26: non-JSX component roots update after mount and strict hydration (fineGrainedDom=${fineGrainedDom}; hydrated=${hydrated})`, async () => {
+      const code = compile(
+        `
+        import {$state,render,hydrate} from 'fict'
+        import {renderToString} from '@fictjs/ssr'
+        let root, preserved=true
+        const issues=[]
+        function ChildrenRoot(props){return props.children}
+        const TextRoot=({n})=>('n='+n)
+        function ArrRoot(props){return props.items.map(i=><li key={i}>{i}</li>)}
+        function StateArrRoot(){let xs=$state(['p','q']);return xs.map(i=><li key={i} onClick={()=>xs=[...xs,'r']}>{i}</li>)}
+        function NullRoot(props){return props.show?<em>shown</em>:null}
+        const ArrayRoot=props=>[true,false,props.n,':',[props.n*2,null]]
+        function App(){let n=$state(1);let items=$state(['a']);return <div>
+          <button onClick={()=>{n++;items=[...items,'b']}}>change</button>
+          <section><ChildrenRoot>{n}</ChildrenRoot><TextRoot n={n}/></section>
+          <ol><ArrRoot items={items}/></ol><ul><StateArrRoot/></ul>
+          <aside><ArrayRoot n={n}/></aside><NullRoot show={n<2}/>
+        </div>}
+        export function mount(el){root=el;
+          if(!${hydrated})return render(()=><App/>,el)
+          root.innerHTML=renderToString(()=><App/>)
+          const original=[...root.querySelectorAll('div,button,section,ol,ul,li,aside,em')]
+          const dispose=hydrate(()=><App/>,el,{strictHydration:true,onHydrationIssue:i=>issues.push(i.code)})
+          preserved=original.every((node,index)=>node===[...root.querySelectorAll('div,button,section,ol,ul,li,aside,em')][index])
+          return dispose
+        }
+        export function observe(){return {text:['section','ol','ul','aside'].map(tag=>root.querySelector(tag).textContent),shown:!!root.querySelector('em'),preserved,issues}}
+      `,
+        { fineGrainedDom },
+      )
+      assert.deepEqual(
+        await executeDomCommonJs(code, {
+          mountExport: 'mount',
+          observeExport: 'observe',
+          steps: [
+            { kind: 'record', label: 'initial' },
+            { kind: 'click', selector: 'button' },
+            { kind: 'click', selector: 'ul li' },
+            { kind: 'record', label: 'updated' },
+          ],
+        }),
+        [
+          {
+            label: 'initial',
+            value: { text: ['1n=1', 'a', 'pq', '1:2'], shown: true, preserved: true, issues: [] },
+          },
+          {
+            label: 'updated',
+            value: {
+              text: ['2n=2', 'ab', 'pqr', '2:4'],
+              shown: false,
+              preserved: true,
+              issues: [],
+            },
+          },
+        ],
+      )
+    })
+  }
+  test(`bug 26: root consumers track opaque reads and preserve hook setup (fineGrainedDom=${fineGrainedDom})`, async () => {
+    const code = compile(
+      `
+      import {$state,render,untrack} from 'fict'
+      import {createSignal,reactive} from 'fict/advanced'
+      let root;const value=createSignal(1);let setups=0,delegates=0
+      function read(){return value()}
+      function useRoot(){setups++;return reactive(()=>value())}
+      function useDouble(n){return n*2}
+      function Direct(){delegates++;const n=$state(10);return n+value()}
+      function Delegate(){return Direct()}
+      function Opaque(){return read()}
+      function HookRoot(){return useRoot()}
+      function PureRoot(props){return useDouble(props.n)}
+      function Snapshot(){return untrack(()=>value())}
+      function CallbackRoot(){return reactive(()=>value()+10)}
+      function App(){let n=$state(1);return <main><button onClick={()=>{n++;value(value()+1)}}>inc</button>
+        <p><Opaque/></p><b><HookRoot/></b><i><PureRoot n={n}/></i><s><Snapshot/></s><u><CallbackRoot/></u><small><Delegate/></small></main>}
+      export function mount(el){root=el;return render(()=><App/>,el)}
+      export function observe(){return [['p','b','i','s','u','small'].map(tag=>root.querySelector(tag).textContent),setups,delegates]}
+    `,
+      { fineGrainedDom },
+    )
+    assert.deepEqual(
+      await executeDomCommonJs(code, {
+        mountExport: 'mount',
+        observeExport: 'observe',
+        steps: [
+          { kind: 'record', label: 'initial' },
+          { kind: 'click', selector: 'button' },
+          { kind: 'record', label: 'updated' },
+        ],
+      }),
+      [
+        { label: 'initial', value: [['1', '1', '2', '1', '11', '11'], 1, 1] },
+        { label: 'updated', value: [['2', '2', '4', '1', '12', '12'], 1, 1] },
+      ],
+    )
+  })
+}
+
+for (const expression of [
+  'useNumber()+props.n',
+  '(props.n++, props.n)',
+  '(delete props.record.x, props.n)',
+]) {
+  test(`bug 26: root work that cannot move into a consumer fails closed (${expression})`, () => {
+    const code = `import {$state} from 'fict';function useNumber(){let n=$state(1);return n}export function App(props){return ${expression}}export function Main(){return <App n={1} record={{x:1}}/>}`
+    const strict = native.transformSync({
+      code,
+      filename: '/unsafe-root.tsx',
+      options: { strictGuarantee: true },
+    })
+    assert.ok(
+      strict.diagnostics.some(d => d.code === 'FICT-R006' && d.severity === 'error'),
+      JSON.stringify(strict.diagnostics),
+    )
+    const fallback = native.transformSync({
+      code,
+      filename: '/unsafe-root.tsx',
+      options: { strictGuarantee: false },
+    })
+    assert.ok(fallback.code)
+    assert.ok(
+      fallback.diagnostics.some(d => d.code === 'FICT-R006' && d.severity === 'warning'),
+      JSON.stringify(fallback.diagnostics),
+    )
+  })
+}
+
+for (const fineGrainedDom of [true, false]) {
+  test(`bug 26: root wrappers preserve nested nodes, named map callbacks and namespaces during hydration (fineGrainedDom=${fineGrainedDom})`, async () => {
+    const code = compile(
+      `
+      import {$state,hydrate} from 'fict';import {renderToString} from '@fictjs/ssr';
+      let root,preserved;const issues=[];
+      function wrapper(props){return props.children}const Wrapper=wrapper;
+      const row=n=><li>{n}</li>;
+      function Rows(props){return props.items.map(row)}
+      function Shapes(props){return [<circle cx={props.n}/>,<circle cx={props.n+1}/>]}
+      function App(){let n=$state(1);return <main><button onClick={()=>n++}>inc</button>
+        <Wrapper><span>{n}</span></Wrapper><ol><Rows items={[n,n+1]}/></ol><svg><Shapes n={n}/></svg></main>}
+      export function mount(el){root=el;root.innerHTML=renderToString(()=><App/>);
+        const before=[...root.querySelectorAll('span,li,circle')];
+        const dispose=hydrate(()=><App/>,root,{strictHydration:true,onHydrationIssue:i=>issues.push(i.code)});
+        preserved=before.every((node,i)=>node===[...root.querySelectorAll('span,li,circle')][i]);return dispose}
+      export function observe(){return {text:[...root.querySelectorAll('span,li')].map(el=>el.textContent),circles:[...root.querySelectorAll('circle')].map(el=>[el.namespaceURI,el.getAttribute('cx')]),preserved,issues}}
+    `,
+      { fineGrainedDom },
+    )
+    const result = await executeDomCommonJs(code, {
+      mountExport: 'mount',
+      observeExport: 'observe',
+      steps: [
+        { kind: 'record', label: 'initial' },
+        { kind: 'click', selector: 'button' },
+        { kind: 'record', label: 'updated' },
+      ],
+    })
+    for (const [index, entry] of result.entries())
+      assert.deepEqual(entry.value, {
+        text: [String(index + 1), String(index + 1), String(index + 2)],
+        circles: [
+          ['http://www.w3.org/2000/svg', String(index + 1)],
+          ['http://www.w3.org/2000/svg', String(index + 2)],
+        ],
+        preserved: true,
+        issues: [],
+      })
+  })
+}
+
+test('bug 26: statement branches around value-only component returns fail closed', () => {
+  const code = `function Root(props){if(props.show)return props.children;return null}export function App(){return <Root show={true}>ok</Root>}`
+  const strict = native.transformSync({
+    code,
+    filename: '/root-branch.tsx',
+    options: { strictGuarantee: true },
+  })
+  assert.ok(
+    strict.diagnostics.some(d => d.code === 'FICT-R006' && d.severity === 'error'),
+    JSON.stringify(strict.diagnostics),
+  )
+  const fallback = native.transformSync({
+    code,
+    filename: '/root-branch.tsx',
+    options: { strictGuarantee: false },
+  })
+  assert.ok(fallback.code)
+  assert.ok(fallback.diagnostics.some(d => d.code === 'FICT-R006' && d.severity === 'warning'))
+})
+
+test('bug 26: root signal setter calls are not turned into feedback loops', () => {
+  const code = `import{$state}from'fict';export function App(){const n=$state(1);return n(2)}`
+  const strict = native.transformSync({
+    code,
+    filename: '/root-setter.tsx',
+    options: { strictGuarantee: true },
+  })
+  assert.ok(
+    strict.diagnostics.some(d => d.code === 'FICT-R006' && d.severity === 'error'),
+    JSON.stringify(strict.diagnostics),
+  )
+  const fallback = native.transformSync({
+    code,
+    filename: '/root-setter.tsx',
+    options: { strictGuarantee: false },
+  })
+  assert.ok(fallback.code)
+  assert.ok(!fallback.code.includes('__fictReactive('))
+})

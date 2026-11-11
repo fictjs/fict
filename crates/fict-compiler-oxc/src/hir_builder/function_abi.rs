@@ -3,7 +3,10 @@ use std::collections::BTreeSet;
 use fict_diagnostics::{Diagnostic, SourceSpan};
 use fict_hir::{FunctionId, FunctionKind, HirFunction, HirInstructionKind, TerminatorKind};
 
-use super::{Builder, CallFact, JsxFact, error, is_fict_runtime_source};
+use super::{
+    Builder, CallFact, JsxFact, RawJsxName, StaticAliasPath, StaticHookAliases, error,
+    is_fict_runtime_source,
+};
 
 pub(super) fn is_component_name(name: Option<&str>) -> bool {
     name.and_then(|name| name.as_bytes().first())
@@ -11,7 +14,33 @@ pub(super) fn is_component_name(name: Option<&str>) -> bool {
 }
 
 impl Builder<'_, '_> {
-    pub(super) fn classify_component_roles(&mut self, calls: &[CallFact], jsx: &[JsxFact]) {
+    pub(super) fn classify_component_roles(
+        &mut self,
+        calls: &[CallFact],
+        jsx: &[JsxFact],
+        tags: &[(RawJsxName, SourceSpan)],
+        aliases: &StaticHookAliases,
+    ) {
+        let component_symbols: BTreeSet<_> = tags
+            .iter()
+            .filter_map(|(name, _)| {
+                let path = match name {
+                    RawJsxName::Component(symbol) => StaticAliasPath::root(*symbol),
+                    RawJsxName::Member { root, properties } => {
+                        let mut path = StaticAliasPath::root(*root);
+                        path.properties = properties.clone();
+                        path
+                    }
+                    _ => return None,
+                };
+                let resolved = aliases.resolve(&path);
+                resolved
+                    .properties
+                    .is_empty()
+                    .then(|| resolved.binding_root())
+                    .flatten()
+            })
+            .collect();
         let jsx_owners: BTreeSet<_> = jsx.iter().map(|root| root.owner).collect();
         let context_owners: BTreeSet<_> = calls
             .iter()
@@ -21,8 +50,12 @@ impl Builder<'_, '_> {
         for function in &self.function_facts {
             if function.id != FunctionId::new(0)
                 && self.functions[function.id.as_usize()].kind == FunctionKind::Plain
-                && is_component_name(function.display_name.as_deref())
-                && (jsx_owners.contains(&function.id) || context_owners.contains(&function.id))
+                && (function
+                    .binding
+                    .is_some_and(|symbol| component_symbols.contains(&symbol))
+                    || (is_component_name(function.display_name.as_deref())
+                        && (jsx_owners.contains(&function.id)
+                            || context_owners.contains(&function.id))))
             {
                 self.functions[function.id.as_usize()].kind = FunctionKind::Component;
             }

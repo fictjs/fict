@@ -2384,7 +2384,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             facts: Vec::new(),
         };
         member_accesses.visit_program(program);
-        self.classify_component_roles(&calls.calls, &jsx.roots);
+        self.classify_component_roles(&calls.calls, &jsx.roots, &jsx.tags, &static_hook_aliases);
         self.validate_class_components(&class_bindings, &jsx.tags);
         let reactive_symbols = self.analyze_reactive_symbols(
             program,
@@ -4292,6 +4292,36 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                 });
             }
         }
+        let component_bindings: BTreeSet<_> = self
+            .functions
+            .iter()
+            .filter(|function| function.kind == FunctionKind::Component)
+            .filter_map(|function| function.binding)
+            .collect();
+        let component_calls: BTreeSet<_> = calls
+            .iter()
+            .zip(&targets)
+            .filter(|(_, target)| {
+                target.is_some_and(|binding| component_bindings.contains(&binding))
+            })
+            .map(|(call, _)| (call.span.start(), call.span.end()))
+            .collect();
+        // The replayability proof uses populated bodies, so attach its call
+        // contract after materialization, before core optimization can move work.
+        for instruction in self
+            .functions
+            .iter_mut()
+            .flat_map(|function| &mut function.blocks)
+            .flat_map(|block| &mut block.instructions)
+        {
+            if let HirInstructionKind::Call(call) = &mut instruction.kind {
+                call.setup_only |= instruction.origin.primary_span.is_some_and(|span| {
+                    let location = (span.start(), span.end());
+                    self.stateful_hook_calls.contains(&location)
+                        || component_calls.contains(&location)
+                });
+            }
+        }
         self.runtime_bindings.sort_unstable();
         self.runtime_bindings.dedup();
     }
@@ -5936,6 +5966,12 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                 host,
                 macro_kind,
                 reactive_kind: call.reactive_kind,
+                setup_only: macro_kind.is_some()
+                    || call.reactive_kind.is_some()
+                    || call.runtime_creation_kind.is_some()
+                    || self
+                        .stateful_hook_calls
+                        .contains(&(call.span.start(), call.span.end())),
                 optional: call.optional,
             }),
             InstructionSemantics {

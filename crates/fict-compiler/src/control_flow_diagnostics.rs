@@ -21,15 +21,10 @@ pub(crate) fn reactive_control_flow_diagnostics(
     emit: Option<&EmitProgram>,
 ) -> Vec<Diagnostic> {
     let mut diagnostics = hook_owner_region_diagnostics(emit);
+    diagnostics.extend(component_root_diagnostics(emit));
     for analysis in &core.functions {
         let function = &core.hir.functions[analysis.function.as_usize()];
-        if function.kind != FunctionKind::Component
-            || !core
-                .hir
-                .templates
-                .iter()
-                .any(|template| template.owner == function.id)
-        {
+        if function.kind != FunctionKind::Component {
             continue;
         }
 
@@ -216,6 +211,29 @@ pub(crate) fn reactive_control_flow_diagnostics(
         diagnostics.push(diagnostic);
     }
     diagnostics
+}
+
+fn component_root_diagnostics(emit: Option<&EmitProgram>) -> Vec<Diagnostic> {
+    emit.into_iter().flat_map(|emit| &emit.functions)
+        .flat_map(|function| &function.operations)
+        .filter_map(|operation| {
+            let fict_emit::EmitOperation::Return {
+                component_root: Some(fict_emit::ComponentRoot::Snapshot(reason)), origin, ..
+            } = operation else { return None; };
+            let work = match reason {
+                fict_emit::ComponentRootHazard::Setup => "hook or runtime setup",
+                fict_emit::ComponentRootHazard::Suspension => "await or yield",
+                fict_emit::ComponentRootHazard::Mutation => "an assignment, update or deletion",
+            };
+            let mut diagnostic = Diagnostic::new(
+                DiagnosticCode::new("FICT-R006").expect("diagnostic literal"),
+                DiagnosticSeverity::Warning,
+                format!("Component root expression contains {work} and cannot safely re-evaluate as a reactive child."),
+            ).with_guarantee_class(GuaranteeClass::Fallback)
+             .with_help("move setup, suspension and writes into statements before the return; return a value-only expression for reactive rendering");
+            if let Some(span) = origin.primary_span { diagnostic = diagnostic.with_primary_span(span); }
+            Some(diagnostic)
+        }).collect()
 }
 
 fn hook_owner_region_diagnostics(emit: Option<&EmitProgram>) -> Vec<Diagnostic> {

@@ -348,9 +348,9 @@ export function render(view: () => FictNode, container: HTMLElement): () => void
 
 /**
  * Hydrate compiled DOM output into an existing DOM container.
- * Unlike render(), the view function is expected to perform its own template
- * claims and binding setup while running inside the hydration context. Its
- * return value is ignored for compatibility with compiler-generated entries.
+ * Compiled templates claim their DOM while the view runs. Marked reactive root
+ * getters are materialized in the same hydration context; other return values
+ * are ignored for compatibility with existing compiled entries.
  *
  * @param view - A compiled hydration entry that claims/creates DOM as it runs
  * @param container - The DOM container with existing SSR content
@@ -409,7 +409,10 @@ function hydrateRoot(
       withHydration(
         container,
         () => {
-          untrack(() => runComponentRender(view))
+          untrack(() => {
+            const rendered = runComponentRender(view)
+            if (typeof rendered === 'function' && isReactive(rendered)) createElement(rendered)
+          })
         },
         {
           onHydrationIssue: options.onHydrationIssue,
@@ -623,13 +626,14 @@ function createElementWithContext(
     return createTextNodeWithHydration('', ownerDocument)
   }
 
-  // Reactive getter function - resolve to actual node
+  // A reactive root has the same owned lifetime and hydration range as a
+  // reactive child. Reading it eagerly here would freeze component root values.
   if (isReactive(node)) {
-    const resolved = (node as () => FictNode)()
-    if (resolved === node) {
-      return createTextNodeWithHydration('', ownerDocument)
-    }
-    return createElementWithContext(resolved, namespace, ownerDocument)
+    const fragment = ownerDocument.createDocumentFragment()
+    const append = () => appendChildNode(fragment, node, namespace, ownerDocument)
+    if (isHydratingActive()) return hydrateFragment(ownerDocument, append)
+    append()
+    return fragment
   }
 
   // Non-reactive function values are not valid DOM nodes.
@@ -663,9 +667,7 @@ function createElementWithContext(
   // Array - create fragment
   if (Array.isArray(node)) {
     const frag = ownerDocument.createDocumentFragment()
-    const append = () => {
-      for (const child of node) appendChildNode(frag, child, namespace, ownerDocument)
-    }
+    const append = () => appendChildren(frag, node, namespace, ownerDocument)
     if (isHydratingActive()) return hydrateFragment(ownerDocument, append)
     append()
     return frag
@@ -1037,7 +1039,7 @@ function appendChildNode(
   const parentOwnerDocument = parent.ownerDocument ?? ownerDocument
 
   // Skip nullish values
-  if (child === null || child === undefined || child === false) {
+  if (child === null || child === undefined || typeof child === 'boolean') {
     return
   }
 
@@ -1066,9 +1068,7 @@ function appendChildNode(
 
   // Static child - create element and append
   if (Array.isArray(child)) {
-    for (const item of child) {
-      appendChildNode(parent, item, namespace, parentOwnerDocument)
-    }
+    appendChildren(parent, child, namespace, parentOwnerDocument)
     return
   }
 
@@ -1124,9 +1124,34 @@ function appendChildren(
   if (children === undefined) return
 
   if (Array.isArray(children)) {
-    for (const child of children) {
-      appendChildren(parent, child, namespace, ownerDocument)
+    if (!isHydratingActive()) {
+      for (const child of children) appendChildren(parent, child, namespace, ownerDocument)
+      return
     }
+    // HTML parsing merges adjacent text. Build the same text runs on the client
+    // so arrays returned from components can claim their server nodes exactly.
+    let text: string | undefined
+    const flushText = () => {
+      if (text === undefined) return
+      appendChildNode(parent, text, namespace, ownerDocument)
+      text = undefined
+    }
+    const append = (child: FictNode): void => {
+      if (Array.isArray(child)) {
+        for (const nested of child) append(nested)
+      } else if (
+        typeof child === 'string' ||
+        typeof child === 'number' ||
+        typeof child === 'bigint'
+      ) {
+        text = (text ?? '') + String(child)
+      } else if (child != null && typeof child !== 'boolean') {
+        flushText()
+        appendChildNode(parent, child, namespace, ownerDocument)
+      }
+    }
+    for (const child of children) append(child)
+    flushText()
     return
   }
 

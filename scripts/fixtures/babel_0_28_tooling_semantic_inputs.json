@@ -151,16 +151,15 @@
       },
       "comparison": {
         "helperCapabilities": {
-          "shared": [
-            "context",
-            "effect",
+          "shared": ["context", "effect", "property-binding", "signal"],
+          "babelOnly": [
+            "cleanup",
+            "conditional",
+            "element-create",
             "element-namespace-match",
-            "property-binding",
-            "signal",
             "template"
           ],
-          "babelOnly": ["cleanup", "conditional", "element-create"],
-          "rustOnly": []
+          "rustOnly": ["reactive-read"]
         },
         "diagnosticDisposition": "exact",
         "rustDiagnostics": [],

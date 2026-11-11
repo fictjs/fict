@@ -184,15 +184,18 @@ test('accounts for the exact 29 lost-R006 audit fixtures and their claim boundar
   assert.equal(new Set(expectedIds).size, 29)
 
   const counts = Object.groupBy(manifest.cases, fixture => fixture.disposition)
-  assert.equal(counts['strict-reactivity-fail-closed']?.length, 27)
-  assert.equal(counts['verified-emit-capability']?.length, 2)
+  assert.equal(counts['strict-reactivity-fail-closed']?.length, 28)
+  assert.equal(counts['verified-emit-capability']?.length, 1)
   assert.deepEqual(manifest.summary, {
     fixtureCount: 29,
-    strictReactivityFailClosed: 27,
-    verifiedEmitCapability: 2,
+    strictReactivityFailClosed: 28,
+    verifiedEmitCapability: 1,
   })
   assert.deepEqual(
-    counts['verified-emit-capability']?.map(fixture => fixture.behaviorProbe).sort(),
+    manifest.cases
+      .filter(fixture => fixture.behaviorProbe)
+      .map(fixture => fixture.behaviorProbe)
+      .sort(),
     Object.keys(behaviorProbes).sort(),
   )
 
@@ -229,15 +232,14 @@ for (const entry of manifest.cases.filter(
   })
 }
 
-for (const entry of manifest.cases.filter(
-  fixture => fixture.disposition === 'verified-emit-capability',
-)) {
-  test(`mounts, mutates, and updates audited R006 suppression: ${entry.id}`, async () => {
+for (const entry of manifest.cases.filter(fixture => fixture.behaviorProbe)) {
+  test(`mounts, mutates, and updates audited control-flow output: ${entry.id}`, async () => {
+    const strict = entry.disposition === 'verified-emit-capability'
     const fixture = fixturesById.get(entry.id)
-    const exact = compileExact(fixture, { ...fixture.options, strictReactivity: true })
+    const exact = compileExact(fixture, { ...fixture.options, strictReactivity: strict })
     assert.equal(
       exact.diagnostics.some(diagnostic => diagnostic.code === 'FICT-R006'),
-      false,
+      !strict,
       entry.id,
     )
     assert.notEqual(exact.code, '', entry.id)
@@ -249,11 +251,11 @@ for (const entry of manifest.cases.filter(
       filename: `/fixtures/${entry.behaviorProbe}.tsx`,
       language: 'tsx',
       moduleKind: 'commonjs',
-      options: { ...fixture.options, strictReactivity: true },
+      options: { ...fixture.options, strictReactivity: strict },
     })
     assert.equal(
       compiled.diagnostics.some(diagnostic => diagnostic.code === 'FICT-R006'),
-      false,
+      !strict,
       entry.id,
     )
     assert.notEqual(compiled.code, '', entry.id)

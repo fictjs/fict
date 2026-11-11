@@ -1294,7 +1294,9 @@ mod tests {
         let enabled = compile(enabled_request);
         assert!(!enabled.has_errors(), "{:?}", enabled.diagnostics);
         assert!(
-            enabled.code.contains("return count() * 2"),
+            enabled
+                .code
+                .contains("return __fictReactive(() => count() * 2)"),
             "{}",
             enabled.code
         );
@@ -1321,7 +1323,9 @@ mod tests {
             disabled.code
         );
         assert!(
-            disabled.code.contains("return doubled()"),
+            disabled
+                .code
+                .contains("return __fictReactive(() => doubled())"),
             "{}",
             disabled.code
         );
@@ -1332,7 +1336,9 @@ mod tests {
         let generated = compile(generated_request);
         assert!(!generated.has_errors(), "{:?}", generated.diagnostics);
         assert!(
-            generated.code.contains("return count() * 2"),
+            generated
+                .code
+                .contains("return __fictReactive(() => count() * 2)"),
             "{}",
             generated.code
         );
@@ -2405,8 +2411,17 @@ mod tests {
         );
         input.metadata.push(snapshot());
 
+        // This fixture intentionally aggregates fresh hook calls in a returned
+        // array. It verifies accessor rewrites under the explicit snapshot opt-out.
+        input.options.strict_guarantee = false;
         let result = compile(input);
         assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert!(
+            result
+                .diagnostics
+                .iter()
+                .any(|item| item.code.as_str() == "FICT-R006")
+        );
         assert!(result.code.contains("api.count()"), "{}", result.code);
         assert!(
             result.code.contains("api[\"doubled\"]()"),
@@ -2602,8 +2617,17 @@ mod tests {
             fingerprint: "sha256:namespace-hooks-client".into(),
         });
 
+        // This fixture intentionally aggregates fresh hook calls in a returned
+        // array. It verifies accessor rewrites under the explicit snapshot opt-out.
+        input.options.strict_guarantee = false;
         let result = compile(input);
         assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert!(
+            result
+                .diagnostics
+                .iter()
+                .any(|item| item.code.as_str() == "FICT-R006")
+        );
         assert!(result.code.contains("count()"), "{}", result.code);
         assert!(result.code.contains("api.count()"), "{}", result.code);
         assert!(result.code.contains("pair[0]()"), "{}", result.code);
@@ -2963,7 +2987,9 @@ mod tests {
             var_state.code
         );
         assert!(
-            var_state.code.contains("return count()"),
+            var_state
+                .code
+                .contains("return __fictReactive(() => count())"),
             "{}",
             var_state.code
         );
@@ -5123,12 +5149,12 @@ mod tests {
             "import { $state } from 'fict'; export function App() { const count = $state(0); if (count > 10 && maybe()) return count; return 0; }",
             "non-jsx-control-flow.js",
         ));
-        assert!(!non_jsx.has_errors(), "{:?}", non_jsx.diagnostics);
+        assert!(non_jsx.has_errors(), "{:?}", non_jsx.diagnostics);
         assert!(
             non_jsx
                 .diagnostics
                 .iter()
-                .all(|diagnostic| diagnostic.code.as_str() != "FICT-R006")
+                .any(|diagnostic| diagnostic.code.as_str() == "FICT-R006")
         );
     }
 
@@ -5767,10 +5793,17 @@ mod tests {
     #[test]
     fn emits_authored_classic_loops_from_structured_hir() {
         let source = "import { $state } from 'fict'; export function App() { let count = $state(0); while (count < 1) count++; do { count++; } while (count < 2); for (let index = 0; index < 1; index++) { count += index; } return count; }";
-        let result = compile(request(source, "classic-loops.js"));
+        let mut input = request(source, "classic-loops.js");
+        input.options.strict_guarantee = false;
+        let result = compile(input);
 
         assert!(!result.has_errors(), "{:?}", result.diagnostics);
-        assert!(result.diagnostics.is_empty(), "{:?}", result.diagnostics);
+        assert!(
+            result
+                .diagnostics
+                .iter()
+                .any(|item| item.code.as_str() == "FICT-R006")
+        );
         assert!(
             result.code.contains("while (count() < 1)"),
             "{}",
@@ -6379,7 +6412,7 @@ mod tests {
         assert!(result.code.contains("__fictUseEffect(__fictCtx"));
         assert!(result.code.contains("seen.push(count())"));
         assert!(result.code.contains("count() + 1"));
-        assert!(result.code.contains("return count()"));
+        assert!(result.code.contains("return __fictReactive(() => count())"));
     }
 
     #[test]
@@ -6534,7 +6567,11 @@ mod tests {
                 && diagnostic.severity == DiagnosticSeverity::Warning
         }));
         assert!(fallback.code.contains("user().name = \"Grace\""));
-        assert!(fallback.code.contains("return user().name"));
+        assert!(
+            fallback
+                .code
+                .contains("return __fictReactive(() => user().name)")
+        );
 
         let mut muted_request = request(source, "nested-muted.js");
         muted_request.options.strict_guarantee = false;

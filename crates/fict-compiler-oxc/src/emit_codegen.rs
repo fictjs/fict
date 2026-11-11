@@ -33,7 +33,7 @@ use oxc::{
             JSXAttributeItem, JSXAttributeName, JSXAttributeValue, JSXChild, JSXElement,
             JSXElementName, JSXFragment, JSXMemberExpression, JSXMemberExpressionObject,
             ModuleExportName, ObjectProperty, ObjectPropertyKind, Program, PropertyKey,
-            PropertyKind, SimpleAssignmentTarget, Statement, VariableDeclaration,
+            PropertyKind, ReturnStatement, SimpleAssignmentTarget, Statement, VariableDeclaration,
             VariableDeclarationKind, VariableDeclarator,
         },
     },
@@ -198,6 +198,26 @@ pub fn emit_program_with_trace(
     let derived_read_proofs =
         jsx_derived_inline::analyze(&program, &identities, emit, &creations.derived_bindings);
     let mut reactive_graph = trace.then(|| reactive_graph::prepare(&program, &identities, emit));
+    let component_roots: BTreeMap<_, _> = emit
+        .functions
+        .iter()
+        .flat_map(|function| &function.operations)
+        .filter_map(|operation| match operation {
+            EmitOperation::Return {
+                component_root: Some(fict_emit::ComponentRoot::Reactive),
+                origin,
+                ..
+            } => {
+                let span = origin.primary_span?;
+                let helper = emit
+                    .imports
+                    .iter()
+                    .find(|intent| intent.helper == RuntimeHelper::ReactiveGetter)?;
+                Some(((span.start(), span.end()), helper.local.clone()))
+            }
+            _ => None,
+        })
+        .collect();
     let mut rewriter = AstRewriter {
         allocator: &allocator,
         creations: &creations.expressions,
@@ -210,6 +230,11 @@ pub fn emit_program_with_trace(
             .iter()
             .find(|intent| intent.helper == RuntimeHelper::PropGetter)
             .map(|intent| intent.local.as_str()),
+        vnode_fragment_helper: emit
+            .imports
+            .iter()
+            .find(|intent| intent.helper == RuntimeHelper::Fragment)
+            .map(|intent| intent.local.as_str()),
         vnode_children_helper: emit
             .imports
             .iter()
@@ -221,6 +246,7 @@ pub fn emit_program_with_trace(
         mutations: &mutations,
         vnodes: &vnodes,
         components: &components,
+        component_roots: &component_roots,
         conditional_returns: &templates.conditional_returns,
         control_flow_regions: &templates.control_flow_regions,
         control_flow_outputs: &templates.control_flow_outputs,
@@ -237,6 +263,7 @@ pub fn emit_program_with_trace(
         matched_mutations: BTreeSet::new(),
         matched_vnodes: BTreeSet::new(),
         matched_components: BTreeSet::new(),
+        matched_component_roots: BTreeSet::new(),
         matched_conditional_returns: BTreeSet::new(),
         matched_control_flow_regions: BTreeSet::new(),
         matched_control_flow_outputs: BTreeSet::new(),
@@ -391,6 +418,20 @@ pub fn emit_program_with_trace(
                 .with_primary_span(
                     SourceSpan::new(location.0, location.1)
                         .expect("ordered EmitIR component location"),
+                ),
+            );
+        }
+    }
+    for location in component_roots.keys() {
+        if !rewriter.matched_component_roots.contains(location) {
+            diagnostics.push(
+                emit_error(
+                    "FICT-OXC-EMIT-COMPONENT-ROOT",
+                    "component root plan does not identify its source return expression",
+                    GuaranteeClass::Internal,
+                )
+                .with_primary_span(
+                    SourceSpan::new(location.0, location.1).expect("ordered root location"),
                 ),
             );
         }
@@ -3697,6 +3738,7 @@ struct AstRewriter<'a, 'emit> {
     vnode_prop_helper: Option<&'emit str>,
     jsx_getter_calls: &'emit [SourceSpan],
     vnode_children_helper: Option<&'emit str>,
+    vnode_fragment_helper: Option<&'emit str>,
     allocator: &'a Allocator,
     creations: &'emit BTreeMap<(u32, u32), CreationRewrite>,
     derived_creations: &'emit BTreeMap<BindingId, DerivedCreationRewrite>,
@@ -3707,6 +3749,7 @@ struct AstRewriter<'a, 'emit> {
     mutations: &'emit BTreeMap<(u32, u32), MutationRewrite>,
     vnodes: &'emit BTreeMap<(u32, u32), VNodeRewrite>,
     components: &'emit BTreeMap<(u32, u32), ComponentRewrite>,
+    component_roots: &'emit BTreeMap<(u32, u32), String>,
     conditional_returns: &'emit BTreeMap<(u32, u32), conditional_return::ConditionalReturnRewrite>,
     control_flow_regions:
         &'emit BTreeMap<(u32, u32), control_flow_region::ControlFlowRegionRewrite>,
@@ -3730,6 +3773,7 @@ struct AstRewriter<'a, 'emit> {
     matched_mutations: BTreeSet<(u32, u32)>,
     matched_vnodes: BTreeSet<(u32, u32)>,
     matched_components: BTreeSet<(u32, u32)>,
+    matched_component_roots: BTreeSet<(u32, u32)>,
     matched_conditional_returns: BTreeSet<(u32, u32)>,
     matched_control_flow_regions: BTreeSet<(u32, u32)>,
     matched_control_flow_outputs: BTreeSet<BindingId>,
@@ -4081,8 +4125,18 @@ impl<'a> VisitMut<'a> for AstRewriter<'a, '_> {
                 self.conditional_returns
                     .contains_key(&(span.start, span.end))
             });
+        let has_expression_component_root = function.expression
+            && function.get_expression().is_some_and(|expression| {
+                let span = expression.span();
+                self.component_roots.contains_key(&(span.start, span.end))
+                    || self
+                        .component_roots
+                        .contains_key(&(function.body.span.start, function.body.span.end))
+            });
         if function.expression
-            && (self.has_props_plan(&function.params) || has_expression_conditional_return)
+            && (self.has_props_plan(&function.params)
+                || has_expression_conditional_return
+                || has_expression_component_root)
         {
             let Some(returned) = function
                 .get_expression()
@@ -4129,6 +4183,30 @@ impl<'a> VisitMut<'a> for AstRewriter<'a, '_> {
             &mut self.matched_conditional_returns,
             function.r#async,
         );
+    }
+    fn visit_return_statement(&mut self, statement: &mut ReturnStatement<'a>) {
+        let location = (statement.span.start, statement.span.end);
+        let Some(helper) = self.component_roots.get(&location) else {
+            walk_mut::walk_return_statement(self, statement);
+            return;
+        };
+        // Root expressions create descriptors while tracking. Actual DOM creation
+        // belongs to the child binding's owned commit/hydration range.
+        let previous_fragment = self.active_fragment_local.clone();
+        let previous_reactive = self.active_vnode_reactive_local.clone();
+        self.active_fragment_local = self.vnode_fragment_helper.map(str::to_owned);
+        self.active_vnode_reactive_local = Some(helper.clone());
+        self.vnode_depth += 1;
+        walk_mut::walk_return_statement(self, statement);
+        self.vnode_depth -= 1;
+        self.active_fragment_local = previous_fragment;
+        self.active_vnode_reactive_local = previous_reactive;
+        if let Some(argument) = &mut statement.argument {
+            let span = argument.span();
+            let value = argument.take_in(&self.allocator);
+            *argument = self.wrap_jsx_getter(value, span, helper);
+            self.matched_component_roots.insert(location);
+        }
     }
     fn visit_variable_declaration(&mut self, declaration: &mut VariableDeclaration<'a>) {
         walk_mut::walk_variable_declaration(self, declaration);

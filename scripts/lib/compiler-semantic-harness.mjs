@@ -2,8 +2,18 @@ import assert from 'node:assert/strict'
 import { createContext, Script } from 'node:vm'
 
 const CONTEXT = Symbol('fict-semantic-oracle-context')
+const reactiveResults = new WeakSet()
 
 function normalize(value, ancestors = new Set()) {
+  if (typeof value === 'function' && reactiveResults.has(value)) {
+    if (ancestors.has(value)) throw new TypeError('Semantic oracle result contains a cycle')
+    ancestors.add(value)
+    try {
+      return normalize(value(), ancestors)
+    } finally {
+      ancestors.delete(value)
+    }
+  }
   if (value === undefined) return { $type: 'undefined' }
   if (typeof value === 'number') {
     if (Number.isNaN(value)) return { $type: 'nan' }
@@ -144,7 +154,10 @@ function reactiveRuntime() {
     __fictUseMemo: memo,
     __fictUseEffect: effect,
     __fictUseStore: store,
-    __fictReactive: callback => callback,
+    __fictReactive: callback => {
+      reactiveResults.add(callback)
+      return callback
+    },
     createSignal: signal,
     createMemo: memo,
     createEffect: effect,

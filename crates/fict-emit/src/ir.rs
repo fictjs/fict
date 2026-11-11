@@ -538,8 +538,26 @@ pub enum EmitOperation {
     },
     Return {
         value: Option<EmitValueRef>,
+        component_root: Option<ComponentRoot>,
         origin: Origin,
     },
+}
+
+/// Execution contract for a non-JSX component return expression.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ComponentRoot {
+    /// Re-evaluate the returned expression in an owned reactive child binding.
+    Reactive,
+    /// Preserve source execution order and report the unsupported consumer boundary.
+    Snapshot(ComponentRootHazard),
+}
+
+/// Work that cannot be moved into a synchronous reactive root getter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ComponentRootHazard {
+    Setup,
+    Suspension,
+    Mutation,
 }
 
 /// DOM listener options normalized from JSX event-name suffixes.
@@ -637,14 +655,17 @@ impl EmitOperation {
                     },
                 },
             },
+            Self::Return { component_root, .. } => match component_root {
+                Some(ComponentRoot::Reactive) => Some(RuntimeHelper::ReactiveGetter),
+                _ => None,
+            },
             Self::PreserveHir { .. }
             | Self::TrackRuntimeReactive { .. }
             | Self::WriteReactive { .. }
             | Self::WriteReactivePattern { .. }
             | Self::UpdateReactive { .. }
             | Self::DeleteReactive { .. }
-            | Self::Evaluate { .. }
-            | Self::Return { .. } => None,
+            | Self::Evaluate { .. } => None,
         }
     }
 

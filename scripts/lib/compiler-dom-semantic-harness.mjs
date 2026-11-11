@@ -36,6 +36,15 @@ const DOM_GLOBALS = [
 ]
 
 function normalize(value, ancestors = new Set()) {
+  if (typeof value === 'function' && value[Symbol.for('fict:reactive-fn')] === true) {
+    if (ancestors.has(value)) throw new TypeError('DOM semantic oracle result contains a cycle')
+    ancestors.add(value)
+    try {
+      return normalize(value(), ancestors)
+    } finally {
+      ancestors.delete(value)
+    }
+  }
   if (value === undefined) return { $type: 'undefined' }
   if (typeof value === 'number') {
     if (Number.isNaN(value)) return { $type: 'nan' }

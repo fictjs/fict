@@ -1168,8 +1168,10 @@ describe('Multi-Component Interaction Scenarios', () => {
 describe('Complex DOM Boundaries', () => {
   afterEach(cleanupTestState)
 
-  it('fragment (multi-root) components preserve scope', async () => {
-    const source = `
+  it.each([true, false])(
+    'fragment (multi-root) components preserve scope (fineGrainedDom=%s)',
+    async fineGrainedDom => {
+      const source = `
       import { $state } from 'fict'
 
       export function MultiRoot() {
@@ -1181,31 +1183,40 @@ describe('Complex DOM Boundaries', () => {
       }
     `
 
-    const compiled = compileModule(source)
-    let cleanup = () => {}
+      const compiled = compileModule(source, { fineGrainedDom })
+      let cleanup = () => {}
 
-    try {
-      const mod = (await import(compiled.url)) as { MultiRoot: () => FictNode }
-      const html = renderToString(() => ({ type: mod.MultiRoot, props: {} }))
+      try {
+        const mod = (await import(compiled.url)) as { MultiRoot: () => FictNode }
+        const html = renderToString(() => ({ type: mod.MultiRoot, props: {} }))
 
-      const env = setupClientEnvironment(html)
-      cleanup = env.cleanup
+        const env = setupClientEnvironment(html)
+        cleanup = env.cleanup
 
-      installResumableLoader({ document: env.document, events: ['click'] })
+        installResumableLoader({ document: env.document, events: ['click'] })
 
-      const button = env.document.querySelector('button') as HTMLElement
-      expect(button).not.toBeNull()
-      expect(button.textContent).toBe('0')
+        const button = env.document.querySelector('button') as HTMLElement
+        const label = env.document.querySelector('span')
+        expect(button).not.toBeNull()
+        expect(button.textContent).toBe('0')
 
-      dispatchClick(button, env.window)
-      await tick(3)
+        dispatchClick(button, env.window)
+        await tick(3)
 
-      expect(button.textContent).toBe('1')
-    } finally {
-      await cleanup()
-      compiled.cleanup()
-    }
-  })
+        expect(button.textContent).toBe('1')
+        expect(env.document.querySelector('button')).toBe(button)
+        expect(env.document.querySelectorAll('button')).toHaveLength(1)
+        expect(env.document.querySelector('span')).toBe(label)
+
+        dispatchClick(button, env.window)
+        await tick(3)
+        expect(button.textContent).toBe('2')
+      } finally {
+        await cleanup()
+        compiled.cleanup()
+      }
+    },
+  )
 
   it('conditional rendering preserves state after branch change', async () => {
     const source = `

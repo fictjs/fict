@@ -136,7 +136,8 @@
       "invocation": {
         "exportName": "Scenario",
         "arguments": []
-      }
+      },
+      "diagnosticDeviation": "rust-reports-non-jsx-component-control-flow"
     },
     {
       "id": "try-finally-order",

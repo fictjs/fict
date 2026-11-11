@@ -92,6 +92,19 @@ pub(super) fn analyze(
     let mut collector = ProofCollector {
         identities,
         creations,
+        component_roots: emit
+            .functions
+            .iter()
+            .flat_map(|function| &function.operations)
+            .filter_map(|operation| match operation {
+                EmitOperation::Return {
+                    component_root: Some(fict_emit::ComponentRoot::Reactive),
+                    origin,
+                    ..
+                } => origin.primary_span.map(|span| (span.start(), span.end())),
+                _ => None,
+            })
+            .collect(),
         states,
         initial: BTreeSet::new(),
         initialized_at: BTreeMap::new(),
@@ -190,6 +203,7 @@ pub(super) fn analyze(
 struct ProofCollector<'p> {
     identities: &'p SemanticIdentities,
     creations: &'p BTreeMap<BindingId, DerivedCreationRewrite>,
+    component_roots: BTreeSet<Location>,
     states: BTreeMap<BindingId, Location>,
     initial: BTreeSet<BindingId>,
     initialized_at: BTreeMap<BindingId, (Option<Location>, u32)>,
@@ -257,6 +271,14 @@ impl<'a> Visit<'a> for ProofCollector<'_> {
     fn visit_return_statement(&mut self, statement: &ReturnStatement<'a>) {
         let previous = self.returned;
         self.returned = self.depth == 1;
+        if self.component_roots.contains(&location(statement.span))
+            && let Some(Expression::Identifier(identifier)) = statement
+                .argument
+                .as_ref()
+                .map(Expression::get_inner_expression)
+        {
+            self.jsx_reads.insert(location(identifier.span));
+        }
         walk::walk_return_statement(self, statement);
         self.returned = previous;
     }

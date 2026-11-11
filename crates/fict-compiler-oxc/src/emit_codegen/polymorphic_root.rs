@@ -9,6 +9,7 @@ struct RewriteMatchState {
     mutations: BTreeSet<(u32, u32)>,
     vnodes: BTreeSet<(u32, u32)>,
     components: BTreeSet<(u32, u32)>,
+    component_roots: BTreeSet<(u32, u32)>,
     conditional_returns: BTreeSet<(u32, u32)>,
     clones: BTreeSet<(u32, u32)>,
     vnode_shadowed_clones: BTreeSet<(u32, u32)>,
@@ -130,6 +131,7 @@ impl<'a> AstRewriter<'a, '_> {
             mutations: self.matched_mutations.clone(),
             vnodes: self.matched_vnodes.clone(),
             components: self.matched_components.clone(),
+            component_roots: self.matched_component_roots.clone(),
             conditional_returns: self.matched_conditional_returns.clone(),
             clones: self.matched_clones.clone(),
             vnode_shadowed_clones: self.vnode_shadowed_clones.clone(),
@@ -145,6 +147,7 @@ impl<'a> AstRewriter<'a, '_> {
         self.matched_mutations = state.mutations;
         self.matched_vnodes = state.vnodes;
         self.matched_components = state.components;
+        self.matched_component_roots = state.component_roots;
         self.matched_conditional_returns = state.conditional_returns;
         self.matched_clones = state.clones;
         self.vnode_shadowed_clones = state.vnode_shadowed_clones;
@@ -160,6 +163,7 @@ impl<'a> AstRewriter<'a, '_> {
         self.matched_mutations.extend(state.mutations);
         self.matched_vnodes.extend(state.vnodes);
         self.matched_components.extend(state.components);
+        self.matched_component_roots.extend(state.component_roots);
         self.matched_conditional_returns
             .extend(state.conditional_returns);
         self.matched_clones.extend(state.clones);

@@ -33,10 +33,10 @@
     }
   },
   "policyCounts": {
-    "genuine-capability-expansion": 7,
+    "genuine-capability-expansion": 5,
     "intentional-runtime-error": 1,
     "validation-regression": 0,
-    "fallback-only": 1,
+    "fallback-only": 3,
     "reactive-equivalence-required": 0,
     "intentional-breaking-policy": 1
   },
@@ -91,19 +91,19 @@
     },
     {
       "id": "packages/compiler/test/do-while-break.test.ts:33:transform",
-      "policy": "genuine-capability-expansion",
+      "policy": "fallback-only",
       "owner": "compiler-control-flow",
-      "reason": "Rust executes reactive do-while continue semantics and returns the proven value 5.",
-      "finalPlan": "Keep the executable loop oracle.",
-      "removalCondition": "Remove only if the lowering is retired or Babel accepts the request."
+      "reason": "The setup loop preserves its JavaScript completion value, but reactive non-JSX component control flow requires the diagnosed R006 fallback.",
+      "finalPlan": "Keep the executable loop oracle and require explicit non-strict compilation; do not advertise this as guaranteed reactive lowering.",
+      "removalCondition": "Reclassify only when a proven reactive lowering replaces the R006 fallback."
     },
     {
       "id": "packages/compiler/test/do-while-break.test.ts:50:transform",
-      "policy": "genuine-capability-expansion",
+      "policy": "fallback-only",
       "owner": "compiler-control-flow",
-      "reason": "Rust executes reactive while-break semantics and returns the proven value 6.",
-      "finalPlan": "Keep the executable loop oracle.",
-      "removalCondition": "Remove only if the lowering is retired or Babel accepts the request."
+      "reason": "The setup loop preserves its JavaScript completion value, but reactive non-JSX component control flow requires the diagnosed R006 fallback.",
+      "finalPlan": "Keep the executable loop oracle and require explicit non-strict compilation; do not advertise this as guaranteed reactive lowering.",
+      "removalCondition": "Reclassify only when a proven reactive lowering replaces the R006 fallback."
     },
     {
       "id": "packages/compiler/test/do-while-break.test.ts:82:transform",

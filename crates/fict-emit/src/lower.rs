@@ -1,4 +1,5 @@
 mod async_aliases;
+mod component_root;
 mod jsx_consumers;
 
 use crate::{
@@ -2001,6 +2002,7 @@ fn lower_function(
         }
         match &block.terminator.kind {
             TerminatorKind::Return { value } => operations.push(EmitOperation::Return {
+                component_root: None,
                 value: value.map(|value| lower_value(value, &value_temporaries)),
                 origin: block.terminator.origin,
             }),
@@ -2024,6 +2026,9 @@ fn lower_function(
             &mut temporary_names,
             &mut operations,
         );
+    }
+    if allow_jsx {
+        component_root::lower_component_roots(hir, function, &mut operations, &slots);
     }
     crate::control_flow_region::lower_control_flow_regions(
         hir,

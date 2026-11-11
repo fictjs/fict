@@ -1009,6 +1009,8 @@ pub struct CallInstruction {
     pub macro_kind: Option<FictMacroKind>,
     /// Confirmed runtime reactive creator kind, if any.
     pub reactive_kind: Option<ReactiveCallKind>,
+    /// Stateful hook or runtime allocation that must execute in component setup.
+    pub setup_only: bool,
     /// Whether the call itself is optional.
     pub optional: bool,
 }

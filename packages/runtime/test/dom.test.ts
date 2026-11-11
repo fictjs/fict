@@ -11,6 +11,7 @@ import {
   onMount,
 } from '../src/index'
 import { createSignal, reactive } from '../src/advanced'
+import { flush } from '../src/signal'
 import {
   __fictSetComponentMeta,
   clearDelegatedEvents,
@@ -2682,5 +2683,42 @@ describe('DOM Module', () => {
       // div should be in HTML namespace, not SVG
       expect(div!.namespaceURI).toBe('http://www.w3.org/1999/xhtml')
     })
+  })
+})
+
+describe('reactive component roots', () => {
+  it('tracks returned accessors and cleans up each evaluation with its owner', () => {
+    const host = document.createElement('div')
+    const value = createSignal(1)
+    const cleanup: number[] = []
+    let setups = 0
+    const Root = () => {
+      setups++
+      return reactive(() => {
+        const n = value()
+        onCleanup(() => cleanup.push(n))
+        return String(n)
+      })
+    }
+    const dispose = render(() => ({ type: Root }), host)
+    expect(host.textContent).toBe('1')
+    value(2)
+    flush()
+    expect(host.textContent).toBe('2')
+    expect(setups).toBe(1)
+    expect(cleanup).toEqual([1])
+    dispose()
+    expect(cleanup).toEqual([1, 2])
+    expect(host.childNodes).toHaveLength(0)
+  })
+
+  it('keeps plain callbacks inert and terminates self-returning accessors', () => {
+    const host = document.createElement('div')
+    const callback = vi.fn(() => 'inert')
+    const self = reactive((): any => self)
+    const dispose = render(() => [{ type: () => callback }, { type: () => self }], host)
+    expect(callback).not.toHaveBeenCalled()
+    expect(host.textContent).toBe('')
+    dispose()
   })
 })

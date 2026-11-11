@@ -59,6 +59,7 @@ fn runtime_reactive_call(result: u32, binding: u32, kind: ReactiveCallKind) -> H
             host: CallHost::Binding(BindingId::new(binding)),
             macro_kind: None,
             reactive_kind: Some(kind),
+            setup_only: false,
             optional: false,
         }),
         semantics: InstructionSemantics::CONSERVATIVE_EAGER,
@@ -92,6 +93,7 @@ fn propagates_state_into_pure_derived_bindings_and_active_blocks() {
             host: CallHost::Unknown,
             macro_kind: Some(kind),
             reactive_kind: None,
+            setup_only: false,
             optional: false,
         })
     };

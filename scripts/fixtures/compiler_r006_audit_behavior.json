@@ -9,8 +9,8 @@
   "sourceCorpus": "crates/fict-compiler/tests/rust_frozen_codegen_corpus.json",
   "summary": {
     "fixtureCount": 29,
-    "strictReactivityFailClosed": 27,
-    "verifiedEmitCapability": 2
+    "strictReactivityFailClosed": 28,
+    "verifiedEmitCapability": 1
   },
   "claimBoundary": {
     "strict-reactivity-fail-closed": "The exact audited source emits FICT-R006 and strictReactivity rejects output; fallback output is not claimed to update reactively.",
@@ -76,7 +76,7 @@
     },
     {
       "id": "packages/compiler/test/spec-complete.test.ts:578:transform",
-      "disposition": "verified-emit-capability",
+      "disposition": "strict-reactivity-fail-closed",
       "behaviorProbe": "captured-derived-closure"
     },
     {

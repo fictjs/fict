@@ -1646,9 +1646,10 @@ fn accepts_definitely_undefined_array_sort_comparators() {
         "#,
         r#"
             import { $state } from 'fict'
-            function App(flag) {
+            function App() {
                 const rows = $state([{ done: false }])
                 let comparator
+                const flag = Math.random() > 0.5
                 if (flag) {
                     comparator = () => 0
                 }

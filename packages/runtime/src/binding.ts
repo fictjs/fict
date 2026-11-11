@@ -1904,9 +1904,11 @@ export function createChildBinding(
   let disposed = false
   let activeRelease: Cleanup | undefined
   let preparedRoot: RootContext | undefined
+  let preparedHydrationNodes: Node[] | undefined
   const releasePrepared = () => {
     const root = preparedRoot
     preparedRoot = undefined
+    preparedHydrationNodes = undefined
     if (root) destroyRoot(root)
   }
   const prepare = () => {
@@ -1920,16 +1922,36 @@ export function createChildBinding(
     preparedRoot = root
     try {
       return withRootContext(root, () => {
-        let value = getValue()
-        // A compiled getter may return a public prop/signal accessor. Read it
-        // while tracking so VNode children subscribe to the actual value too.
-        const seen = new Set<() => unknown>()
-        while (isReactive(value)) {
-          if (seen.has(value)) return null
-          seen.add(value)
-          value = value() as FictNode
+        const evaluate = () => {
+          let value = getValue()
+          // A compiled getter may return a public prop/signal accessor. Read it
+          // while tracking so VNode children subscribe to the actual value too.
+          const seen = new Set<() => unknown>()
+          while (isReactive(value)) {
+            if (seen.has(value)) return null
+            seen.add(value)
+            value = value() as FictNode
+          }
+          return value
         }
-        return value
+        if (initializingHydration && hydration) {
+          let value: FictNode
+          // A named render helper may create templates while computing its
+          // result. Evaluate and materialize in one range, preserving its cursor.
+          const fragment = withHydrationRange(
+            hydration.start.nextSibling,
+            marker,
+            ownerDocument,
+            () =>
+              hydrateFragment(ownerDocument, () => {
+                value = evaluate()
+                if (value != null && value !== false) untrack(() => createElementFn(value))
+              }),
+          )
+          preparedHydrationNodes = toNodeArray(fragment, ownerDocument)
+          return value!
+        }
+        return evaluate()
       })
     } catch (error) {
       releasePrepared()
@@ -1947,7 +1969,9 @@ export function createChildBinding(
       }
       activeRelease?.()
       const root = preparedRoot!
+      const hydratedNodes = preparedHydrationNodes
       preparedRoot = undefined
+      preparedHydrationNodes = undefined
       const prev = pushRoot(root)
       let nodes: Node[] = []
       let committed = false
@@ -1968,24 +1992,20 @@ export function createChildBinding(
         if (!hydrating) releaseHydration()
         // Skip if value is null/undefined/false
         if (value == null || value === false) {
-          if (hydrating)
-            withHydrationRange(initialRange!.start.nextSibling, marker, ownerDocument, () => {})
           hydration = null
           release()
           return
         }
 
-        const output = untrack(() =>
-          hydrating
-            ? withHydrationRange(initialRange!.start.nextSibling, marker, ownerDocument, () =>
-                createElementFn(value),
-              )
-            : createElementFn(value),
-        )
+        nodes = hydrating
+          ? hydratedNodes!
+          : toNodeArray(
+              untrack(() => createElementFn(value)),
+              marker.ownerDocument ?? parent.ownerDocument ?? document,
+            )
         hydration = null
-        nodes = toNodeArray(output, marker.ownerDocument ?? parent.ownerDocument ?? document)
         const parentNode = marker.parentNode as (ParentNode & Node) | null
-        if (parentNode) {
+        if (parentNode && !hydrating) {
           nodes = insertNodesBefore(parentNode, nodes, marker)
         }
         committed = true

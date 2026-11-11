@@ -16,13 +16,13 @@ const binding = require(nativePath)
 // Behavioral port of 0.28.0 state-machine-name-collision.test.ts. The Rust backend preserves
 // reducible JavaScript loops instead of synthesizing Babel's __state switch, so these probes cover
 // the same authored bindings plus the generated names that now surround reactive control flow.
-function compileAndExecute(id, code, arguments_ = []) {
+function compileAndExecute(id, code, arguments_ = [], options = {}) {
   const result = binding.transformSync({
     code,
     filename: `/state-machine-name-collision/${id}.ts`,
     language: 'ts',
     moduleKind: 'commonjs',
-    options: { strictGuarantee: true, dev: false, optimize: true },
+    options: { strictGuarantee: true, dev: false, optimize: true, ...options },
   })
   assert.deepEqual(
     result.diagnostics.filter(diagnostic => diagnostic.severity === 'error'),
@@ -76,7 +76,18 @@ test('legacy state-machine collision scenarios stay structured and preserve auth
   ]
 
   for (const [id, source, arguments_, expected] of cases) {
-    const result = compileAndExecute(`legacy-${id}`, source, arguments_)
+    // These setup loops are explicitly qualified as the R006 fallback.
+    const strict = binding.transformSync({
+      code: source,
+      filename: '/loop.ts',
+      options: { strictGuarantee: true },
+    })
+    assert.deepEqual(
+      strict.diagnostics.map(({ code, severity }) => [code, severity]),
+      [['FICT-R006', 'error']],
+    )
+    assert.equal(strict.code, '')
+    const result = compileAndExecute(`legacy-${id}`, source, arguments_, { strictGuarantee: false })
     assert.equal(result.value, expected, id)
     assert.match(result.code, /do \{/)
     assert.doesNotMatch(result.code, /switch \(__state/)

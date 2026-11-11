@@ -465,6 +465,11 @@ contains no authored `return` or `throw`, and the outputs are read inside return
 closures/accessors. Reading a region output directly in the hook owner (for example,
 `return { heading }`) would materialize a one-time value snapshot, so that shape also reports
 `FICT-R006`.
+Non-JSX component roots are reactive consumers too. A root expression that mixes its value
+with hook/runtime setup, assignments, deletion, or suspension cannot move into a getter and
+reports `FICT-R006`. Move that work into statements before the return. Unsupported reactive
+statement branches around value-only returns also fail closed, even when the component has no
+JSX of its own. Opt-out output keeps those expressions as setup-time snapshots.
 The diagnostic is also required when `lazyConditional: false` disables the EmitIR
 `ConditionalReturn` capability for an otherwise supported reactive return.
 

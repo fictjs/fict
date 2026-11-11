@@ -65,6 +65,12 @@ after(() => {
   dom.window.close()
 })
 
+function readComponentResult(value) {
+  while (typeof value === 'function' && value[Symbol.for('fict:reactive-fn')] === true)
+    value = value()
+  return value
+}
+
 async function flushRuntime() {
   for (let index = 0; index < 4; index += 1) await Promise.resolve()
   await new Promise(resolve => setTimeout(resolve, 0))
@@ -391,7 +397,7 @@ test('tracks deep external storage across abrupt CFG edges', () => {
         case 0: callbacks = holder.callbacks; break
         case 1: callbacks.nested.run = run; break
       }`,
-      [],
+      ['FICT-R006'],
     ],
     [
       'switch-fallthrough-carries-external-origin',
@@ -1372,7 +1378,7 @@ test('projected assignment patterns rewrite dynamic reactive accessor roots', as
     options: { strictGuarantee: true },
   })
 
-  assert.deepEqual(compiled.probe(), [2, 1])
+  assert.deepEqual(readComponentResult(compiled.probe()), [2, 1])
 })
 
 test('reactive conditional returns preserve branch statements and local scope', async () => {
@@ -1642,7 +1648,7 @@ test('reactive hook loop outputs re-execute through a live memo region', async (
     options: { strictGuarantee: false },
   })
 
-  assert.deepEqual(compiled.probe(), ['01', '0123'])
+  assert.deepEqual(readComponentResult(compiled.probe()), ['01', '0123'])
 })
 
 test('structured hook control-flow forms stay live as one region each', async () => {
@@ -1700,7 +1706,7 @@ test('structured hook control-flow forms stay live as one region each', async ()
     options: { strictGuarantee: false },
   })
 
-  assert.deepEqual(compiled.probe(), [
+  assert.deepEqual(readComponentResult(compiled.probe()), [
     ['off', 'zero', 'a', '01'],
     ['on', 'one', 'ab', '012'],
   ])
@@ -4548,17 +4554,17 @@ test('native binding honors derived memo inline policy', () => {
 
   const enabled = transform(source, true)
   assert.deepEqual(enabled.diagnostics, [])
-  assert.match(enabled.code, /return count\(\) \* 2/)
+  assert.match(enabled.code, /return __fictReactive\(\(\) => count\(\) \* 2\)/)
   assert.doesNotMatch(enabled.code, /__fictUseMemo/)
 
   const disabled = transform(source, false)
   assert.deepEqual(disabled.diagnostics, [])
   assert.match(disabled.code, /const doubled = __fictUseMemo/)
-  assert.match(disabled.code, /return doubled\(\)/)
+  assert.match(disabled.code, /return __fictReactive\(\(\) => doubled\(\)\)/)
 
   const generated = transform(source.replaceAll('doubled', '__doubled'), false)
   assert.deepEqual(generated.diagnostics, [])
-  assert.match(generated.code, /return count\(\) \* 2/)
+  assert.match(generated.code, /return __fictReactive\(\(\) => count\(\) \* 2\)/)
   assert.doesNotMatch(generated.code, /__fictUseMemo/)
 })
 

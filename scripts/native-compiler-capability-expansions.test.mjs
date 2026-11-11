@@ -115,16 +115,21 @@ const probes = [
   },
   {
     id: 'packages/compiler/test/do-while-break.test.ts:33:transform',
+    diagnosticCodes: ['FICT-R006'],
+    resolveReactiveResult: true,
     suffix: 'export function probe() { return Component() }',
     expected: 5,
   },
   {
     id: 'packages/compiler/test/do-while-break.test.ts:50:transform',
+    diagnosticCodes: ['FICT-R006'],
+    resolveReactiveResult: true,
     suffix: 'export function probe() { return Component() }',
     expected: 6,
   },
   {
     id: 'packages/compiler/test/do-while-break.test.ts:82:transform',
+    resolveReactiveResult: true,
     suffix: 'export function probe() { return Component() }',
     expected: 15,
   },
@@ -175,7 +180,7 @@ test('runtime probes cover every explicitly classified Rust acceptance exactly o
     acceptanceReview.reviews.filter(
       review => acceptanceReview.policies[review.policy].capabilityClaim,
     ).length,
-    7,
+    5,
   )
 })
 
@@ -256,7 +261,11 @@ for (const probe of probes) {
       if (probe.expectedError !== undefined) {
         assert.throws(invoke, error => error?.constructor?.name === probe.expectedError)
       } else {
-        const value = await invoke()
+        let value = await invoke()
+        if (probe.resolveReactiveResult) {
+          assert.equal(value[Symbol.for('fict:reactive-fn')], true)
+          value = value()
+        }
         assert.deepEqual(probe.resolveAccessor ? value() : value, probe.expected)
       }
     } finally {

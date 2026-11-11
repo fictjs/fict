@@ -302,6 +302,27 @@ snapshot; that shape therefore also reports `FICT-R006`.
 
 ---
 
+### Component root values
+
+Component setup executes once. Non-JSX root expressions such as `return props.children`,
+`return 'n=' + props.n`, and `return items.map(item => <li>{item}</li>)` execute in an owned
+reactive child binding, in both DOM backends. Expression-bodied arrows have the same contract.
+The binding also preserves the SSR range during strict hydration, including named render
+callbacks that create template nodes while computing their result.
+
+A same-module function used as a JSX tag (including an immutable local alias) has the component
+role even when its body contains no JSX. Ordinary uppercase utility functions retain JavaScript
+call semantics. A separately compiled value-only wrapper can make its component role explicit
+with a JSX fragment, for example `return <>{props.children}</>`.
+
+Directly returning a stateful hook or runtime factory result preserves one setup invocation.
+A larger root expression containing setup calls, assignments, deletion, or suspension cannot be
+moved into a reactive consumer: it reports `FICT-R006`; an opt-out build retains the snapshot.
+Move that work into setup statements and return a value-only expression. Reactive statement
+branches around non-JSX returns also require a supported branch-return lowering; otherwise they
+report `FICT-R006`. Explicit `untrack` snapshots and unmarked callback values keep their existing
+semantics.
+
 ## 5. Rule E: Props Destructuring and Default Values
 
 ### Source Code
