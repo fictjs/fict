@@ -12,25 +12,25 @@
     "fileOverrideRatchetReductionLines": 100
   },
   "total": {
-    "reviewedLines": 191860,
-    "maxLines": 193000,
-    "rationale": "G2 adds opt-in source/EmitIR/output tracing in focused modules, including independently verified static calls, ownership and cleanup facts. Review these observational additions and preserve the minimum 1000-line reserve. All central orchestration and per-file ceilings remain unchanged."
+    "reviewedLines": 194879,
+    "maxLines": 196000,
+    "rationale": "Review the 39-item compiler/runtime bug qualification: hook accessor and setup contracts, component root/VNode identity, indexed ownership and dependency worklists, bounded native syntax, and regression coverage. Cohesive helper extraction preserves every existing per-file ceiling; this total retains a finite 1121-line maintenance reserve."
   },
   "defaultFileMaxLines": 2000,
   "crates": {
     "fict-compiler": {
-      "reviewedLines": 31216,
-      "maxLines": 31400,
-      "rationale": "Attach the optional graph only to successful explanation output; existing bounded-result validation also covers its serialized payload."
+      "reviewedLines": 31853,
+      "maxLines": 32000,
+      "rationale": "Hook return metadata refinement and non-JSX root diagnostics are qualified by frozen requests and executable consumer probes. Literal/branch facts move to metadata_analysis/hook_constants.rs; the central metadata file remains below its default ceiling."
     },
     "fict-compiler-napi": {
       "reviewedLines": 1389,
       "maxLines": 1500
     },
     "fict-compiler-oxc": {
-      "reviewedLines": 123488,
-      "maxLines": 124000,
-      "rationale": "G2 owns its trace schema, source-plan collection and post-codegen census in separate modules. Explain-disabled compilation skips collection; exact final call spans and CommonJS import identities are tested independently. No central builder, codegen or individual file ceiling is raised."
+      "reviewedLines": 125296,
+      "maxLines": 125750,
+      "rationale": "Source ownership indexing, JSX identity and runtime call contracts, plus bounded syntax traversal. Function partitioning and component lowering move into focused modules; hir_builder.rs and emit_codegen.rs retain their previous ceilings."
     },
     "fict-compiler-preview": {
       "reviewedLines": 2333,
@@ -41,23 +41,23 @@
       "maxLines": 750
     },
     "fict-emit": {
-      "reviewedLines": 11505,
-      "maxLines": 11700,
-      "rationale": "Async helpers and accessor aliases are verified in EmitIR; alias planning is extracted and repeated kind checks are shared without raising file ceilings."
+      "reviewedLines": 11933,
+      "maxLines": 12050,
+      "rationale": "Preserve hook accessor identities and component root plans in verified EmitIR. Accessor-read collection and hook-contract verification move into dedicated modules; lower.rs retains its ceiling and verify.rs fits the default ceiling."
     },
     "fict-hir": {
-      "reviewedLines": 6997,
-      "maxLines": 7150,
-      "rationale": "Explicit async source/accessor distinctions and an iterative immutable-alias query, including conditional and logical selections."
+      "reviewedLines": 7210,
+      "maxLines": 7300,
+      "rationale": "Explicit setup-call, hook-binding, component-root and readonly receiver facts support the corrected public contracts without implicit codegen guesses."
     },
     "fict-metadata": {
       "reviewedLines": 562,
       "maxLines": 600
     },
     "fict-reactivity": {
-      "reviewedLines": 13398,
-      "maxLines": 13550,
-      "rationale": "Track async-dependent implicit values separately from explicit manual accessors to preserve JavaScript function-call semantics."
+      "reviewedLines": 13538,
+      "maxLines": 13700,
+      "rationale": "Delta dependency and binding worklists, constant-time dominance, and setup-binding alias shape corrections preserve existing pass invariants and avoid whole-graph rescans."
     }
   },
   "fileOverrides": {

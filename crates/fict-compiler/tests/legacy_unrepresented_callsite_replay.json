@@ -29,7 +29,7 @@
     "zeroInvocationCallsites": 2,
     "matchedCallsiteExecutions": 1444,
     "replayFixtures": 1222,
-    "reviewedRevision": "efd0bc97f6dcc959492955462cf628e064a42630",
+    "reviewedRevision": "6fe74032a031ffa507ddc1fc5b51336e3344f60a",
     "reviewedCompilerBuildId": "fict-rust-p1-oxc0.139.0-m1-abf58f45ecb6fd2a810b99a0b57141f469f2f7a1ac258244c9a4474c44d0f083"
   },
   "transitionCounts": {

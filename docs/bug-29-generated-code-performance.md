@@ -1,6 +1,6 @@
 # Generated-code compiler regression: item 29
 
-Measured on an Apple M1 Max, arm64 macOS 27.0.1, Node 24.16.0 and Rust 1.97.0. Both artifacts use the workspace release profile, the same default `transformSync` options, and the same generated TSX sources. The baseline is `efd0bc97f6dcc959492955462cf628e064a42630`, immediately before item 29; it includes the other 38 fixes. The candidate is this report's compiler change.
+Measured on an Apple M1 Max, arm64 macOS 27.0.1, Node 24.16.0 and Rust 1.97.0. Both artifacts use the workspace release profile, the same default `transformSync` options, and the same generated TSX sources. The saved baseline is `efd0bc97f6dcc959492955462cf628e064a42630`, before the item 29 optimization; it includes the other 38 fixes as they stood at measurement time. The candidate is the saved optimized addon identified by SHA-256 in the raw report. Subsequent integration fixes and helper extraction are qualified separately below.
 
 The inputs reproduce the shapes described in `bug.md`; both artifacts receive each fixture verbatim.
 
@@ -50,6 +50,12 @@ The native resource regression suite executes every branch in 800-arm `if` and `
 On the saved baseline, isolated transforms of 1,500 nested JSX elements, 4,000 parentheses and 5,000 objects all terminated with `SIGSEGV`. Larger probes (5,000 JSX / 10,000 parentheses / 10,000 objects) also crashed.
 
 The candidate checks parsed AST depth with an iterative queue before semantic analysis and other recursive visitors. It returns `FICT-RESOURCE-LIMIT` with a location and help. Scoped 64 MiB compiler workers provide consistent stack space for the permitted tree shapes; N-API panic containment runs inside those workers. The regression suite covers synchronous and asynchronous transform, analyze and scan, then compiles another module in the same child process to verify recovery. This check follows OXC parsing and does not promise isolation from every possible native/parser fault.
+
+## Final artifact qualification
+
+After the integration fixes and helper extraction, the final release addon was measured again with three fresh processes per case and no concurrent tests or builds. The medians were **918.85 ms** for 1,000 branches, **8,822.69 ms** for 3,000 branches, **2,632.56 ms** for 2,000 icons, and **278.41 ms** for 500 states. All generated branches still returned their expected values.
+
+These are separate qualification samples; the original paired comparison above is preserved. The raw report includes the final addon SHA-256, compiler build identity and all twelve samples under `finalQualification`. The final source also passes the complete Rust workspace and 883 native integration tests.
 
 ## Reproduction
 

@@ -89,3 +89,19 @@ For release candidates, `pnpm release:verify:clean` runs both complexity
 reports as part of the top-level gate. `pnpm release:compiler:verify` also runs
 compiler lint, typecheck, native runtime/package, bundler, ABI, and the same
 complete Rust workspace verification used by CI.
+
+### November 2026 bug qualification
+
+The 39-item review in `docs/bug-review-2026-11-10.md` adds verified hook
+accessor/setup contracts, non-JSX component roots, VNode identity, indexed
+frontend ownership, delta dependency propagation, and native syntax bounds.
+The dedicated governance change reviews 194,879 Rust source/test lines with a
+196,000-line workspace ceiling (1,121 lines of reserve). It raises only the
+necessary crate totals and keeps every existing per-file ceiling unchanged.
+
+Function partitioning, component lowering, hook constant facts, accessor-read
+collection, and hook-contract verification now live in focused modules. The
+central HIR builder is 46,849 lines, codegen is 8,534, metadata analysis is 1,982,
+and lowering is 4,792. Existing output hashes and executable regressions verify
+that moving these helpers preserves behavior. Review provenance points to the
+reachable 39-fix commit after the issue-specific followups were folded in.

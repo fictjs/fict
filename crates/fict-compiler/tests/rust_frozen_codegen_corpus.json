@@ -15,7 +15,7 @@
       "@babel/plugin-transform-typescript": "7.28.5"
     },
     "rustAuditRelease": "0.36.0",
-    "rustAuditRevision": "efd0bc97f6dcc959492955462cf628e064a42630",
+    "rustAuditRevision": "6fe74032a031ffa507ddc1fc5b51336e3344f60a",
     "auditInputSha256": "676b022516c01b525d7e2a316e5b072eae2ee1532b2bb103573543900f13b67f",
     "requestPolicySha256": "6b459d227b9b70c163861d31104547f8e1569526ae5fb78c36cb7a11f313bec8",
     "legacyTestSourceSha256": "65e6c3961af46d92d88d40d4ee0bb50901538ea15b4468dc8c79c73eef9da8bb",
@@ -25,7 +25,7 @@
     "corpusFixtures": 1950,
     "scannedLegacyTestFiles": 107,
     "legacyTestFilesWithAuditRows": 73,
-    "reviewedRevision": "efd0bc97f6dcc959492955462cf628e064a42630",
+    "reviewedRevision": "6fe74032a031ffa507ddc1fc5b51336e3344f60a",
     "reviewedCompilerBuildId": "fict-rust-p1-oxc0.139.0-m1-abf58f45ecb6fd2a810b99a0b57141f469f2f7a1ac258244c9a4474c44d0f083"
   },
   "deviationPolicies": {

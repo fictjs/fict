@@ -129,9 +129,10 @@ Rust crate and largest-file budgets are independently enforced and may not be
 relaxed to absorb unrelated work. Extract helpers along crate/pass ownership
 boundaries and document any intentional budget change.
 
-The reactivity budget is reviewed at 13,286 lines with a 13,400-line ceiling for
-shared alias facts, indexed regions, and independent invalidation/root-resolution
-regressions. The workspace ceiling and other crate ceilings are unchanged.
+The reactivity budget is reviewed at 13,538 lines with a 13,700-line ceiling for
+shared alias facts, indexed regions, delta dependency propagation, and
+setup-binding alias corrections. The November 2026 governance review and
+finite workspace/crate reserves are documented in `compiler-maintenance.md`.
 
 ## Verification
 
