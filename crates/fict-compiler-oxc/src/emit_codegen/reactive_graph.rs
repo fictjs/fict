@@ -126,6 +126,7 @@ pub(super) fn prepare(
                         kind: format!("{:?}", slot.kind),
                         storage: match slot.storage {
                             ReactiveSlotStorage::Owned => "owned",
+                            ReactiveSlotStorage::HookBinding => "hook-binding",
                             ReactiveSlotStorage::Alias { .. } => "alias",
                             ReactiveSlotStorage::Captured { .. } => "captured",
                             ReactiveSlotStorage::CapturedHookReturn { .. } => {

@@ -78,7 +78,10 @@ impl Verifier<'_> {
                     .bindings
                     .get(fact.binding.as_usize())
                     .is_some_and(|binding| {
-                        matches!(binding.kind, BindingKind::Const | BindingKind::Let)
+                        matches!(
+                            binding.kind,
+                            BindingKind::Const | BindingKind::Let | BindingKind::Var
+                        )
                     })
             {
                 self.error(
@@ -356,6 +359,17 @@ impl Verifier<'_> {
                     "pattern assignment",
                     fragment.origin,
                 );
+                let declared: BTreeSet<_> = pattern.declared_bindings.iter().copied().collect();
+                let mut seen = BTreeSet::new();
+                for property in &pattern.property_bindings {
+                    if !declared.contains(&property.binding) || !seen.insert(property.binding) {
+                        self.error(
+                            "FICT-HIR-SYNTAX",
+                            "pattern property bindings must refer to unique declared bindings",
+                            Some(fragment.origin),
+                        );
+                    }
+                }
             }
         }
 

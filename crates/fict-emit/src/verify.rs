@@ -189,6 +189,20 @@ pub fn verify_emit_program(
                     ));
                 }
             }
+            if slot.storage == crate::ReactiveSlotStorage::HookBinding {
+                let kind = slot
+                    .binding
+                    .and_then(|binding| hir.hook_binding_kind(binding));
+                if !accessor_kind_matches(kind, slot.kind)
+                    && !(kind == Some(fict_hir::ImportedReactiveKind::Store)
+                        && slot.kind == crate::ReactiveSlotKind::Store)
+                {
+                    diagnostics.push(emit_error(
+                        "FICT-EMIT-HOOK-BINDING",
+                        "destructured hook slots must match a certified binding",
+                    ));
+                }
+            }
             if let crate::ReactiveSlotStorage::Imported { member } = slot.storage {
                 let import = slot
                     .binding
@@ -1452,6 +1466,7 @@ fn verify_reactive_read(
             )
         }
         Some(crate::ReactiveSlotStorage::Imported { member: None })
+        | Some(crate::ReactiveSlotStorage::HookBinding)
         | Some(crate::ReactiveSlotStorage::Owned)
         | Some(crate::ReactiveSlotStorage::Alias { .. })
         | Some(crate::ReactiveSlotStorage::Captured { .. }) => (

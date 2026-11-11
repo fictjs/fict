@@ -2107,3 +2107,227 @@ test('bug 4: aliases and metadata-backed imported hooks retain setup-only argume
     assert.ok(!result.code)
   }
 })
+
+for (const fineGrainedDom of [true, false]) {
+  for (const declaration of [
+    'const {count: n, doubled, inc} = useCounter()',
+    'const api = useCounter(); const alias = api; const {count: n, doubled, inc} = alias',
+    'let api = useCounter(); const {count: n, doubled, inc} = api',
+  ]) {
+    test(`bug 3: destructured hook accessors feed derivations, effects and captures (fineGrainedDom=${fineGrainedDom}; ${declaration})`, async () => {
+      const code = compile(
+        `import{$state,$effect,render}from'fict';let root;
+        function useCounter(){let count=$state(1);const doubled=count*2;return {count,doubled,inc:()=>count++}}
+        function App(){${declaration};const triple=n*3;const read=()=>n+1;$effect(()=>{document.title='c'+n});return <p onClick={inc}>{n+1}|{triple}|{doubled+1}|{read()}</p>}
+        export function mount(el){root=el;return render(()=><App/>,el)}export function observe(){return [root.textContent,document.title]}`,
+        { fineGrainedDom },
+      )
+      assert.deepEqual(
+        await executeDomCommonJs(code, {
+          mountExport: 'mount',
+          observeExport: 'observe',
+          steps: [
+            { kind: 'record', label: 'initial' },
+            { kind: 'click', selector: 'p' },
+            { kind: 'record', label: 'updated' },
+          ],
+        }),
+        [
+          { label: 'initial', value: ['2|3|3|2', 'c1'] },
+          { label: 'updated', value: ['3|6|5|3', 'c2'] },
+        ],
+      )
+    })
+  }
+  test(`bug 3: destructured hook tuples preserve holes and boolean values (fineGrainedDom=${fineGrainedDom})`, async () => {
+    const code = compile(
+      `import{$state,render}from'fict';let root;function useToggle(){let on=$state(false);return [0,on,()=>on=!on]}function App(){const [,on,toggle]=useToggle();return <p onClick={toggle}>{on?'on':'off'}</p>}export function mount(el){root=el;return render(()=><App/>,el)}export function observe(){return root.textContent}`,
+      { fineGrainedDom },
+    )
+    assert.deepEqual(
+      await executeDomCommonJs(code, {
+        mountExport: 'mount',
+        observeExport: 'observe',
+        steps: [
+          { kind: 'record', label: 'initial' },
+          { kind: 'click', selector: 'p' },
+          { kind: 'record', label: 'updated' },
+        ],
+      }),
+      [
+        { label: 'initial', value: 'off' },
+        { label: 'updated', value: 'on' },
+      ],
+    )
+  })
+}
+
+for (const fineGrainedDom of [true, false]) {
+  test(`bug 3: destructured hook metadata survives forwarding and module boundaries (fineGrainedDom=${fineGrainedDom})`, async () => {
+    const dependency = native.transformSync({
+      code: `import{$state,$memo,$store}from'fict';export function useCounter(){let count=$state(1);const doubled=$memo(()=>count*2);const store=$store({n:3});return {count,doubled,store}}export function useForward(){const {count,doubled,store}=useCounter();return {count,doubled,store}}export function useToggle(){let on=$state(false);return [on,()=>on=!on]}`,
+      filename: '/pattern-hooks.ts',
+      moduleKind: 'commonjs',
+      options: { dev: false, strictGuarantee: true },
+    })
+    assert.deepEqual(dependency.diagnostics, [])
+    assert.deepEqual(dependency.moduleMetadata.hooks.useForward.objectProps, {
+      count: 'signal',
+      doubled: 'memo',
+      store: 'store',
+    })
+    const consumer = native.transformSync({
+      code: `import{render,$effect}from'fict';import{useForward as makeCounter,useToggle}from'./pattern-hooks';let root;function App(){const {count:c,doubled,store}=makeCounter();const [on,toggle]=useToggle();const label=c*3;$effect(()=>{document.title='c'+c});return <div><p onClick={()=>c(c+1)}>{c+1}|{doubled+1}|{label}</p><b onClick={()=>store.n++}>{store.n}</b><i onClick={toggle}>{on?'on':'off'}</i></div>}export function mount(el){root=el;return render(()=><App/>,el)}export function observe(){return [root.textContent,document.title]}`,
+      filename: '/pattern-consumer.tsx',
+      moduleKind: 'commonjs',
+      metadata: [
+        {
+          request: './pattern-hooks',
+          resolvedId: '/pattern-hooks.ts',
+          status: 'resolved',
+          metadata: dependency.moduleMetadata,
+          fingerprint: 'sha256:pattern-hooks',
+        },
+      ],
+      options: { dev: false, strictGuarantee: true, fineGrainedDom },
+    })
+    assert.deepEqual(consumer.diagnostics, [])
+    const code = `const dep={exports:{}};(function(require,module,exports){${dependency.code}\n})(require,dep,dep.exports);(function(require,module,exports){${consumer.code}\n})(name=>name==='./pattern-hooks'?dep.exports:require(name),module,exports);`
+    assert.deepEqual(
+      await executeDomCommonJs(code, {
+        mountExport: 'mount',
+        observeExport: 'observe',
+        steps: [
+          { kind: 'record', label: 'initial' },
+          { kind: 'click', selector: 'p' },
+          { kind: 'click', selector: 'b' },
+          { kind: 'click', selector: 'i' },
+          { kind: 'record', label: 'updated' },
+        ],
+      }),
+      [
+        { label: 'initial', value: ['2|3|33off', 'c1'] },
+        { label: 'updated', value: ['3|5|64on', 'c2'] },
+      ],
+    )
+  })
+  test(`bug 3: var and let destructuring preserve signal writes (fineGrainedDom=${fineGrainedDom})`, async () => {
+    const code = compile(
+      `import{$state,render}from'fict';let root;function useCounter(){let n=$state(1);return{n}}function App(){var {n}=useCounter();let {n:other}=useCounter();return <p onClick={()=>{n++;other+=2}}>{n+1}:{other+1}</p>}export function mount(el){root=el;return render(()=><App/>,el)}export function observe(){return root.textContent}`,
+      { fineGrainedDom },
+    )
+    assert.deepEqual(
+      await executeDomCommonJs(code, {
+        mountExport: 'mount',
+        observeExport: 'observe',
+        steps: [
+          { kind: 'record', label: 'initial' },
+          { kind: 'click', selector: 'p' },
+          { kind: 'record', label: 'updated' },
+        ],
+      }),
+      [
+        { label: 'initial', value: '2:2' },
+        { label: 'updated', value: '3:4' },
+      ],
+    )
+  })
+}
+
+for (const pattern of ['{n=0}', '{...rest}', '{n:{value}}', '{[key]:n}']) {
+  test(`bug 3: unsupported hook destructuring fails closed (${pattern})`, () => {
+    const result = native.transformSync({
+      code: `import{$state}from'fict';function useCounter(){let n=$state(1);return{n}}function App(){const key='n';const ${pattern}=useCounter();return <p/>}`,
+      filename: '/pattern-unsupported.tsx',
+      options: { dev: false, strictGuarantee: true },
+    })
+    assert.ok(
+      result.diagnostics.some(
+        d => d.code === 'FICT-H002' && d.primarySpan && d.severity === 'error',
+      ),
+      JSON.stringify(result.diagnostics),
+    )
+    assert.ok(!result.code)
+    assert.ok(!result.diagnostics.some(d => d.guaranteeClass === 'internal'))
+  })
+}
+
+test('bug 3: destructured memos reject writes and captured accessors retain escape diagnostics', () => {
+  for (const [statement, expected] of [
+    ['let {d}=useCounter();const change=()=>d++;', 'FICT-METADATA-READONLY'],
+    ['const {n}=useCounter();external(()=>n);', 'FICT-R005'],
+    ['const {d}=useCounter();external(()=>d);', 'FICT-R005'],
+  ]) {
+    const result = native.transformSync({
+      code: `import{$state}from'fict';function useCounter(){let n=$state(1);const d=n*2;return{n,d}}function App(){${statement}return <p/>}`,
+      filename: '/pattern-boundary.tsx',
+      options: { dev: false, strictGuarantee: true },
+    })
+    assert.ok(
+      result.diagnostics.some(d => d.code === expected && d.severity === 'error'),
+      JSON.stringify(result.diagnostics),
+    )
+    assert.ok(!result.code)
+  }
+})
+
+test('bug 3: captured result objects can be destructured inside owned callbacks', async () => {
+  const code = compile(
+    `import{$state,$effect,render}from'fict';let root;function useCounter(){let n=$state(1);return{n,inc:()=>n++}}function App(){const api=useCounter();$effect(()=>{const{n}=api;document.title='n'+n});return <p onClick={()=>{const{inc}=api;inc()}}>{api.n+1}</p>}export function mount(el){root=el;return render(()=><App/>,el)}export function observe(){return [root.textContent,document.title]}`,
+  )
+  assert.deepEqual(
+    await executeDomCommonJs(code, {
+      mountExport: 'mount',
+      observeExport: 'observe',
+      steps: [
+        { kind: 'record', label: 'initial' },
+        { kind: 'click', selector: 'p' },
+        { kind: 'record', label: 'updated' },
+      ],
+    }),
+    [
+      { label: 'initial', value: ['2', 'n1'] },
+      { label: 'updated', value: ['3', 'n2'] },
+    ],
+  )
+})
+
+test('bug 3: destructuring an unstable hook result fails closed', () => {
+  const result = native.transformSync({
+    code: `import{$state}from'fict';function useCounter(){let n=$state(1);return{n}}function App(){let api=useCounter();api={n:0};const{n}=api;return <p>{n+1}</p>}`,
+    filename: '/pattern-reassigned.tsx',
+    options: { dev: false, strictGuarantee: true },
+  })
+  assert.ok(
+    result.diagnostics.some(d => d.code === 'FICT-H002' && d.severity === 'error'),
+    JSON.stringify(result.diagnostics),
+  )
+  assert.ok(!result.code)
+})
+
+test('bug 3: destructuring a stateful hook in opt-out mode never repeats setup', async () => {
+  const result = native.transformSync({
+    code: `import{$state,render,onMount}from'fict';let root,mounts=0;function useCounter(input){let n=$state(1);onMount(()=>mounts++);const total=n+input;return{total,inc:()=>n++}}function App(){let count=$state(1);const{total,inc}=useCounter(count);return <div><button onClick={()=>count++}>outer</button><p onClick={inc}>{count}:{total}</p></div>}export function mount(el){root=el;return render(()=><App/>,el)}export function observe(){return [root.querySelector('p').textContent,mounts]}`,
+    filename: '/pattern-setup.tsx',
+    moduleKind: 'commonjs',
+    options: { dev: false, strictGuarantee: false },
+  })
+  assert.equal(result.diagnostics.length, 1)
+  assert.equal(result.diagnostics[0].code, 'FICT-S002')
+  assert.deepEqual(
+    await executeDomCommonJs(result.code, {
+      mountExport: 'mount',
+      observeExport: 'observe',
+      steps: [
+        { kind: 'record', label: 'initial' },
+        { kind: 'click', selector: 'p' },
+        { kind: 'click', selector: 'button' },
+        { kind: 'record', label: 'updated' },
+      ],
+    }),
+    [
+      { label: 'initial', value: ['1:2', 1] },
+      { label: 'updated', value: ['2:3', 1] },
+    ],
+  )
+})

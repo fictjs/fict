@@ -177,15 +177,26 @@ pub fn analyze_reactive_scopes(
             ShapeSource::RuntimeBinding(
                 fict_hir::RuntimeBindingKind::Stable | fict_hir::RuntimeBindingKind::SetupValue,
             ) => None,
-            ShapeSource::ImportedReactive(ImportedReactiveKind::Signal) => {
+            ShapeSource::RuntimeBinding(fict_hir::RuntimeBindingKind::HookBinding(
+                ImportedReactiveKind::Signal,
+            ))
+            | ShapeSource::ImportedReactive(ImportedReactiveKind::Signal) => {
                 Some(ReactiveBindingKind::State)
             }
-            ShapeSource::ImportedReactive(
+            ShapeSource::RuntimeBinding(fict_hir::RuntimeBindingKind::HookBinding(
+                ImportedReactiveKind::Memo
+                | ImportedReactiveKind::Async
+                | ImportedReactiveKind::AsyncAccessor,
+            ))
+            | ShapeSource::ImportedReactive(
                 ImportedReactiveKind::Memo
                 | ImportedReactiveKind::Async
                 | ImportedReactiveKind::AsyncAccessor,
             ) => Some(ReactiveBindingKind::Memo),
-            ShapeSource::ImportedReactive(ImportedReactiveKind::Store) => {
+            ShapeSource::RuntimeBinding(fict_hir::RuntimeBindingKind::HookBinding(
+                ImportedReactiveKind::Store,
+            ))
+            | ShapeSource::ImportedReactive(ImportedReactiveKind::Store) => {
                 Some(ReactiveBindingKind::Store)
             }
             ShapeSource::Alias(_) if shape.kind == ShapeKind::Reactive => {

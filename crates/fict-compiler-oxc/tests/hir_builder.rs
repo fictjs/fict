@@ -55,14 +55,17 @@ fn lowers_internal_import_equals_as_a_local_alias_initialization() {
             .blocks
             .iter()
             .flat_map(|block| &block.instructions)
-            .any(|instruction| matches!(
-                instruction.kind,
-                HirInstructionKind::Write {
-                    ref place,
-                    ..
-                } if place.base == fict_hir::PlaceBase::Local(alias_local.id)
-                    && place.projections.is_empty()
-            ))
+            .any(|instruction| match &instruction.kind {
+                HirInstructionKind::Write { place, .. } =>
+                    place.base == fict_hir::PlaceBase::Local(alias_local.id)
+                        && place.projections.is_empty(),
+                HirInstructionKind::Declare {
+                    local,
+                    declaration_kind: fict_hir::DeclarationKind::Var,
+                    initializer: Some(_),
+                } => *local == alias_local.id,
+                _ => false,
+            })
     );
 }
 

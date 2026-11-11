@@ -27,16 +27,38 @@ pub(crate) fn run_core_with_hook_contracts(
     options: CorePassOptions,
     frontend: Option<&FrontendSummary>,
 ) -> Result<CorePassOutput, DiagnosticBundle> {
-    let mut core = run_core_passes(hir, options)?;
-    let Some(frontend) = frontend else {
-        return Ok(core);
-    };
-    if !core
-        .hir
+    // Pattern members may be accessors even though their binding has no call
+    // initializer. Establish those facts before CSE/DCE can erase authored reads.
+    let has_hooks = hir
         .functions
         .iter()
         .any(|function| function.kind == FunctionKind::Hook)
-    {
+        || hir.bindings.iter().any(|binding| {
+            binding.import.as_ref().is_some_and(|import| {
+                import.hook_return.is_some() || !import.hook_members.is_empty()
+            })
+        });
+    let optimize_after_contracts = options.optimize
+        && frontend.is_some()
+        && has_hooks
+        && hir.syntax_fragments.iter().any(|fragment| {
+            fragment
+                .summary
+                .pattern
+                .as_ref()
+                .is_some_and(|pattern| !pattern.declared_bindings.is_empty())
+        });
+    let mut core = run_core_passes(
+        hir,
+        CorePassOptions {
+            optimize: options.optimize && !optimize_after_contracts,
+            ..options
+        },
+    )?;
+    let Some(frontend) = frontend else {
+        return Ok(core);
+    };
+    if !has_hooks {
         return Ok(core);
     }
     let mut rounds = 0;
@@ -90,7 +112,18 @@ pub(crate) fn run_core_with_hook_contracts(
                 });
             }
         }
+        let (pattern_bindings, pattern_diagnostics) =
+            hook_pattern_bindings(&core.hir, &facts.hooks, &reassigned);
+        added.extend(pattern_bindings);
+        added.retain(|fact| {
+            core.hir
+                .runtime_bindings
+                .binary_search_by_key(&fact.binding, |known| known.binding)
+                .ok()
+                .is_none_or(|index| core.hir.runtime_bindings[index].kind != fact.kind)
+        });
         if added.is_empty() {
+            core.diagnostics.extend(pattern_diagnostics);
             break;
         }
         let replaced: BTreeSet<_> = added.iter().map(|fact| fact.binding).collect();
@@ -100,6 +133,34 @@ pub(crate) fn run_core_with_hook_contracts(
         core.hir.runtime_bindings.extend(added);
         core.hir.runtime_bindings.sort_unstable();
         core.hir.runtime_bindings.dedup();
+        let pattern_accessors: BTreeSet<_> = core
+            .hir
+            .runtime_bindings
+            .iter()
+            .filter_map(|fact| {
+                matches!(fact.kind, fict_hir::RuntimeBindingKind::HookBinding(_))
+                    .then_some(fact.binding)
+            })
+            .collect();
+        for function in &mut core.hir.functions {
+            for instruction in function
+                .blocks
+                .iter_mut()
+                .flat_map(|block| &mut block.instructions)
+            {
+                if let HirInstructionKind::Read { place } = &instruction.kind {
+                    let binding = match place.base {
+                        PlaceBase::Local(local) => function.locals[local.as_usize()].binding,
+                        PlaceBase::Ssa(name) => function.locals[name.local.as_usize()].binding,
+                        _ => None,
+                    };
+                    if binding.is_some_and(|binding| pattern_accessors.contains(&binding)) {
+                        instruction.semantics.purity = fict_hir::Purity::Unknown;
+                        instruction.semantics.may_throw = true;
+                    }
+                }
+            }
+        }
         let mut next = run_core_passes(
             &core.hir,
             CorePassOptions {
@@ -107,26 +168,174 @@ pub(crate) fn run_core_with_hook_contracts(
                 ..options
             },
         )?;
-        for (stage, duration) in core.stats.stage_durations_ns {
-            let total = next.stats.stage_durations_ns.entry(stage).or_default();
-            *total = total.saturating_add(duration);
-        }
-        for key in [
-            "constantsFolded",
-            "cseReplacements",
-            "deadValues",
-            "fixedPointIterations",
-        ] {
-            let total = next.stats.counters.entry(key.to_owned()).or_default();
-            *total = total.saturating_add(core.stats.counters.get(key).copied().unwrap_or(0));
-        }
+        accumulate_core_stats(&core, &mut next);
         core = next;
         rounds += 1;
+    }
+    if optimize_after_contracts {
+        let mut optimized = run_core_passes(&core.hir, options)?;
+        accumulate_core_stats(&core, &mut optimized);
+        for diagnostic in &core.diagnostics {
+            if !optimized.diagnostics.contains(diagnostic) {
+                optimized.diagnostics.push(diagnostic.clone());
+            }
+        }
+        core = optimized;
     }
     core.stats
         .counters
         .insert("hookContractRefinements".to_owned(), rounds);
     Ok(core)
+}
+
+fn accumulate_core_stats(previous: &CorePassOutput, next: &mut CorePassOutput) {
+    for (stage, duration) in &previous.stats.stage_durations_ns {
+        let total = next
+            .stats
+            .stage_durations_ns
+            .entry(stage.clone())
+            .or_default();
+        *total = total.saturating_add(*duration);
+    }
+    for key in [
+        "constantsFolded",
+        "cseReplacements",
+        "deadValues",
+        "fixedPointIterations",
+    ] {
+        let total = next.stats.counters.entry(key.to_owned()).or_default();
+        *total = total.saturating_add(previous.stats.counters.get(key).copied().unwrap_or(0));
+    }
+}
+
+fn hook_pattern_bindings(
+    file: &HirFile,
+    hooks: &BTreeMap<BindingId, HookReturnInfo>,
+    reassigned: &BTreeSet<BindingId>,
+) -> (Vec<fict_hir::RuntimeBindingFact>, Vec<Diagnostic>) {
+    let initializers: BTreeMap<_, _> = file
+        .functions
+        .iter()
+        .flat_map(|function| {
+            function
+                .blocks
+                .iter()
+                .flat_map(|block| &block.instructions)
+                .filter_map(|instruction| {
+                    let HirInstructionKind::Declare {
+                        local,
+                        initializer: Some(value),
+                        ..
+                    } = instruction.kind
+                    else {
+                        return None;
+                    };
+                    Some((
+                        function.locals[local.as_usize()].binding?,
+                        (function.id, value),
+                    ))
+                })
+        })
+        .collect();
+    let mut bindings = Vec::new();
+    let mut diagnostics = Vec::new();
+    for function in &file.functions {
+        for instruction in function.blocks.iter().flat_map(|block| &block.instructions) {
+            let HirInstructionKind::SyntaxFragment { fragment, inputs } = &instruction.kind else {
+                continue;
+            };
+            let fragment = &file.syntax_fragments[fragment.as_usize()];
+            let Some(pattern) = &fragment.summary.pattern else {
+                continue;
+            };
+            let [input] = inputs.as_slice() else {
+                continue;
+            };
+            if pattern.declared_bindings.is_empty() {
+                continue;
+            }
+            let Some((shape, stable)) =
+                hook_info_for_value(file, function, *input, hooks, &initializers, reassigned)
+            else {
+                continue;
+            };
+            if hook_info_is_empty(&shape) {
+                continue;
+            }
+            if !stable
+                || pattern.has_defaults
+                || pattern.has_rest
+                || pattern.property_bindings.len() != pattern.declared_bindings.len()
+            {
+                let mut diagnostic = Diagnostic::new(
+                    DiagnosticCode::new("FICT-H002").expect("hook pattern diagnostic"),
+                    DiagnosticSeverity::Warning,
+                    "hook return destructuring requires a stable source and a flat static pattern without defaults or rest",
+                ).with_help("keep the hook result in an immutable binding and destructure named members or tuple indices directly; use explicit member access for other patterns")
+                    .with_guarantee_class(GuaranteeClass::Fallback);
+                if let Some(span) = fragment.origin.primary_span {
+                    diagnostic = diagnostic.with_primary_span(span);
+                }
+                diagnostics.push(diagnostic);
+                continue;
+            }
+            for property in &pattern.property_bindings {
+                let properties = if property.array {
+                    &shape.array_props
+                } else {
+                    &shape.object_props
+                };
+                bindings.push(fict_hir::RuntimeBindingFact {
+                    binding: property.binding,
+                    kind: properties.get(&property.key).map_or(
+                        fict_hir::RuntimeBindingKind::SetupValue,
+                        |kind| {
+                            fict_hir::RuntimeBindingKind::HookBinding(imported_reactive_kind(kind))
+                        },
+                    ),
+                });
+            }
+        }
+    }
+    (bindings, diagnostics)
+}
+
+fn hook_info_for_value<'hir>(
+    file: &'hir HirFile,
+    mut function: &'hir HirFunction,
+    mut value: ValueId,
+    hooks: &BTreeMap<BindingId, HookReturnInfo>,
+    initializers: &BTreeMap<BindingId, (FunctionId, ValueId)>,
+    reassigned: &BTreeSet<BindingId>,
+) -> Option<(HookReturnInfo, bool)> {
+    let mut visited = BTreeSet::new();
+    let mut stable = true;
+    while visited.insert((function.id, value)) {
+        match &function.instruction_for_result(value)?.kind {
+            HirInstructionKind::Call(call) => {
+                return Some((hook_info_for_call(file, function, call, hooks)?, stable));
+            }
+            HirInstructionKind::Read { place } if place.projections.is_empty() => {
+                let local = match place.base {
+                    PlaceBase::Local(local) => local,
+                    PlaceBase::Ssa(name) => name.local,
+                    PlaceBase::Value(input) => {
+                        value = input;
+                        continue;
+                    }
+                    PlaceBase::Global(_) => return None,
+                };
+                let binding = function.locals[local.as_usize()].binding?;
+                stable &= !reassigned.contains(&binding);
+                let &(owner, input) = initializers.get(&binding)?;
+                function = &file.functions[owner.as_usize()];
+                value = input;
+            }
+            HirInstructionKind::Sequence { values } => value = *values.last()?,
+            _ => return None,
+        }
+    }
+    None
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -920,6 +1129,11 @@ fn infer_hook_return(
     let async_locals =
         fict_reactivity::async_dependent_locals(file, function, &analysis.scopes, &imported_hooks);
     let mut materialized_bindings = known_bindings.clone();
+    for fact in &file.runtime_bindings {
+        if let fict_hir::RuntimeBindingKind::HookBinding(kind) = fact.kind {
+            materialized_bindings.insert(fact.binding, imported_reactive_export_kind(kind));
+        }
+    }
     let writes = fict_emit::collect_captured_write_bindings(file);
     for (_, local, _) in fict_emit::derived_declarations(
         file,

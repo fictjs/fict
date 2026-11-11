@@ -422,7 +422,8 @@ pub fn analyze_shapes(
                 shape.kind = match kind {
                     fict_hir::RuntimeBindingKind::Stable => ShapeKind::Function,
                     fict_hir::RuntimeBindingKind::SetupValue => ShapeKind::Unknown,
-                    fict_hir::RuntimeBindingKind::Accessor
+                    fict_hir::RuntimeBindingKind::HookBinding(_)
+                    | fict_hir::RuntimeBindingKind::Accessor
                     | fict_hir::RuntimeBindingKind::Container => ShapeKind::Reactive,
                 };
                 Some(shape)

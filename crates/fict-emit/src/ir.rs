@@ -90,6 +90,8 @@ pub enum ReactiveSlotKind {
 /// Whether a reactive slot is created by this function or captured from an outer function.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ReactiveSlotStorage {
+    /// A hook member bound by an authored destructuring declaration.
+    HookBinding,
     /// The function contains the reactive creator operation.
     Owned,
     /// An immutable source alias preserves an existing manual async accessor.

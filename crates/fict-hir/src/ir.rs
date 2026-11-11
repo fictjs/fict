@@ -251,6 +251,8 @@ pub struct ImportBinding {
 /// Runtime representation certified by the frontend for an intact factory result.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum RuntimeBindingKind {
+    /// An accessor or store received by destructuring a certified hook result.
+    HookBinding(ImportedReactiveKind),
     /// A setup call result that must never re-run as an inferred memo.
     SetupValue,
     /// A stable factory method; reads do not require a derived memo.
@@ -268,6 +270,21 @@ pub struct RuntimeBindingFact {
     pub binding: BindingId,
     /// Existing runtime representation; this fact does not request allocation.
     pub kind: RuntimeBindingKind,
+}
+
+impl HirFile {
+    /// Read the certified representation of a destructured hook member.
+    #[must_use]
+    pub fn hook_binding_kind(&self, binding: BindingId) -> Option<ImportedReactiveKind> {
+        let index = self
+            .runtime_bindings
+            .binary_search_by_key(&binding, |fact| fact.binding)
+            .ok()?;
+        match self.runtime_bindings[index].kind {
+            RuntimeBindingKind::HookBinding(kind) => Some(kind),
+            _ => None,
+        }
+    }
 }
 
 /// Semantic binding. `display_name` is never an identity key.

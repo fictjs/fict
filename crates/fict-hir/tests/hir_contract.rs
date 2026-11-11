@@ -1289,3 +1289,46 @@ fn runtime_binding_facts_require_unique_valid_lexical_bindings() {
     file.bindings[0].kind = BindingKind::Parameter;
     assert!(verify_hir(&file).is_err(), "unproved parameter fact");
 }
+
+#[test]
+fn verifier_checks_destructuring_property_binding_identity() {
+    let mut file = empty_file();
+    let origin = file.functions[0].origin;
+    for index in 0..2 {
+        file.bindings.push(Binding {
+            id: BindingId::new(index),
+            scope: ScopeId::new(0),
+            kind: BindingKind::Const,
+            display_name: format!("binding{index}"),
+            import: None,
+            origin,
+        });
+    }
+    file.syntax_fragments.push(SyntaxFragment {
+        id: SyntaxFragmentId::new(0),
+        kind: SyntaxFragmentKind::Pattern,
+        origin,
+        summary: SyntaxSummary {
+            pattern: Some(PatternSummary {
+                declared_bindings: vec![BindingId::new(0)],
+                property_bindings: vec![fict_hir::PatternPropertyBinding {
+                    binding: BindingId::new(0),
+                    key: "count".into(),
+                    array: false,
+                }],
+                ..PatternSummary::default()
+            }),
+            ..SyntaxSummary::default()
+        },
+    });
+    verify_hir(&file).expect("property refers to the declared binding");
+    let pattern = file.syntax_fragments[0].summary.pattern.as_mut().unwrap();
+    pattern.property_bindings[0].binding = BindingId::new(1);
+    let diagnostics = verify_hir(&file).expect_err("unrelated binding must not gain the accessor");
+    assert!(
+        diagnostics
+            .as_slice()
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("unique declared bindings"))
+    );
+}

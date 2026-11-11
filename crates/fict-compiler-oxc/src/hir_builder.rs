@@ -654,6 +654,40 @@ impl<'a> Visit<'a> for AssignmentPatternSyntaxCollector {
     fn visit_arrow_function_expression(&mut self, _function: &ArrowFunctionExpression<'a>) {}
 }
 
+fn flat_pattern_bindings(pattern: &BindingPattern<'_>) -> Vec<(SymbolId, String, bool)> {
+    match pattern {
+        BindingPattern::ObjectPattern(object) => object
+            .properties
+            .iter()
+            .filter_map(|property| {
+                if property.computed {
+                    return None;
+                }
+                let BindingPattern::BindingIdentifier(identifier) = &property.value else {
+                    return None;
+                };
+                Some((
+                    identifier.symbol_id.get()?,
+                    property.key.static_name()?.into_owned(),
+                    false,
+                ))
+            })
+            .collect(),
+        BindingPattern::ArrayPattern(array) => array
+            .elements
+            .iter()
+            .enumerate()
+            .filter_map(|(index, element)| {
+                let Some(BindingPattern::BindingIdentifier(identifier)) = element else {
+                    return None;
+                };
+                Some((identifier.symbol_id.get()?, index.to_string(), true))
+            })
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
 #[derive(Default)]
 struct VariableDeclarationCollector {
     facts: Vec<VariableDeclarationFact>,
@@ -698,6 +732,7 @@ impl<'a> Visit<'a> for VariableDeclarationCollector {
                     }),
                     bindings: pattern.symbols,
                     simple_binding,
+                    property_bindings: flat_pattern_bindings(&declarator.id),
                     has_defaults: pattern.has_defaults,
                     has_rest: pattern.has_rest,
                     contains_await: pattern.contains_await,
@@ -728,6 +763,7 @@ impl<'a> Visit<'a> for VariableDeclarationCollector {
                 initializer_has_effects: true,
                 bindings: vec![symbol],
                 simple_binding: Some(symbol),
+                property_bindings: Vec::new(),
                 has_defaults: false,
                 has_rest: false,
                 contains_await: false,
@@ -2360,6 +2396,9 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
         // Seed the core dependency graph with their existing runtime representation
         // before derived declarations and effect advisories are planned.
         for (&symbol, shape) in &reactive_symbols.hook_return_shapes {
+            if shape.destructured {
+                continue;
+            }
             if let Some(&binding) = self.symbol_to_binding.get(&symbol) {
                 self.runtime_bindings.push(fict_hir::RuntimeBindingFact {
                     binding,
@@ -2913,6 +2952,19 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             facts: Vec::new(),
         };
         dependencies.visit_program(program);
+        let mut possible_accessors = source_reactive_symbols.clone();
+        propagate_reactive_symbols(&mut possible_accessors, &dependencies.facts, |_| true);
+        let imported_hooks: BTreeMap<_, _> = self
+            .frontend
+            .bindings
+            .iter()
+            .filter_map(|binding| {
+                Some((
+                    *self.old_to_new.get(&binding.id.index())?,
+                    binding.import.as_ref()?,
+                ))
+            })
+            .collect();
         let hook_return_shapes = collect_local_hook_return_shapes(
             program,
             self.semantic.scoping(),
@@ -2921,10 +2973,18 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             calls,
             &binding_to_symbol,
             &self.macro_bindings,
+            &imported_hooks,
+            &possible_accessors,
         );
         reactive_symbols.extend(hook_return_shapes.keys().copied());
         propagate_reactive_symbols(&mut reactive_symbols, &dependencies.facts, |_| true);
         let mut escape_reactive_symbols = source_escape_reactive_symbols;
+        escape_reactive_symbols.extend(
+            hook_return_shapes
+                .iter()
+                .filter(|(_, shape)| shape.destructured)
+                .map(|(symbol, _)| *symbol),
+        );
         // Value snapshots passed as ordinary arguments retain the legacy props boundary.
         // Callback captures must also follow props-derived aliases: reading an inferred memo
         // from a deferred callback has the same owner requirement as reading the prop itself.
@@ -3643,6 +3703,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                     SyntaxSummary {
                         referenced_bindings: Vec::new(),
                         pattern: Some(PatternSummary {
+                            property_bindings: Vec::new(),
                             declared_bindings,
                             assigned_bindings: Vec::new(),
                             has_defaults: parameter.has_default,
@@ -5604,6 +5665,17 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                 SyntaxSummary {
                     referenced_bindings: self.referenced_bindings(declaration.pattern_span),
                     pattern: Some(PatternSummary {
+                        property_bindings: declaration
+                            .property_bindings
+                            .iter()
+                            .filter_map(|(symbol, key, array)| {
+                                Some(fict_hir::PatternPropertyBinding {
+                                    binding: *self.symbol_to_binding.get(symbol)?,
+                                    key: key.clone(),
+                                    array: *array,
+                                })
+                            })
+                            .collect(),
                         declared_bindings,
                         assigned_bindings: Vec::new(),
                         has_defaults: declaration.has_defaults,
@@ -5996,6 +6068,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             SyntaxSummary {
                 referenced_bindings: self.read_referenced_bindings(assignment.pattern_span),
                 pattern: Some(PatternSummary {
+                    property_bindings: Vec::new(),
                     declared_bindings: Vec::new(),
                     assigned_bindings,
                     has_defaults: assignment.has_defaults,
@@ -6442,6 +6515,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             SyntaxSummary {
                 referenced_bindings: self.referenced_bindings(target.span),
                 pattern: Some(PatternSummary {
+                    property_bindings: Vec::new(),
                     declared_bindings,
                     assigned_bindings,
                     has_defaults: target.has_defaults,
@@ -6514,6 +6588,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             SyntaxSummary {
                 referenced_bindings: self.referenced_bindings(target.span),
                 pattern: Some(PatternSummary {
+                    property_bindings: Vec::new(),
                     declared_bindings,
                     assigned_bindings: Vec::new(),
                     has_defaults: target.has_defaults,
@@ -8889,6 +8964,7 @@ struct VariableDeclarationFact {
     initializer_has_effects: bool,
     bindings: Vec<SymbolId>,
     simple_binding: Option<SymbolId>,
+    property_bindings: Vec<(SymbolId, String, bool)>,
     has_defaults: bool,
     has_rest: bool,
     contains_await: bool,
@@ -10605,6 +10681,8 @@ struct ReactiveSymbolAnalysis {
 #[derive(Debug, Clone, Default)]
 struct LocalHookReturnShape {
     direct: bool,
+    destructured: bool,
+    imported: bool,
     members: BTreeSet<String>,
 }
 
@@ -10723,6 +10801,7 @@ impl<'a> Visit<'a> for LocalHookReturnCollector<'_, '_, '_> {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn collect_local_hook_return_shapes(
     program: &Program<'_>,
     scoping: &Scoping,
@@ -10731,13 +10810,22 @@ fn collect_local_hook_return_shapes(
     calls: &[CallFact],
     binding_to_symbol: &BTreeMap<BindingId, SymbolId>,
     macro_bindings: &BTreeMap<BindingId, FictMacroKind>,
+    imports: &BTreeMap<BindingId, &fict_hir::ImportBinding>,
+    possible_accessors: &BTreeSet<SymbolId>,
 ) -> BTreeMap<SymbolId, LocalHookReturnShape> {
     let hook_functions: BTreeSet<_> = functions
         .iter()
         .filter(|function| function.kind == FunctionKind::Hook)
         .map(|function| function.id)
         .collect();
-    let accessor_symbols: BTreeSet<_> = calls
+    if hook_functions.is_empty()
+        && imports
+            .values()
+            .all(|import| import.hook_return.is_none() && import.hook_members.is_empty())
+    {
+        return BTreeMap::new();
+    }
+    let mut accessor_symbols: BTreeSet<_> = calls
         .iter()
         .filter(|call| {
             call.binding
@@ -10752,6 +10840,7 @@ fn collect_local_hook_return_shapes(
         .filter_map(|call| call.direct_variable_binding)
         .filter_map(|binding| binding_to_symbol.get(&binding).copied())
         .collect();
+    accessor_symbols.extend(possible_accessors);
     let mut collector = LocalHookReturnCollector {
         scoping,
         function_by_span,
@@ -10772,19 +10861,102 @@ fn collect_local_hook_return_shapes(
             Some((function.binding?, shape.clone()))
         })
         .collect();
-    calls
+    let call_shapes: BTreeMap<_, _> = calls
         .iter()
         .filter_map(|call| {
-            let callee_symbol = binding_to_symbol.get(&call.binding?)?;
+            let binding = call.binding?;
+            let callee_symbol = binding_to_symbol.get(&binding)?;
             if scoping.symbol_is_mutated(*callee_symbol) {
                 return None;
             }
-            let shape = shapes_by_binding.get(&call.binding?)?.clone();
-            let result = call.direct_variable_binding?;
-            let symbol = *binding_to_symbol.get(&result)?;
-            (!scoping.symbol_is_mutated(symbol)).then_some((symbol, shape))
+            let shape = if let Some(shape) = shapes_by_binding.get(&binding) {
+                shape.clone()
+            } else {
+                let import = imports.get(&binding)?;
+                let imported = if let Some(reference) = &call.callee_reference {
+                    let path = static_alias_path_from_place(reference, true)?;
+                    if path.properties.is_empty() {
+                        import.hook_return.as_ref()?
+                    } else {
+                        import.resolve_hook_member_path(&path.properties)?
+                    }
+                } else {
+                    import.hook_return.as_ref()?
+                };
+                LocalHookReturnShape {
+                    direct: imported.direct_accessor.is_some(),
+                    destructured: false,
+                    imported: true,
+                    members: imported
+                        .object_properties
+                        .iter()
+                        .chain(&imported.array_properties)
+                        .map(|property| property.key.clone())
+                        .collect(),
+                }
+            };
+            Some(((call.span.start(), call.span.end()), shape))
         })
-        .collect()
+        .collect();
+    let mut results = HookResultPatternCollector {
+        scoping,
+        call_shapes: &call_shapes,
+        shapes: BTreeMap::new(),
+    };
+    results.visit_program(program);
+    results
+        .shapes
+        .retain(|_, shape| !shape.imported || shape.destructured);
+    results.shapes
+}
+
+struct HookResultPatternCollector<'facts> {
+    scoping: &'facts Scoping,
+    call_shapes: &'facts BTreeMap<(u32, u32), LocalHookReturnShape>,
+    shapes: BTreeMap<SymbolId, LocalHookReturnShape>,
+}
+
+impl<'a> Visit<'a> for HookResultPatternCollector<'_> {
+    fn visit_variable_declarator(&mut self, declarator: &VariableDeclarator<'a>) {
+        let shape = declarator.init.as_ref().and_then(|initializer| {
+            match initializer.get_inner_expression() {
+                Expression::CallExpression(call) => self
+                    .call_shapes
+                    .get(&(call.span.start, call.span.end))
+                    .cloned(),
+                Expression::Identifier(identifier) => self
+                    .shapes
+                    .get(&identifier_symbol(self.scoping, identifier)?)
+                    .cloned(),
+                _ => None,
+            }
+        });
+        if let Some(shape) = shape {
+            if let BindingPattern::BindingIdentifier(identifier) = &declarator.id {
+                if let Some(symbol) = identifier
+                    .symbol_id
+                    .get()
+                    .filter(|symbol| !self.scoping.symbol_is_mutated(*symbol))
+                {
+                    self.shapes.insert(symbol, shape);
+                }
+            } else {
+                for (symbol, key, _) in flat_pattern_bindings(&declarator.id) {
+                    if shape.members.contains(&key) {
+                        self.shapes.insert(
+                            symbol,
+                            LocalHookReturnShape {
+                                direct: true,
+                                destructured: true,
+                                ..LocalHookReturnShape::default()
+                            },
+                        );
+                    }
+                }
+            }
+        }
+        walk_variable_declarator(self, declarator);
+    }
 }
 
 fn propagate_reactive_symbols(
@@ -43350,6 +43522,24 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
         let Some(fact) = self.call_facts.get(&(call.span.start, call.span.end)) else {
             return;
         };
+        if let Expression::Identifier(identifier) = call.callee.get_inner_expression()
+            && identifier_symbol(self.scoping, identifier)
+                .and_then(|symbol| self.hook_return_shapes.get(&symbol))
+                .is_some_and(|shape| shape.direct && shape.destructured)
+            && arguments.iter().all(|argument| {
+                !argument.spread
+                    && expression_primitive_result_dependencies(
+                        self.scoping,
+                        self.callback_aliases,
+                        argument.expression,
+                    )
+                    .is_some_and(|dependencies| dependencies.is_empty())
+            })
+        {
+            // A primitive update through a returned accessor uses its existing
+            // synchronous setter contract; no callback or mutable object escapes.
+            return;
+        }
         let local_array_arguments_are_non_escaping =
             !self.local_array_mutation_receiver_targets_external_storage(call);
         let binding = fact.binding;

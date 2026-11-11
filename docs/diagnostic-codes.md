@@ -751,6 +751,11 @@ An inline nested return such as `return { nested: { count } }` also reports H002
 `count` remains an accessor. Expose it as a top-level member, or return an explicit
 callback such as `return { nested: { read: () => count } }` and call it at the consumer.
 
+Consumer destructuring must also preserve that contract. Flat object/tuple
+patterns support renaming and tuple holes. Defaults, rest, computed keys and
+nested targets report H002; keep the result object and use explicit members
+instead. Opt-out builds retain those unsupported authored patterns with a warning.
+
 ```ts
 function useThing(flag) {
   let count = $state(0)

@@ -169,12 +169,25 @@ pub enum SyntaxFragmentKind {
 }
 
 /// Binding effects of a retained pattern.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PatternPropertyBinding {
+    /// Local binding receiving the authored property, without invoking it.
+    pub binding: BindingId,
+    /// Static property name or tuple index.
+    pub key: String,
+    /// Whether the binding belongs to an array pattern.
+    pub array: bool,
+}
+
+/// Binding effects of a retained pattern.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct PatternSummary {
     /// Bindings declared by the pattern in source order.
     pub declared_bindings: Vec<BindingId>,
     /// Existing bindings written by an assignment pattern in source order.
     pub assigned_bindings: Vec<BindingId>,
+    /// Simple, flat property bindings; nested/default/rest targets are excluded.
+    pub property_bindings: Vec<PatternPropertyBinding>,
     /// Whether the pattern contains defaults whose evaluation order matters.
     pub has_defaults: bool,
     /// Whether the pattern contains a rest element.

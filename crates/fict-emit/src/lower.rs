@@ -1206,12 +1206,13 @@ fn lower_function(
         .iter()
         .filter_map(|local| {
             let binding = local.binding?;
-            let kind = hir
-                .bindings
-                .get(binding.as_usize())?
-                .import
-                .as_ref()?
-                .reactive?;
+            let kind = hir.hook_binding_kind(binding).or_else(|| {
+                hir.bindings
+                    .get(binding.as_usize())?
+                    .import
+                    .as_ref()?
+                    .reactive
+            })?;
             Some((
                 local.id,
                 binding,
@@ -1473,7 +1474,11 @@ fn lower_function(
             .map(|(_, binding, kind, origin, slot)| ReactiveSlot {
                 id: *slot,
                 kind: *kind,
-                storage: ReactiveSlotStorage::Imported { member: None },
+                storage: if hir.hook_binding_kind(*binding).is_some() {
+                    ReactiveSlotStorage::HookBinding
+                } else {
+                    ReactiveSlotStorage::Imported { member: None }
+                },
                 binding: Some(*binding),
                 control_path: Vec::new(),
                 origin: *origin,
@@ -1692,6 +1697,17 @@ fn lower_function(
                 continue;
             }
             match &instruction.kind {
+                HirInstructionKind::Write { place, value }
+                    if instruction.result.is_none()
+                        && place_local(place.base).and_then(|local| function.locals[local.as_usize()].binding).is_some_and(|binding| {
+                            matches!(function.instruction_for_result(*value).map(|source| &source.kind),
+                                Some(HirInstructionKind::SyntaxFragment { fragment, .. })
+                                if hir.syntax_fragments[fragment.as_usize()].summary.pattern.as_ref().is_some_and(|pattern| pattern.declared_bindings.contains(&binding)))
+                        }) => {
+                    // Hoisted var pattern initialization is authored declaration syntax,
+                    // not an assignment through the accessor it is about to bind.
+                    preserve(&mut operations, block.id, instruction_index, instruction);
+                }
                 HirInstructionKind::Read { place } => {
                     let direct_slot = place_local(place.base)
                         .and_then(|local| slot_by_local.get(&local).copied())
@@ -4771,7 +4787,10 @@ fn ensure_writable_hook_return(
     }
     if slots.get(slot.as_usize()).is_some_and(|slot| {
         slot.kind == ReactiveSlotKind::Memo
-            && matches!(slot.storage, ReactiveSlotStorage::HookReturn { .. })
+            && matches!(
+                slot.storage,
+                ReactiveSlotStorage::HookReturn { .. } | ReactiveSlotStorage::HookBinding
+            )
     }) {
         return Err(DiagnosticBundle::new(vec![lower_error(
             "FICT-METADATA-READONLY",

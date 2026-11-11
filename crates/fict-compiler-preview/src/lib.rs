@@ -328,6 +328,7 @@ pub fn attach_preview_plan(
                     !matches!(
                         slot.storage,
                         ReactiveSlotStorage::Imported { .. }
+                            | ReactiveSlotStorage::HookBinding
                             | ReactiveSlotStorage::HookReturn { .. }
                     )
                 })
