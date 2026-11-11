@@ -332,3 +332,51 @@ for (const profile of profiles) {
     )
   })
 }
+
+for (const profile of profiles) {
+  test(`local JSX values and opaque rendered keys retain reactive identity: ${JSON.stringify(profile)}`, async () => {
+    const result = binding.transformSync({
+      code: `import { $state, render, onCleanup } from 'fict'
+        let root, mounts = 0, cleanups = 0
+        function Item() {
+          const instance = ++mounts
+          onCleanup(() => cleanups++)
+          return <output>{instance}</output>
+        }
+        function App() {
+          let key = $state(0)
+          const local = <Item key={key} />
+          const readKey = () => key
+          return <main><button onClick={() => key++}>next</button>
+            <section id="local">{local}</section><section id="call"><Item key={readKey()} /></section>
+          </main>
+        }
+        export function mount(el) { root = el; return render(() => <App />, el) }
+        export function observe() {
+          return { mounts, cleanups, values: [...root.querySelectorAll('output')].map(n => n.textContent) }
+        }`,
+      filename: '/jsx-key-value-reactivity.tsx',
+      moduleKind: 'commonjs',
+      options: { dev: false, strictGuarantee: true, ...profile },
+    })
+    assert.deepEqual(result.diagnostics, [])
+    assert.deepEqual(
+      await executeDomCommonJs(result.code, {
+        mountExport: 'mount',
+        observeExport: 'observe',
+        steps: [
+          { kind: 'record', label: 'initial' },
+          { kind: 'click', selector: 'button' },
+          { kind: 'record', label: 'changed' },
+          { kind: 'dispose' },
+          { kind: 'record', label: 'disposed' },
+        ],
+      }),
+      [
+        { label: 'initial', value: { mounts: 2, cleanups: 0, values: ['1', '2'] } },
+        { label: 'changed', value: { mounts: 4, cleanups: 2, values: ['3', '4'] } },
+        { label: 'disposed', value: { mounts: 4, cleanups: 4, values: [] } },
+      ],
+    )
+  })
+}

@@ -3106,13 +3106,9 @@ fn lower_component_operation(
     if let Some(result) = source_result {
         value_temporaries.insert(result, target);
     }
-    let vnode_reactive_helper = (props
-        .iter()
-        .any(|prop| matches!(prop, ComponentProp::Node { .. }))
-        || children
-            .iter()
-            .any(|child| matches!(child, ComponentChild::Node(_))))
-    .then_some(RuntimeHelper::ReactiveGetter);
+    // VNode component identity (type/key) may itself be reactive. Codegen
+    // retains this helper only when an identity or nested child needs it.
+    let vnode_reactive_helper = Some(RuntimeHelper::ReactiveGetter);
     operations.push(EmitOperation::InvokeComponent {
         target,
         component,

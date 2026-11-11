@@ -20,6 +20,8 @@ import {
   createClassBinding,
   createClassListBinding,
   createChildBinding,
+  reactive,
+  spread,
   bindEvent,
   bindRef,
   isReactive,
@@ -96,6 +98,7 @@ import { untrack } from './scheduler'
 import { syncSelectValue } from './select-value'
 import { isAsyncRejection, registerAsyncRejection, withAsyncErrorScope } from './signal'
 import type { DOMElement, FictNode, FictVNode } from './types'
+import { vnodePropSource } from './vnode-reconcile'
 
 type NamespaceContext = RenderNamespaceContext
 type ElementNamespaceContext = 'html' | 'svg' | 'mathml'
@@ -207,6 +210,17 @@ function createKeyedComponentProps(
   rawProps: Record<string, unknown>,
   key: unknown,
 ): Record<string, unknown> {
+  if (vnodePropSource(rawProps)) {
+    return new Proxy(Object.create(null) as Record<string, unknown>, {
+      get: (_, prop) => (prop === 'key' ? key : Reflect.get(rawProps, prop)),
+      has: (_, prop) => prop === 'key' || prop in rawProps,
+      ownKeys: () => [...new Set([...Reflect.ownKeys(rawProps), 'key'])],
+      getOwnPropertyDescriptor: (_, prop) =>
+        prop === 'key'
+          ? { configurable: true, enumerable: true, writable: true, value: key }
+          : Object.getOwnPropertyDescriptor(rawProps, prop),
+    })
+  }
   const props = Object.create(Object.getPrototypeOf(rawProps)) as Record<string, unknown>
   for (const prop of Reflect.ownKeys(rawProps)) {
     if (prop === 'key') continue
@@ -848,7 +862,10 @@ function createElementWithContext(
   // Fragment
   if (vnode.type === Fragment) {
     const frag = ownerDocument.createDocumentFragment()
-    const children = vnode.props?.children as FictNode | FictNode[] | undefined
+    const source = vnodePropSource(vnode.props)
+    const children = (
+      source ? reactive(() => source().children) : vnode.props?.children
+    ) as FictNode
     if (isHydratingActive()) {
       return hydrateFragment(ownerDocument, () =>
         appendChildren(frag, children, namespace, ownerDocument),
@@ -886,10 +903,18 @@ function createElementWithContext(
       ? (el as HTMLTemplateElement).content
       : (el as unknown as ParentNode & Node)
   const applyElement = () => {
-    applyProps(el, vnode.props ?? {}, resolvedNamespace)
+    const source = vnodePropSource(vnode.props)
+    if (source) {
+      spread(
+        el,
+        () => resolveVNodeDOMProps(el, source(), resolvedNamespace),
+        resolvedNamespace === 'mathml' ? 'mathml' : resolvedNamespace === 'svg',
+        true,
+      )
+    } else applyProps(el, vnode.props ?? {}, resolvedNamespace)
     appendChildren(
       childParent,
-      vnode.props?.children as FictNode | FictNode[] | undefined,
+      (source ? reactive(() => source().children) : vnode.props?.children) as FictNode,
       resolveChildNamespace(resolvedNamespace, el),
       ownerDocument,
     )
@@ -1176,6 +1201,51 @@ function applyRef(el: Element, value: unknown): void {
 // ============================================================================
 // Props Handling
 // ============================================================================
+
+function resolveVNodeDOMProps(
+  el: Element,
+  props: Record<string, unknown>,
+  namespace: ElementNamespaceContext,
+): Record<string, unknown> {
+  // Snapshot spread values with the same getter/boolean rules as individual JSX
+  // attributes. An empty proxy target also supports frozen authored prop sets.
+  return new Proxy(Object.create(null) as Record<string, unknown>, {
+    ownKeys: () => Reflect.ownKeys(props),
+    getOwnPropertyDescriptor: (_, key) => {
+      const descriptor = Object.getOwnPropertyDescriptor(props, key)
+      return descriptor ? { ...descriptor, configurable: true } : undefined
+    },
+    get(_, key) {
+      const raw = Reflect.get(props, key)
+      if (
+        typeof key !== 'string' ||
+        key === 'children' ||
+        isEventKey(key) ||
+        key.startsWith('on:') ||
+        key.startsWith('oncapture:')
+      )
+        return raw
+      const value = isReactive(raw) ? raw() : raw
+      if (typeof value !== 'boolean') return value
+      const attribute = key.startsWith('attr:') ? key.slice(5) : key
+      const property =
+        key.startsWith('prop:') ||
+        key.startsWith('bool:') ||
+        key === 'ref' ||
+        key === 'class' ||
+        key === 'className' ||
+        key === 'classList' ||
+        (namespace === 'html' &&
+          !key.startsWith('attr:') &&
+          (el.tagName.includes('-') ||
+            'is' in props ||
+            (isDev ? Properties.has(key) || getPropAlias(key, el.tagName) : key in el)))
+      if (property || resolveNamespacedAttribute(key) || shouldStringifyBooleanAttribute(attribute))
+        return value
+      return value ? '' : null
+    },
+  })
+}
 
 /**
  * Apply props to an HTML element, setting up reactive bindings as needed.

@@ -337,6 +337,10 @@ export function claimChildRange(): { start: Comment; end: Comment } | null {
   return claimMarkerRange('fict:child-start', 'fict:child', 'reactive child', false)
 }
 
+export function claimVNodeRange(): { start: Comment; end: Comment } | null {
+  return claimMarkerRange('fict:vnode-start', 'fict:vnode-end', 'VNode', true)
+}
+
 export function claimConditionalRange(): { start: Comment; end: Comment } | null {
   return claimMarkerRange('fict:cond:start', 'fict:cond:end', 'conditional', true)
 }
@@ -441,6 +445,8 @@ export function withoutHydrationClaims<T>(fn: () => T): T {
 
 /** @internal Complete a scope-mismatch repair at the component invocation boundary. */
 export function getPendingHydrationRepairToken(): object | null {
+  // Descendants built for an enclosing repair cannot claim or finish its token.
+  if (hydrationClaimSuppressionDepth > 0) return null
   return hydrationStack[hydrationStack.length - 1]?.pendingRepair ?? null
 }
 

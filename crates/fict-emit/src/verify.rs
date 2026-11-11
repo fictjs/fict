@@ -1857,12 +1857,6 @@ fn verify_helper_semantics(
                     }
                 )
             });
-            let needs_vnode_reactive = props
-                .iter()
-                .any(|prop| matches!(prop, crate::ComponentProp::Node { .. }))
-                || children
-                    .iter()
-                    .any(|child| matches!(child, crate::ComponentChild::Node(_)));
             let wrappers_exclusive = props.iter().all(|prop| {
                 let crate::ComponentProp::Named {
                     getter,
@@ -1892,8 +1886,7 @@ fn verify_helper_semantics(
                 && *non_reactive_helper == needs_non_reactive.then_some(RuntimeHelper::NonReactive)
                 && *reactive_function_helper
                     == needs_reactive_function.then_some(RuntimeHelper::ReactiveGetter)
-                && *vnode_reactive_helper
-                    == needs_vnode_reactive.then_some(RuntimeHelper::ReactiveGetter)
+                && *vnode_reactive_helper == Some(RuntimeHelper::ReactiveGetter)
                 && fragment_helper.is_none_or(|helper| helper == RuntimeHelper::Fragment)
         }
         EmitOperation::PreserveHir { .. }

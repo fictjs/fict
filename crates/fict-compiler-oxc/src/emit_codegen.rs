@@ -278,14 +278,28 @@ pub fn emit_program_with_trace(
         cacheable_accessor_calls: BTreeSet::new(),
         prefer_template_clones: 0,
         vnode_depth: 0,
+        eager_vnode_identity: None,
         active_fragment_local: None,
         active_vnode_reactive_local: None,
         source_clone_depth: 0,
         await_allowed: effective_module_kind == OxcModuleKind::Module,
         generated_names: emit.module.reserved_names.iter().cloned().collect(),
+        vnode_scope_local: None,
         diagnostics: Vec::new(),
     };
     rewriter.visit_program(&mut program);
+    if let Some(local) = &rewriter.vnode_scope_local {
+        let span = Span::new(0, 0);
+        let value = Expression::new_object_expression(
+            span,
+            ArenaVec::new_in(&&allocator),
+            &AstBuilder::new(&allocator),
+        );
+        program
+            .body
+            .insert(0, const_statement(&allocator, local, value, span));
+    }
+
     let mut statement_effect_rewriter = StatementEffectRewriter {
         allocator: &allocator,
         effects: &statement_effects,
@@ -3788,11 +3802,13 @@ struct AstRewriter<'a, 'emit> {
     cacheable_accessor_calls: BTreeSet<(u32, u32)>,
     prefer_template_clones: usize,
     vnode_depth: usize,
+    eager_vnode_identity: Option<Span>,
     active_fragment_local: Option<String>,
     active_vnode_reactive_local: Option<String>,
     source_clone_depth: usize,
     await_allowed: bool,
     generated_names: BTreeSet<String>,
+    vnode_scope_local: Option<String>,
     diagnostics: Vec<Diagnostic>,
 }
 struct StatementEffectRewriter<'a, 'emit> {
@@ -4207,6 +4223,22 @@ impl<'a> VisitMut<'a> for AstRewriter<'a, '_> {
             *argument = self.wrap_jsx_getter(value, span, helper);
             self.matched_component_roots.insert(location);
         }
+    }
+    fn visit_variable_declarator(&mut self, declarator: &mut VariableDeclarator<'a>) {
+        // A JSX binding creates a value at its declaration. Its derived memo,
+        // when present, already owns reevaluation; an extra identity getter
+        // would change the binding into a function and delay authored key work.
+        // Nested JSX children still have their own reactive consumers.
+        let previous = self.eager_vnode_identity;
+        self.eager_vnode_identity = declarator.init.as_ref().and_then(|value| {
+            if let Expression::JSXElement(element) = value.get_inner_expression() {
+                Some(element.opening_element.span)
+            } else {
+                None
+            }
+        });
+        walk_mut::walk_variable_declarator(self, declarator);
+        self.eager_vnode_identity = previous;
     }
     fn visit_variable_declaration(&mut self, declaration: &mut VariableDeclaration<'a>) {
         walk_mut::walk_variable_declaration(self, declaration);
@@ -6203,6 +6235,13 @@ impl<'a> AstRewriter<'a, '_> {
         }
         let key_callback = Expression::ArrowFunctionExpression(key_callback);
         if explicit_key.is_some() {
+            if render_callback.params.items.len() == 1 {
+                let mut local = format!("{render_key}_index");
+                while !self.generated_names.insert(local.clone()) {
+                    local.push('_');
+                }
+                append_arrow_parameter(self.allocator, &mut render_callback, &local, span);
+            }
             append_arrow_parameter(self.allocator, &mut render_callback, render_key, span);
         }
         let expected_reads: BTreeSet<_> = item_references
@@ -6374,11 +6413,13 @@ impl<'a> AstRewriter<'a, '_> {
             ));
         }
         let opening = element.opening_element.unbox();
+        let reactive_identity = self.vnode_identity_needs_getter(&opening);
         let element_type = self.lower_jsx_element_name(opening.name);
         let mut planned_props = component.props.into_iter();
         let mut properties = ArenaVec::new_in(&self.allocator);
         let mut prop_segments = Vec::new();
         let mut key = None;
+        let mut key_local = None;
         for attribute in opening.attributes {
             let planned = planned_props.next();
             match attribute {
@@ -6475,6 +6516,7 @@ impl<'a> AstRewriter<'a, '_> {
                             self.active_list_key_origin == Some((source.start, source.end))
                         })
                         .and_then(|_| self.active_list_key_local.clone());
+                    let cached_key = keyed_runtime_value.is_some();
                     let mut value = match keyed_runtime_value {
                         Some(local) => Expression::new_identifier(
                             name_span,
@@ -6547,7 +6589,11 @@ impl<'a> AstRewriter<'a, '_> {
                         }
                     }
                     if name == "key" {
-                        key = Some(value);
+                        key = Some(if cached_key {
+                            value
+                        } else {
+                            self.stage_vnode_key(value, &mut properties, &mut key_local, name_span)
+                        });
                     } else {
                         properties.push(self.object_property(name_span, &name, value));
                     }
@@ -6624,7 +6670,13 @@ impl<'a> AstRewriter<'a, '_> {
         if let Some(key) = key {
             vnode.push(self.object_property(span, "key", key));
         }
-        Expression::new_object_expression(span, vnode, &builder)
+        self.append_vnode_site(&mut vnode, span);
+        let value = Expression::new_object_expression(span, vnode, &builder);
+        let value = self.finish_vnode_key(value, key_local, span);
+        if reactive_identity && let Some(helper) = &self.active_vnode_reactive_local {
+            return self.wrap_jsx_getter(value, span, helper);
+        }
+        value
     }
     fn lower_jsx_expression(&mut self, expression: Expression<'a>) -> Expression<'a> {
         match expression {
@@ -6636,6 +6688,7 @@ impl<'a> AstRewriter<'a, '_> {
     fn lower_jsx_element(&mut self, element: JSXElement<'a>) -> Expression<'a> {
         let span = element.span;
         let opening = element.opening_element.unbox();
+        let reactive_identity = self.vnode_identity_needs_getter(&opening);
         let intrinsic = matches!(
             &opening.name,
             JSXElementName::Identifier(_) | JSXElementName::NamespacedName(_)
@@ -6643,6 +6696,7 @@ impl<'a> AstRewriter<'a, '_> {
         let element_type = self.lower_jsx_element_name(opening.name);
         let mut properties = ArenaVec::new_in(&self.allocator);
         let mut key = None;
+        let mut key_local = None;
         for attribute in opening.attributes {
             match attribute {
                 JSXAttributeItem::SpreadAttribute(spread) => {
@@ -6659,34 +6713,26 @@ impl<'a> AstRewriter<'a, '_> {
                     let attribute = attribute.unbox();
                     let (name, name_span) = jsx_attribute_name(attribute.name);
                     if name == "key" {
-                        if !intrinsic {
-                            key = Some(self.lower_jsx_attribute_value(
-                                attribute.value,
-                                attribute.span,
-                                false,
-                            ));
-                            continue;
-                        }
-                        if jsx_attribute_source_span(&attribute.value).is_some_and(|source| {
-                            self.active_list_key_origin == Some((source.start, source.end))
-                        }) {
-                            continue;
-                        }
-                        if !matches!(
-                            attribute.value,
-                            None | Some(JSXAttributeValue::StringLiteral(_))
-                        ) {
-                            let value = self.lower_jsx_attribute_value(
-                                attribute.value,
-                                attribute.span,
-                                false,
-                            );
-                            properties.push(discarded_vnode_key_spread(
-                                self.allocator,
-                                value,
-                                attribute.span,
-                            ));
-                        }
+                        let cached = jsx_attribute_source_span(&attribute.value)
+                            .filter(|span| {
+                                self.active_list_key_origin == Some((span.start, span.end))
+                            })
+                            .and_then(|_| self.active_list_key_local.clone());
+                        let value = if let Some(local) = cached {
+                            Expression::new_identifier(
+                                name_span,
+                                self.allocator.alloc_str(&local),
+                                &AstBuilder::new(self.allocator),
+                            )
+                        } else {
+                            self.lower_jsx_attribute_value(attribute.value, attribute.span, false)
+                        };
+                        key = Some(self.stage_vnode_key(
+                            value,
+                            &mut properties,
+                            &mut key_local,
+                            name_span,
+                        ));
                         continue;
                     }
                     let preview = jsx_attribute_source_span(&attribute.value).and_then(|source| {
@@ -6759,7 +6805,13 @@ impl<'a> AstRewriter<'a, '_> {
         if let Some(key) = key {
             vnode.push(self.object_property(span, "key", key));
         }
-        Expression::new_object_expression(span, vnode, &builder)
+        self.append_vnode_site(&mut vnode, span);
+        let value = Expression::new_object_expression(span, vnode, &builder);
+        let value = self.finish_vnode_key(value, key_local, span);
+        if reactive_identity && let Some(helper) = &self.active_vnode_reactive_local {
+            return self.wrap_jsx_getter(value, span, helper);
+        }
+        value
     }
     fn lower_jsx_fragment(&mut self, fragment: JSXFragment<'a>) -> Expression<'a> {
         let span = fragment.span;
@@ -6788,6 +6840,7 @@ impl<'a> AstRewriter<'a, '_> {
         let mut vnode = ArenaVec::new_in(&self.allocator);
         vnode.push(self.object_property(span, "type", element_type));
         vnode.push(self.object_property(span, "props", props));
+        self.append_vnode_site(&mut vnode, span);
         Expression::new_object_expression(span, vnode, &builder)
     }
     fn lower_jsx_element_name(&mut self, name: JSXElementName<'a>) -> Expression<'a> {
@@ -7944,17 +7997,7 @@ fn raw_text_part_expression<'a>(
     arguments.push(Argument::from(value));
     Expression::new_call_expression(span, callee, NONE, arguments, false, &builder)
 }
-fn discarded_vnode_key_spread<'a>(
-    allocator: &'a Allocator,
-    value: Expression<'a>,
-    span: Span,
-) -> ObjectPropertyKind<'a> {
-    let builder = AstBuilder::new(allocator);
-    let empty = Expression::new_null_literal(span, &builder);
-    let sequence = ArenaVec::from_array_in([value, empty], &allocator);
-    let value = Expression::new_sequence_expression(span, sequence, &builder);
-    ObjectPropertyKind::new_spread_property(span, value, &builder)
-}
+
 fn block_iife<'a>(
     allocator: &'a Allocator,
     statements: ArenaVec<'a, Statement<'a>>,

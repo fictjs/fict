@@ -19,7 +19,10 @@ export interface FictVNode {
   /** Props passed to the element/component */
   props: Record<string, unknown> | null
   /** Optional key for list rendering optimization */
-  key?: string | undefined
+  key?: string | number | undefined
+  /** Compiler-owned JSX site identity; distinct branches own distinct instances. */
+  __fictVNodeScope?: object | undefined
+  __fictVNodeSlot?: number | undefined
 }
 
 /**

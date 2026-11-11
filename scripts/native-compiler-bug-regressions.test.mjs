@@ -2545,3 +2545,290 @@ test('bug 26: root signal setter calls are not turned into feedback loops', () =
   assert.ok(fallback.code)
   assert.ok(!fallback.code.includes('__fictReactive('))
 })
+
+for (const fineGrainedDom of [true, false]) {
+  for (const hydrated of [false, true]) {
+    test(`bug 19: keyed instances, dynamic types and branch lifetimes agree (fineGrainedDom=${fineGrainedDom}; hydrated=${hydrated})`, async () => {
+      const code = compile(
+        `
+        import {$state,render,hydrate,onMount,onCleanup} from 'fict';
+        import {renderToString} from '@fictjs/ssr';
+        let root, mounts=0, cleans=0, childMounts=0, childCleans=0, preserved=true, originals=[];
+        const issues=[];
+        function Row(props){let count=$state(0);onMount(()=>mounts++);onCleanup(()=>cleans++);
+          return <li data-id={props.id} onClick={()=>count++}>{props.label}:{count}</li>}
+        function Child(){let count=$state(0);onMount(()=>childMounts++);onCleanup(()=>childCleans++);
+          return <b onClick={()=>count++}>{count}</b>}
+        function A(props){return <strong>A{props.n}</strong>}function B(props){return <strong>B{props.n}</strong>}
+        function Editor(props){let text=$state('');return <input data-id={props.id} value={text} onInput={e=>text=e.target.value}/>}
+        function App(){let items=$state([{id:1,t:'a'},{id:2,t:'b'}]);let n=$state(2);const Comp=n%2===0?A:B;
+          return <main><button id="add" onClick={()=>{items=[...items,{id:3,t:'c'}];n++}}>add</button>
+            <button id="reverse" onClick={()=>{items=items.map(i=>({...i,t:i.id===1?'A':i.id===2?'B':'C'})).toReversed();n++}}>reverse</button>
+            <button id="filter" onClick={()=>items=items.filter(i=>i.id!==2)}>filter</button>
+            <button id="hide" onClick={()=>n=0}>hide</button><button id="show" onClick={()=>n=2}>show</button>
+            <ul>{items.map(i=><Row key={i.id} id={i.id} label={i.t}/>)}</ul>
+            <section>{n>0&&<Child/>}</section><p><Comp n={n}/></p><Editor key={n} id={n}/></main>}
+        export function mount(el){root=el;
+          if(${hydrated}){root.innerHTML=renderToString(()=><App/>);mounts=childMounts=cleans=childCleans=0;
+            const before=[...root.querySelectorAll('*')];const stop=hydrate(()=><App/>,root,{strictHydration:true,onHydrationIssue:i=>issues.push(i.code)});
+            preserved=before.every((node,i)=>node===[...root.querySelectorAll('*')][i]);return stop}
+          return render(()=><App/>,root)}
+        export function remember(){originals=[...root.querySelectorAll('li')]}
+        export function observe(){return {rows:[...root.querySelectorAll('li')].map(el=>[el.textContent,originals.includes(el)]),
+          child:root.querySelector('b')?.textContent??null,type:root.querySelector('p')?.textContent??null,
+          input:root.querySelector('input')?.value??null,mounts,cleans,childMounts,childCleans,preserved,issues}}
+      `,
+        { fineGrainedDom },
+      )
+      const trace = await executeDomCommonJs(code, {
+        mountExport: 'mount',
+        observeExport: 'observe',
+        steps: [
+          { kind: 'click', selector: 'li[data-id="1"]' },
+          { kind: 'click', selector: 'li[data-id="2"]' },
+          { kind: 'click', selector: 'li[data-id="2"]' },
+          { kind: 'click', selector: 'b' },
+          {
+            kind: 'dispatch',
+            selector: 'input',
+            constructor: 'Event',
+            event: 'input',
+            assign: { value: 'hello' },
+            init: { bubbles: true },
+          },
+          { kind: 'call', exportName: 'remember' },
+          { kind: 'record', label: 'edited' },
+          { kind: 'click', selector: '#add' },
+          { kind: 'record', label: 'added' },
+          { kind: 'click', selector: '#reverse' },
+          { kind: 'record', label: 'reversed' },
+          { kind: 'click', selector: '#filter' },
+          { kind: 'record', label: 'filtered' },
+          { kind: 'click', selector: '#hide' },
+          { kind: 'record', label: 'hidden' },
+          { kind: 'click', selector: '#show' },
+          { kind: 'record', label: 'shown' },
+          { kind: 'dispose' },
+          { kind: 'record', label: 'disposed' },
+        ],
+      })
+      const common = {
+        mounts: 3,
+        cleans: 0,
+        childMounts: 1,
+        childCleans: 0,
+        preserved: true,
+        issues: [],
+      }
+      const rows = [
+        ['C:0', false],
+        ['A:1', true],
+      ]
+      assert.deepEqual(trace, [
+        {
+          label: 'edited',
+          value: {
+            ...common,
+            mounts: 2,
+            rows: [
+              ['a:1', true],
+              ['b:2', true],
+            ],
+            child: '1',
+            type: 'A2',
+            input: 'hello',
+          },
+        },
+        {
+          label: 'added',
+          value: {
+            ...common,
+            rows: [
+              ['a:1', true],
+              ['b:2', true],
+              ['c:0', false],
+            ],
+            child: '1',
+            type: 'B3',
+            input: '',
+          },
+        },
+        {
+          label: 'reversed',
+          value: {
+            ...common,
+            rows: [
+              ['C:0', false],
+              ['B:2', true],
+              ['A:1', true],
+            ],
+            child: '1',
+            type: 'A4',
+            input: '',
+          },
+        },
+        {
+          label: 'filtered',
+          value: { ...common, cleans: 1, rows, child: '1', type: 'A4', input: '' },
+        },
+        {
+          label: 'hidden',
+          value: { ...common, cleans: 1, childCleans: 1, rows, child: null, type: 'A0', input: '' },
+        },
+        {
+          label: 'shown',
+          value: {
+            ...common,
+            cleans: 1,
+            childMounts: 2,
+            childCleans: 1,
+            rows,
+            child: '0',
+            type: 'A2',
+            input: '',
+          },
+        },
+        {
+          label: 'disposed',
+          value: {
+            ...common,
+            cleans: 3,
+            childMounts: 2,
+            childCleans: 2,
+            rows: [],
+            child: null,
+            type: null,
+            input: null,
+          },
+        },
+      ])
+    })
+  }
+  test(`bug 19: distinct JSX branches reset same-type components (fineGrainedDom=${fineGrainedDom})`, async () => {
+    const code = compile(
+      `import {$state,render,onMount,onCleanup} from 'fict';let root,mounts=0,cleans=0;
+      function Child(props){let n=$state(0);onMount(()=>mounts++);onCleanup(()=>cleans++);return <b onClick={()=>n++}>{props.label}:{n}</b>}
+      function App(){let n=$state(1);return <div><button onClick={()=>n++}>switch</button>
+        {n%2 ? <Child label="odd"/> : <Child label="even"/>}</div>}
+      export function mount(el){root=el;return render(()=><App/>,el)}
+      export function observe(){return [root.querySelector('b').textContent,mounts,cleans]}`,
+      { fineGrainedDom },
+    )
+    assert.deepEqual(
+      await executeDomCommonJs(code, {
+        mountExport: 'mount',
+        observeExport: 'observe',
+        steps: [
+          { kind: 'click', selector: 'b' },
+          { kind: 'record', label: 'odd' },
+          { kind: 'click', selector: 'button' },
+          { kind: 'record', label: 'even' },
+          { kind: 'click', selector: 'button' },
+          { kind: 'record', label: 'odd again' },
+        ],
+      }),
+      [
+        { label: 'odd', value: ['odd:1', 1, 0] },
+        { label: 'even', value: ['even:0', 2, 1] },
+        { label: 'odd again', value: ['odd:0', 3, 2] },
+      ],
+    )
+  })
+  for (const namespace of ['svg', 'math']) {
+    test(`bug 19: foreign fallback keeps nested keyed rows (fineGrainedDom=${fineGrainedDom}; namespace=${namespace})`, async () => {
+      const code = compile(
+        `import {$state,hydrate,onMount,onCleanup} from 'fict';import {renderToString} from '@fictjs/ssr';
+        let root,rows=[],leaves=[],mounts=0,cleans=0,preserved;const issues=[];
+        function Leaf(props){let count=$state(0);return <a data-leaf={props.id} onClick={()=>count++}>{props.label}:{count}</a>}
+        function Row(props){onMount(()=>mounts++);onCleanup(()=>cleans++);return <a data-row={props.id}>
+          {props.children.map(i=><Leaf key={i.id} id={i.id} label={i.t}/>)}</a>}
+        function App(){let xs=$state([{id:1,children:[{id:11,t:'a'},{id:12,t:'b'}]},{id:2,children:[{id:21,t:'c'}]}]);
+          return <div><button onClick={()=>xs=xs.map(x=>({...x,children:x.id===1?[{id:12,t:'B'},{id:11,t:'A'}]:[{id:21,t:'C'}]})).toReversed()}>change</button>
+            <${namespace}>{xs.map(x=><Row key={x.id} id={x.id} children={x.children}/>)}</${namespace}></div>}
+        export function mount(el){root=el;root.innerHTML=renderToString(()=><App/>);mounts=cleans=0;
+          const before=[...root.querySelectorAll('a')];const stop=hydrate(()=><App/>,root,{strictHydration:true,onHydrationIssue:i=>issues.push(i.code)});
+          preserved=before.every((el,i)=>el===[...root.querySelectorAll('a')][i]);rows=[...root.querySelectorAll('[data-row]')];leaves=[...root.querySelectorAll('[data-leaf]')];return stop}
+        export function observe(){return {rows:[...root.querySelectorAll('[data-row]')].map(el=>[el.getAttribute('data-row'),rows.includes(el)]),
+          leaves:[...root.querySelectorAll('[data-leaf]')].map(el=>[el.textContent,leaves.includes(el),el.namespaceURI]),mounts,cleans,preserved,issues}}`,
+        { fineGrainedDom },
+      )
+      const uri =
+        namespace === 'svg' ? 'http://www.w3.org/2000/svg' : 'http://www.w3.org/1998/Math/MathML'
+      assert.deepEqual(
+        await executeDomCommonJs(code, {
+          mountExport: 'mount',
+          observeExport: 'observe',
+          steps: [
+            {
+              kind: 'dispatch',
+              selector: '[data-leaf="11"]',
+              constructor: 'Event',
+              event: 'click',
+              init: { bubbles: true },
+            },
+            {
+              kind: 'dispatch',
+              selector: '[data-leaf="12"]',
+              constructor: 'Event',
+              event: 'click',
+              init: { bubbles: true },
+            },
+            { kind: 'click', selector: 'button' },
+            { kind: 'record', label: 'changed' },
+          ],
+        }),
+        [
+          {
+            label: 'changed',
+            value: {
+              rows: [
+                ['2', true],
+                ['1', true],
+              ],
+              leaves: [
+                ['C:0', true, uri],
+                ['B:1', true, uri],
+                ['A:1', true, uri],
+              ],
+              mounts: 2,
+              cleans: 0,
+              preserved: true,
+              issues: [],
+            },
+          },
+        ],
+      )
+    })
+  }
+}
+
+for (const fineGrainedDom of [true, false]) {
+  test(`bug 19: keyed callbacks forward the computed key after the index slot (fineGrainedDom=${fineGrainedDom})`, async () => {
+    const code = compile(
+      `
+      import {$state,render} from 'fict';let root,reads=0;
+      function Row(props){return <li>{props.key}:{props.id}</li>}
+      function App(){let ids=$state([3,7]);return <div><button onClick={()=>ids=[...ids,9]}>add</button>
+        <ul>{ids.map(id=><Row key={(reads++,id)} id={id}/>)}</ul></div>}
+      export function mount(el){root=el;return render(()=><App/>,el)}
+      export function observe(){return [root.querySelector('ul').textContent,reads]}
+    `,
+      { fineGrainedDom },
+    )
+    assert.deepEqual(
+      await executeDomCommonJs(code, {
+        mountExport: 'mount',
+        observeExport: 'observe',
+        steps: [
+          { kind: 'record', label: 'initial' },
+          { kind: 'click', selector: 'button' },
+          { kind: 'record', label: 'added' },
+        ],
+      }),
+      [
+        { label: 'initial', value: ['3:37:7', 2] },
+        { label: 'added', value: ['3:37:79:9', 5] },
+      ],
+    )
+  })
+}

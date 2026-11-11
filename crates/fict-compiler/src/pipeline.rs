@@ -3733,7 +3733,11 @@ mod tests {
             "{}",
             result.code
         );
-        assert!(result.code.contains("key: props.id"), "{}", result.code);
+        assert!(
+            result.code.contains(" = props.id, null)"),
+            "{}",
+            result.code
+        );
         assert!(!result.code.contains("key: __fictProp"), "{}", result.code);
     }
 
@@ -6046,7 +6050,7 @@ mod tests {
     }
 
     #[test]
-    fn omits_intrinsic_keys_without_losing_dynamic_key_effects() {
+    fn retains_vnode_keys_without_losing_dynamic_key_effects() {
         let result = compile(request(
             "export function Static() { return <p key=\"row\" title=\"ok\" />; } export function Dynamic() { return <div before={before()} key={side()} after={after()} />; }",
             "intrinsic-key.tsx",
@@ -6059,7 +6063,7 @@ mod tests {
             "{}",
             result.code
         );
-        assert!(!result.code.contains("row"), "{}", result.code);
+        assert!(result.code.contains("key: \"row\""), "{}", result.code);
         assert!(!result.code.contains("\"key\""), "{}", result.code);
         assert_eq!(result.code.matches("side()").count(), 2, "{}", result.code);
         let before = (result.code.find("before()"), result.code.rfind("before()"));
@@ -6396,7 +6400,7 @@ mod tests {
             result.code
         );
         assert!(result.code.contains("children: items"), "{}", result.code);
-        assert!(result.code.contains("key: id"), "{}", result.code);
+        assert!(result.code.contains(" = id, null)"), "{}", result.code);
     }
 
     #[test]

@@ -73,6 +73,7 @@ import {
   isAsyncRejection,
 } from './signal'
 import type { Cleanup, FictNode, FictVNode } from './types'
+import { createVNodeReconciler, type VNodePlan } from './vnode-reconcile'
 
 const isDev =
   typeof __DEV__ !== 'undefined'
@@ -1885,9 +1886,33 @@ export function createChildBinding(
     (__fictIsSSR() ? ownerDocument.createComment('fict:child-start') : undefined)
   const marker = hydration?.end ?? ownerDocument.createComment('fict:child')
   if (!hydration) {
-    const markerParent = repairFragment ?? parent
-    if (start) markerParent.appendChild(start)
-    markerParent.appendChild(marker)
+    const target = repairFragment ?? parent
+    if (start) target.appendChild(start)
+    target.appendChild(marker)
+  }
+  const hostRoot = getCurrentRoot()
+  const reconciler = createVNodeReconciler(createElementFn, hostRoot, ownerDocument)
+  let initializingHydration = !!hydration
+  let disposed = false
+  let activeRelease: Cleanup | undefined
+  interface Preparation {
+    root: RootContext
+    plan?: VNodePlan | undefined
+  }
+  let prepared: Preparation | undefined
+  const release = (work: Preparation) => {
+    const plan = work.plan
+    work.plan = undefined
+    try {
+      if (plan) reconciler.discard(plan)
+    } finally {
+      destroyRoot(work.root)
+    }
+  }
+  const releasePrepared = () => {
+    const work = prepared
+    prepared = undefined
+    if (work) release(work)
   }
   const releaseHydration = () => {
     if (!hydration) return
@@ -1899,167 +1924,51 @@ export function createChildBinding(
     }
     hydration = null
   }
-  const hostRoot = getCurrentRoot()
-  let initializingHydration = !!hydration
-  let disposed = false
-  let activeRelease: Cleanup | undefined
-  let preparedRoot: RootContext | undefined
-  let preparedHydrationNodes: Node[] | undefined
-  const releasePrepared = () => {
-    const root = preparedRoot
-    preparedRoot = undefined
-    preparedHydrationNodes = undefined
-    if (root) destroyRoot(root)
-  }
-  const prepare = () => {
+  const prepare = (): Preparation => {
     releasePrepared()
     const root = createRootContext(hostRoot)
-    configureRootForDOMParent(
-      root,
-      (marker.parentNode as (ParentNode & Node) | null) ?? parent,
-      marker.ownerDocument ?? parent.ownerDocument ?? document,
-    )
-    preparedRoot = root
+    configureRootForDOMParent(root, marker.parentNode ?? parent, ownerDocument)
+    const work: Preparation = { root }
+    prepared = work
     try {
-      return withRootContext(root, () => {
-        const evaluate = () => {
-          let value = getValue()
-          // A compiled getter may return a public prop/signal accessor. Read it
-          // while tracking so VNode children subscribe to the actual value too.
-          const seen = new Set<() => unknown>()
-          while (isReactive(value)) {
-            if (seen.has(value)) return null
-            seen.add(value)
-            value = value() as FictNode
+      withRootContext(root, () => {
+        const resolve = (node: FictNode, ancestors: Set<() => unknown>): FictNode => {
+          if (isReactive(node)) {
+            if (ancestors.has(node)) return null
+            const next = new Set(ancestors)
+            next.add(node)
+            return resolve(node() as FictNode, next)
           }
-          return value
+          return Array.isArray(node) ? node.map(child => resolve(child, ancestors)) : node
+        }
+        const evaluate = () => {
+          const value = resolve(getValue(), new Set())
+          if (disposed || isRootDisposed(hostRoot)) return
+          work.plan = untrack(() => reconciler.prepare(value))
         }
         if (initializingHydration && hydration) {
-          let value: FictNode
-          // A named render helper may create templates while computing its
-          // result. Evaluate and materialize in one range, preserving its cursor.
-          const fragment = withHydrationRange(
-            hydration.start.nextSibling,
-            marker,
-            ownerDocument,
-            () =>
-              hydrateFragment(ownerDocument, () => {
-                value = evaluate()
-                if (value != null && value !== false) untrack(() => createElementFn(value))
-              }),
+          // Helpers may claim DOM during evaluation; keep evaluation and instance
+          // preparation in one hydration cursor, without moving claimed nodes.
+          withHydrationRange(hydration.start.nextSibling, marker, ownerDocument, () =>
+            hydrateFragment(ownerDocument, evaluate),
           )
-          preparedHydrationNodes = toNodeArray(fragment, ownerDocument)
-          return value!
-        }
-        return evaluate()
+        } else evaluate()
       })
+      // Disposal can run synchronously from a getter, ref or component setup.
+      if (disposed || isRootDisposed(hostRoot)) release(work)
+      return work
     } catch (error) {
-      releasePrepared()
+      release(work)
+      if (prepared === work) prepared = undefined
       throw error
     }
   }
-
   let dispose: Cleanup | undefined
-  const restoreHydration = suppressHydrationClaimsForPendingRepair(hydrationRepair)
-  try {
-    dispose = createRenderBinding(prepare, value => {
-      if (disposed) {
-        releasePrepared()
-        return
-      }
-      activeRelease?.()
-      const root = preparedRoot!
-      const hydratedNodes = preparedHydrationNodes
-      preparedRoot = undefined
-      preparedHydrationNodes = undefined
-      const prev = pushRoot(root)
-      let nodes: Node[] = []
-      let committed = false
-      let released = false
-      const release = () => {
-        if (released) return
-        released = true
-        if (activeRelease === release) activeRelease = undefined
-        try {
-          destroyRoot(root)
-        } finally {
-          removeNodes(nodes)
-        }
-      }
-      try {
-        const initialRange = hydration
-        const hydrating = !!initialRange && initializingHydration
-        if (!hydrating) releaseHydration()
-        // Skip if value is null/undefined/false
-        if (value == null || value === false) {
-          hydration = null
-          release()
-          return
-        }
-
-        nodes = hydrating
-          ? hydratedNodes!
-          : toNodeArray(
-              untrack(() => createElementFn(value)),
-              marker.ownerDocument ?? parent.ownerDocument ?? document,
-            )
-        hydration = null
-        const parentNode = marker.parentNode as (ParentNode & Node) | null
-        if (parentNode && !hydrating) {
-          nodes = insertNodesBefore(parentNode, nodes, marker)
-        }
-        committed = true
-        activeRelease = release
-      } catch (err) {
-        if (!isAsyncRejection(err) && handleSuspend(err as any, root)) {
-          release()
-          return
-        }
-        if (handleError(err, { source: 'renderChild' }, root)) {
-          release()
-          return
-        }
-        release()
-        throw err
-      } finally {
-        popRoot(prev)
-        if (committed) {
-          flushOnMount(root)
-        } else {
-          release()
-        }
-      }
-      return committed ? release : undefined
-    })
-    restoreHydration()
-    if (repairFragment) finalizePendingHydrationRepair(hydrationRepair, repairFragment)
-  } catch (error) {
-    try {
-      try {
-        dispose?.()
-      } finally {
-        releasePrepared()
-      }
-    } finally {
-      try {
-        activeRelease?.()
-      } finally {
-        releaseHydration()
-        start?.parentNode?.removeChild(start)
-        marker.parentNode?.removeChild(marker)
-      }
-    }
-    throw error
-  } finally {
-    restoreHydration()
-    initializingHydration = false
-  }
-
-  const handleDispose = () => {
+  const cleanup = () => {
     if (disposed) return
     disposed = true
     try {
-      dispose!()
+      dispose?.()
     } finally {
       try {
         releasePrepared()
@@ -2067,19 +1976,65 @@ export function createChildBinding(
         try {
           activeRelease?.()
         } finally {
-          releaseHydration()
-          start?.parentNode?.removeChild(start)
-          marker.parentNode?.removeChild(marker)
+          try {
+            reconciler.dispose()
+          } finally {
+            releaseHydration()
+            start?.parentNode?.removeChild(start)
+            marker.parentNode?.removeChild(marker)
+          }
         }
       }
     }
   }
-  registerRootCleanup(handleDispose)
-
-  return {
-    marker,
-    dispose: handleDispose,
+  const restoreHydration = suppressHydrationClaimsForPendingRepair(hydrationRepair)
+  try {
+    dispose = createRenderBinding(prepare, work => {
+      if (prepared === work) prepared = undefined
+      if (disposed || !work.plan) {
+        release(work)
+        return
+      }
+      activeRelease?.()
+      const hydrating = initializingHydration && !!hydration
+      if (!hydrating) releaseHydration()
+      hydration = null
+      const plan = work.plan
+      const releaseEvaluation = () => {
+        if (activeRelease === releaseEvaluation) activeRelease = undefined
+        release(work)
+      }
+      try {
+        reconciler.commit(plan, marker, hydrating)
+        work.plan = undefined
+        if (!plan.blocks.length || disposed) {
+          release(work)
+          return
+        }
+        activeRelease = releaseEvaluation
+        flushOnMount(work.root)
+        return releaseEvaluation
+      } catch (error) {
+        // A cleanup or mount callback can throw after DOM commit. Current props
+        // may still depend on memos created during preparation; retain their owner.
+        if (plan.committed && plan.blocks.length && !disposed) {
+          work.plan = undefined
+          activeRelease = releaseEvaluation
+        } else release(work)
+        throw error
+      }
+    })
+    restoreHydration()
+    if (repairFragment) finalizePendingHydrationRepair(hydrationRepair, repairFragment)
+  } catch (error) {
+    cleanup()
+    throw error
+  } finally {
+    restoreHydration()
+    initializingHydration = false
   }
+  registerRootCleanup(cleanup)
+  return { marker, dispose: cleanup }
 }
 
 // ============================================================================

@@ -16,6 +16,135 @@ struct RewriteMatchState {
     list_reads: BTreeSet<(u32, u32)>,
 }
 impl<'a> AstRewriter<'a, '_> {
+    pub(super) fn stage_vnode_key(
+        &mut self,
+        value: Expression<'a>,
+        properties: &mut ArenaVec<'a, ObjectPropertyKind<'a>>,
+        local: &mut Option<String>,
+        span: Span,
+    ) -> Expression<'a> {
+        if matches!(
+            value,
+            Expression::StringLiteral(_)
+                | Expression::NumericLiteral(_)
+                | Expression::BooleanLiteral(_)
+                | Expression::NullLiteral(_)
+        ) {
+            return value;
+        }
+        let name = local.get_or_insert_with(|| {
+            let preferred = format!("__fictVNodeKey_{}", span.start);
+            let mut name = preferred.clone();
+            let mut suffix = 0;
+            while !self.generated_names.insert(name.clone()) {
+                suffix += 1;
+                name = format!("{preferred}_{suffix}");
+            }
+            name
+        });
+        let builder = AstBuilder::new(self.allocator);
+        let assignment = Expression::new_assignment_expression(
+            span,
+            oxc::syntax::operator::AssignmentOperator::Assign,
+            AssignmentTarget::new_assignment_target_identifier(
+                span,
+                self.allocator.alloc_str(name),
+                &builder,
+            ),
+            value,
+            &builder,
+        );
+        let sequence = ArenaVec::from_array_in(
+            [assignment, Expression::new_null_literal(span, &builder)],
+            &self.allocator,
+        );
+        properties.push(ObjectPropertyKind::new_spread_property(
+            span,
+            Expression::new_sequence_expression(span, sequence, &builder),
+            &builder,
+        ));
+        Expression::new_identifier(span, self.allocator.alloc_str(name), &builder)
+    }
+
+    pub(super) fn finish_vnode_key(
+        &self,
+        value: Expression<'a>,
+        local: Option<String>,
+        span: Span,
+    ) -> Expression<'a> {
+        let Some(local) = local else { return value };
+        let arrow = expression_arrow(
+            self.allocator,
+            self.allocator.alloc_str(&local),
+            value,
+            span,
+        );
+        Expression::new_call_expression(
+            span,
+            arrow,
+            NONE,
+            ArenaVec::new_in(&self.allocator),
+            false,
+            &AstBuilder::new(self.allocator),
+        )
+    }
+
+    pub(super) fn vnode_identity_needs_getter(
+        &self,
+        opening: &oxc::ast::ast::JSXOpeningElement<'a>,
+    ) -> bool {
+        if self.eager_vnode_identity == Some(opening.span) {
+            return false;
+        }
+        self.span_needs_jsx_getter(opening.name.span())
+            || opening.attributes.iter().any(|attribute| {
+                let JSXAttributeItem::Attribute(attribute) = attribute else {
+                    return false;
+                };
+                matches!(&attribute.name, JSXAttributeName::Identifier(name) if name.name == "key")
+                    && jsx_attribute_source_span(&attribute.value).is_some_and(|span| {
+                        self.active_list_key_origin != Some((span.start, span.end))
+                            && self.span_needs_jsx_getter(span)
+                    })
+            })
+    }
+
+    pub(super) fn append_vnode_site(
+        &mut self,
+        properties: &mut ArenaVec<'a, ObjectPropertyKind<'a>>,
+        span: Span,
+    ) {
+        let local = self
+            .vnode_scope_local
+            .get_or_insert_with(|| {
+                let mut name = "__fictVNodeScope".to_owned();
+                let mut suffix = 0;
+                while !self.generated_names.insert(name.clone()) {
+                    suffix += 1;
+                    name = format!("__fictVNodeScope{suffix}");
+                }
+                name
+            })
+            .clone();
+        let builder = AstBuilder::new(self.allocator);
+        properties.push(self.object_property(
+            span,
+            "__fictVNodeScope",
+            Expression::new_identifier(span, self.allocator.alloc_str(&local), &builder),
+        ));
+        properties.push(self.object_property(
+            span,
+            "__fictVNodeSlot",
+            Expression::new_numeric_literal(
+                span,
+                f64::from(span.start),
+                None,
+                NumberBase::Decimal,
+                &builder,
+            ),
+        ));
+    }
+
     pub(super) fn lower_template_clone(
         &mut self,
         clone: CloneRewrite,

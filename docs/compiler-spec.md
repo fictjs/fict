@@ -323,6 +323,21 @@ branches around non-JSX returns also require a supported branch-return lowering;
 report `FICT-R006`. Explicit `untrack` snapshots and unmarked callback values keep their existing
 semantics.
 
+### VNode instance identity
+
+The VNode backend and foreign-namespace fallbacks reconcile reactive child ranges.
+Keyed rows retain their component state and DOM nodes through immutable item updates,
+reordering and filtering. Matching requires the same key, component/element type and
+JSX source site. A type or key change replaces the instance; switching between distinct
+JSX branches also replaces it. Repeated truthy updates to the same conditional branch
+preserve its instance. Numeric and string keys remain distinct; duplicate keys match
+by occurrence within a type/site.
+
+Retained components receive current props without rerunning setup. Removed instances
+clean up once, including nested and multiple-root content. New mounts run after their
+complete range is inserted. SSR emits balanced VNode ranges so strict hydration can
+retain the server nodes and apply the same subsequent reconciliation.
+
 ## 5. Rule E: Props Destructuring and Default Values
 
 ### Source Code
