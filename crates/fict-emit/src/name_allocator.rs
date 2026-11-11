@@ -1,4 +1,7 @@
-use std::collections::BTreeSet;
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::Arc,
+};
 
 /// Deterministic allocator shared by module imports and generated function temporaries.
 ///
@@ -8,7 +11,9 @@ use std::collections::BTreeSet;
 /// function when an EmitIR operation is later moved or outlined.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct NameAllocator {
+    shared: Arc<BTreeSet<String>>,
     reserved: BTreeSet<String>,
+    suffixes: BTreeMap<String, u32>,
 }
 
 impl NameAllocator {
@@ -28,25 +33,31 @@ impl NameAllocator {
             .map(str::to_owned),
         );
         allocator.reserved.extend(names);
+        allocator.shared = Arc::new(std::mem::take(&mut allocator.reserved));
         allocator
     }
 
+    /// Add function-local names without copying the module's immutable name set.
+    pub(crate) fn reserve(&mut self, names: impl IntoIterator<Item = String>) {
+        self.reserved.extend(names);
+    }
+
     pub(crate) fn allocate(&mut self, preferred: &str) -> String {
-        if self.reserved.insert(preferred.to_owned()) {
+        if !self.shared.contains(preferred) && self.reserved.insert(preferred.to_owned()) {
             return preferred.to_owned();
         }
-        let mut index = 1_u32;
+        let index = self.suffixes.entry(preferred.to_owned()).or_insert(1);
         loop {
             let candidate = format!("{preferred}_{index}");
-            if self.reserved.insert(candidate.clone()) {
+            *index = index.saturating_add(1);
+            if !self.shared.contains(&candidate) && self.reserved.insert(candidate.clone()) {
                 return candidate;
             }
-            index = index.saturating_add(1);
         }
     }
 
     pub(crate) fn names(&self) -> Vec<String> {
-        self.reserved.iter().cloned().collect()
+        self.shared.union(&self.reserved).cloned().collect()
     }
 }
 

@@ -85,6 +85,10 @@ impl ScanResult {
 /// Scan static import, re-export, and import-equals requests without running compiler passes.
 #[must_use]
 pub fn scan(request: ScanRequest) -> ScanResult {
+    fict_compiler_oxc::with_compiler_stack(|| scan_on_stack(request))
+}
+
+fn scan_on_stack(request: ScanRequest) -> ScanResult {
     match request.normalize() {
         Ok(request) => scan_normalized(request),
         Err(error) => invalid_scan_request_result(error.to_string()),

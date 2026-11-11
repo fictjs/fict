@@ -167,7 +167,7 @@ The Rust compiler is not a byte-for-byte Babel emitter. The reviewed 1,950-case
 compile corpus currently has 47 reviewed success/error status differences:
 37 inputs accepted by Babel are rejected by Rust, and 10 inputs rejected by
 Babel are accepted by Rust. The 10 Rust acceptances are individually reviewed:
-7 are capability claims, and no release-blocking regression remains. A
+5 are capability claims, and no release-blocking regression remains. A
 successful code emission is never by itself evidence of compatible runtime
 behavior.
 
@@ -177,10 +177,10 @@ behavior.
 | `structured-hook-return`         |     6 | Structured same-module hook results enforce readonly and setter rules. Keep mutation inside the hook, or expose an explicit supported setter instead of writing through a returned readonly accessor.      |
 | `standard-decorator-fail-closed` |     3 | Standard decorators must be lowered by a target-compatible transform before native Fict compilation, or removed; raw decorator syntax is never emitted as successful JavaScript.                           |
 | `strict-reactivity-fail-closed`  |     4 | `strictGuarantee` rejects statement control flow that needs an R006 region fallback. Refactor the branch into guaranteed JSX expressions, or explicitly use non-strict compilation and review the warning. |
-| `genuine-capability-expansion`   |     7 | Executable runtime oracles prove the newly supported enum or control-flow behavior, including live re-execution of hook loop outputs.                                                                      |
+| `genuine-capability-expansion`   |     5 | Executable runtime oracles prove the newly supported enum or control-flow behavior, including live re-execution of hook loop outputs.                                                                      |
 | `intentional-runtime-error`      |     1 | Rust preserves ordinary JavaScript TDZ failure. This is runtime-semantics evidence, not a compiler capability claim.                                                                                       |
 | `validation-regression`          |     0 | Rust again rejects writes through reactive aliases and compiler-managed derived values; no reviewed validation regression remains.                                                                         |
-| `fallback-only`                  |     1 | Rust emits a structured `FICT-R006` fallback diagnostic. Do not rely on this as guaranteed fine-grained lowering.                                                                                          |
+| `fallback-only`                  |     3 | Rust emits a structured `FICT-R006` fallback diagnostic. Do not rely on this as guaranteed fine-grained lowering.                                                                                          |
 | `reactive-equivalence-required`  |     0 | Reactive hook loop outputs now execute inside one live memo region; the audited result updates from `01` to `0123` after its state bound changes from 2 to 4.                                              |
 | `intentional-breaking-policy`    |     1 | Rust intentionally removes the audited Babel warning behavior. Treat this as a diagnostic-policy migration, not a capability.                                                                              |
 
@@ -218,8 +218,8 @@ all 29 affected Babel 0.28 test files unchanged (147 suites, 1,917 tests),
 associates 1,444 executions with 212 callsites, and records explicit reasons for
 the two sites that cannot enter the compiler. Their 1,222 deduplicated native
 requests are replayed in CI with status, diagnostic, output-hash, and
-determinism checks. All five remaining status transitions are policy reviewed:
-three are existing fail-closed Rust rejections and two are the reviewed
+determinism checks. All seven remaining status transitions are policy reviewed:
+five are fail-closed Rust rejections (including hook placement and nested accessor returns), and two are the reviewed
 `genuine-capability-expansion` and `intentional-runtime-error` acceptances.
 
 This closes the compiler-invocation regression gap without overstating the

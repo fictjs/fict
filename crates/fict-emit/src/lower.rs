@@ -127,6 +127,7 @@ struct ReactiveBindingSite {
 }
 #[derive(Debug, Clone, Copy)]
 struct CrossFunctionFacts<'a> {
+    authored_names: &'a NameAllocator,
     captured_write_bindings: &'a BTreeSet<BindingId>,
     reactive_bindings: &'a BTreeMap<BindingId, ReactiveBindingSite>,
     local_hook_returns: &'a BTreeMap<BindingId, ImportedHookReturn>,
@@ -268,7 +269,9 @@ fn lower_program(
         );
     }
     let jsx_getters = jsx_consumers::collect_jsx_getters(hir, jsx_getters);
+    let authored_names = NameAllocator::new(authored_names(hir));
     let facts = CrossFunctionFacts {
+        authored_names: &authored_names,
         captured_write_bindings: &captured_write_bindings,
         reactive_bindings: &reactive_bindings,
         local_hook_returns,
@@ -332,7 +335,9 @@ fn lower_program(
             GuaranteeClass::Fallback,
         )]));
     }
-    let source_names = authored_names(hir)
+    let source_names = authored_names
+        .names()
+        .into_iter()
         .chain(hir.functions.iter().flat_map(|function| {
             function
                 .locals
@@ -942,6 +947,7 @@ fn lower_function(
     options: &NoJsxLoweringOptions,
 ) -> Result<EmitFunction, DiagnosticBundle> {
     let CrossFunctionFacts {
+        authored_names,
         captured_write_bindings,
         reactive_bindings,
         local_hook_returns,
@@ -1498,13 +1504,12 @@ fn lower_function(
         },
     ));
     slots.sort_unstable_by_key(|slot| slot.id);
-    let mut temporary_names = NameAllocator::new(
-        authored_names(hir).chain(
-            function
-                .locals
-                .iter()
-                .filter_map(|local| local.debug_name.clone()),
-        ),
+    let mut temporary_names = authored_names.clone();
+    temporary_names.reserve(
+        function
+            .locals
+            .iter()
+            .filter_map(|local| local.debug_name.clone()),
     );
     let props = lower_component_props_plan(hir, function, &mut temporary_names)?;
     let mut temporaries = Vec::new();

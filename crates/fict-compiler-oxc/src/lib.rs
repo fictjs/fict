@@ -8,6 +8,7 @@
 
 mod commonjs;
 mod compile;
+mod compiler_stack;
 mod emit_codegen;
 mod facts;
 mod frontend;
@@ -17,6 +18,7 @@ mod preview_codegen;
 pub mod reactive_graph;
 mod scan;
 mod source_map;
+mod syntax_depth;
 mod typescript;
 mod typescript_namespace;
 
@@ -24,6 +26,7 @@ pub use compile::{
     OxcCompileOptions, OxcCompileOutput, OxcHandlerArtifact, OxcModuleKind, OxcSourceLanguage,
     compile_disabled, compile_passthrough,
 };
+pub use compiler_stack::with_compiler_stack;
 pub use emit_codegen::{emit_program, emit_program_with_trace};
 pub use facts::{
     FictDirectiveKind, FictReturnShape, FrontendDirective, FrontendSourceFacts,

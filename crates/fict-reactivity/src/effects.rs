@@ -221,7 +221,7 @@ pub struct DependencyStats {
     pub callbacks: u32,
     /// Barrier instructions.
     pub barriers: u32,
-    /// Value-dependency fixed-point sweeps.
+    /// Maximum dependency-worklist generation, with a minimum of one.
     pub fixed_point_iterations: u32,
 }
 
@@ -424,35 +424,53 @@ pub fn analyze_dependencies(
 
     let mut value_dependencies = direct_dependencies;
     let mut value_read_origins = direct_read_origins;
-    let maximum_iterations = function.values.len().saturating_add(2);
-    let mut iterations = 0_usize;
-    loop {
-        iterations = iterations.saturating_add(1);
-        if iterations > maximum_iterations {
-            return Err(DiagnosticBundle::new(vec![analysis_error(
-                "FICT-ANALYSIS-FIXED-POINT",
-                "value dependency propagation exceeded its deterministic iteration limit",
-            )]));
-        }
-        let previous = value_dependencies.clone();
-        let previous_read_origins = value_read_origins.clone();
-        let mut changed = false;
-        for (result, inputs) in input_edges.iter().enumerate() {
-            for input in inputs {
-                if let Some(dependencies) = previous.get(input.as_usize()) {
-                    let before = value_dependencies[result].len();
-                    value_dependencies[result].extend(dependencies.iter().cloned());
-                    changed |= before != value_dependencies[result].len();
-                }
-                if let Some(origins) = previous_read_origins.get(input.as_usize()) {
-                    let before = value_read_origins[result].len();
-                    value_read_origins[result].extend(origins.iter().cloned());
-                    changed |= before != value_read_origins[result].len();
-                }
+    // Propagate only newly discovered facts to consumers. A long expression
+    // chain used to clone every accumulated set once per graph depth, turning
+    // even an acyclic chain into cubic work.
+    let mut consumers = vec![Vec::new(); function.values.len()];
+    for (result, inputs) in input_edges.iter().enumerate() {
+        for input in inputs {
+            if let Some(users) = consumers.get_mut(input.as_usize()) {
+                users.push(result);
             }
         }
-        if !changed {
-            break;
+    }
+    let mut pending_dependencies = value_dependencies.clone();
+    let mut pending_origins = value_read_origins.clone();
+    let mut queued: Vec<_> = pending_dependencies
+        .iter()
+        .zip(&pending_origins)
+        .map(|(dependencies, origins)| !dependencies.is_empty() || !origins.is_empty())
+        .collect();
+    let mut queue: std::collections::VecDeque<_> = queued
+        .iter()
+        .enumerate()
+        .filter_map(|(index, queued)| queued.then_some((index, 1_usize)))
+        .collect();
+    let mut iterations = 1;
+    while let Some((value, generation)) = queue.pop_front() {
+        queued[value] = false;
+        iterations = iterations.max(generation);
+        let dependencies = std::mem::take(&mut pending_dependencies[value]);
+        let origins = std::mem::take(&mut pending_origins[value]);
+        for &consumer in &consumers[value] {
+            let mut changed = false;
+            for dependency in &dependencies {
+                if value_dependencies[consumer].insert(dependency.clone()) {
+                    pending_dependencies[consumer].insert(dependency.clone());
+                    changed = true;
+                }
+            }
+            for origin in &origins {
+                if value_read_origins[consumer].insert(origin.clone()) {
+                    pending_origins[consumer].insert(origin.clone());
+                    changed = true;
+                }
+            }
+            if changed && !queued[consumer] {
+                queued[consumer] = true;
+                queue.push_back((consumer, generation.saturating_add(1)));
+            }
         }
     }
 

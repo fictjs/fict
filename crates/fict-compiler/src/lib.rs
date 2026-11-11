@@ -6,6 +6,9 @@
 //! filesystem, network, Node, N-API, or bundler state.
 
 mod analysis;
+// Shared with the N-API boundary so containment is installed on the worker thread.
+pub use fict_compiler_oxc::with_compiler_stack;
+
 #[cfg(test)]
 mod build_id_input;
 mod capabilities;

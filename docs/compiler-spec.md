@@ -902,3 +902,13 @@ This section defines the "contract" for v1.0. These rules are enforced by the co
   - Array literal holes (`[ , 1 ]`) — use explicit `undefined` values.
   - JSX spread children (`<div>{...items}</div>`) — render explicitly.
   - Complex destructuring patterns in variable declarations/assignments (computed keys, nested patterns, or rest elements that are not identifiers).
+
+## Native compiler resource bounds and measurements
+
+Native transform, analysis and scan requests check parsed syntax before semantic analysis or recursive adapter walks. A nonrecursive traversal rejects paths exceeding 512 nested syntax structures or 4,096 chained nodes with `FICT-RESOURCE-LIMIT`, a source span and a suggestion to split the generated source. These are AST traversal budgets, not counts of source lines or JSX tags. Flat binary/logical expressions and `if` chains use the chain budget; wide modules and punctuation inside strings do not consume nesting depth.
+
+Owned compiler operations run on a scoped worker with a 64 MiB stack, including synchronous requests. Nested adapter calls reuse that worker. The depth check and the worker stack serve separate purposes: the check bounds later recursive walks, while the stack makes those bounded walks independent of Node main-thread, libuv-worker and Rust-test stack sizes. N-API panic containment is installed on the compiler worker so panic payloads remain private. The depth check runs after OXC parsing; it is not a replacement parser or a claim of isolation from arbitrary native faults.
+
+Successful transforms include `frontend`, `metadata`, `lowering` and `codegen` entries in `stats.stageDurationsNs`, alongside the existing core pass entries. These timings expose work previously absent from the phase report. They exclude request conversion and result serialization; sum-of-phases is not the full API wall time. Dependency fixed-point counters describe worklist generations rather than whole-graph copies.
+
+`scripts/benchmark-native-generated-code.mjs` runs the reported generated-code shapes in isolated Node processes against an explicitly selected addon. It reports every sample, diagnostics, process status and per-stage counters. See [the item 29 comparison](./bug-29-generated-code-performance.md) for the saved baseline, reproduction commands and measured limits.

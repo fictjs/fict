@@ -367,7 +367,7 @@ fn replays_every_legacy_unrepresented_compiler_callsite_variant() {
     );
     assert_eq!(
         corpus.transition_counts,
-        BTreeMap::from([("error-to-ok".into(), 2), ("ok-to-error".into(), 3)])
+        BTreeMap::from([("error-to-ok".into(), 2), ("ok-to-error".into(), 5)])
     );
 
     assert_eq!(corpus.callsites.len(), EXPECTED_CALLSITES);
@@ -566,9 +566,10 @@ fn replays_every_legacy_unrepresented_compiler_callsite_variant() {
         transition_policy_counts,
         BTreeMap::from([
             ("genuine-capability-expansion".into(), 1),
+            ("hook-placement-fail-closed".into(), 1),
             ("intentional-runtime-error".into(), 1),
             ("strict-reactivity-fail-closed".into(), 2),
-            ("structured-hook-return".into(), 1),
+            ("structured-hook-return".into(), 2),
         ])
     );
     if bless {

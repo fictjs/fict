@@ -46,11 +46,20 @@ pub(crate) fn catch_panic<T>(operation: impl FnOnce() -> T) -> std::result::Resu
     })
 }
 
+fn catch_compiler_panic<T: Send>(
+    operation: impl FnOnce() -> T + Send,
+) -> std::result::Result<T, PanicReport> {
+    // Install containment on the actual compiler thread too. Catching only its
+    // resumed unwind would allow the worker's default hook to print source data.
+    catch_panic(|| fict_compiler::with_compiler_stack(|| catch_panic(operation)))
+        .and_then(|result| result)
+}
+
 pub(crate) fn compile_safely(
     request: CompileRequest,
     fingerprint: &RequestFingerprint,
 ) -> CompileResult {
-    catch_panic(|| compile(request)).unwrap_or_else(|panic| {
+    catch_compiler_panic(|| compile(request)).unwrap_or_else(|panic| {
         internal_error_result_with_context(internal_error(
             IncidentStage::CompilePipeline,
             fingerprint,
@@ -60,7 +69,7 @@ pub(crate) fn compile_safely(
 }
 
 pub(crate) fn scan_safely(request: ScanRequest, fingerprint: &RequestFingerprint) -> ScanResult {
-    catch_panic(|| scan(request)).unwrap_or_else(|panic| {
+    catch_compiler_panic(|| scan(request)).unwrap_or_else(|panic| {
         internal_scan_error_result_with_context(internal_error(
             IncidentStage::ScanPipeline,
             fingerprint,
@@ -73,7 +82,7 @@ pub(crate) fn analyze_safely(
     request: AnalyzeRequest,
     fingerprint: &RequestFingerprint,
 ) -> AnalyzeResult {
-    catch_panic(|| analyze(request)).unwrap_or_else(|panic| {
+    catch_compiler_panic(|| analyze(request)).unwrap_or_else(|panic| {
         internal_analyze_error_result_with_context(internal_error(
             IncidentStage::AnalyzePipeline,
             fingerprint,
@@ -165,7 +174,20 @@ fn panic_category(payload: &(dyn std::any::Any + Send)) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::catch_panic;
+    use super::{catch_compiler_panic, catch_panic};
+
+    #[test]
+    fn contains_panics_on_the_compiler_stack() {
+        let caller = std::thread::current().id();
+        let report = catch_compiler_panic(|| {
+            assert_ne!(std::thread::current().id(), caller);
+            panic!("sensitive worker panic payload");
+        })
+        .expect_err("worker panic must be contained");
+        assert_eq!(report.category, "rust-panic-string");
+        assert!(!format!("{report:?}").contains("sensitive worker panic payload"));
+        assert_eq!(catch_compiler_panic(|| 42), Ok(42));
+    }
 
     #[test]
     fn contains_panics_without_exposing_the_payload() {

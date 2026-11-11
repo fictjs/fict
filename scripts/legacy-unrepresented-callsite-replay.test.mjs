@@ -24,6 +24,8 @@ const rustDeviationPolicies = new Map(
 )
 const sha256Pattern = /^[0-9a-f]{64}$/
 const transitionPolicies = new Map([
+  ['legacy-unrepresented-2aa7b182a33eb4d0e0d8', 'hook-placement-fail-closed'],
+  ['legacy-unrepresented-eca9abd414e1b7eb1a45', 'structured-hook-return'],
   ['legacy-unrepresented-0c0dd70cc25cf882e0de', 'genuine-capability-expansion'],
   ['legacy-unrepresented-13c07ffbbeeb71e71bea', 'strict-reactivity-fail-closed'],
   ['legacy-unrepresented-2fc407522ca3e0b64240', 'strict-reactivity-fail-closed'],
@@ -168,11 +170,21 @@ test('the unrepresented legacy callsite replay is complete and policy reviewed',
     if (expectedTransition) {
       assert.equal(fixture.transitionPolicy?.releaseDisposition, 'allow', fixture.id)
       assert.equal(fixture.transitionPolicy?.policy, transitionPolicies.get(fixture.id), fixture.id)
-      assert.equal(
-        rustDeviationPolicies.get(fixture.transitionPolicy.reviewReference),
-        fixture.transitionPolicy.policy,
-        fixture.id,
-      )
+      const reference = fixture.transitionPolicy.reviewReference
+      if (reference.startsWith('scripts/native-compiler-bug-regressions.test.mjs#')) {
+        const [file, anchor] = reference.split('#')
+        assert.ok(
+          readFileSync(path.join(repositoryRoot, file), 'utf8').includes(anchor.replace('-', ' ')),
+        )
+        const code = anchor === 'bug-17' ? 'FICT-PLACEMENT-HOOK-CONTROL' : 'FICT-H002'
+        assert.ok(fixture.expected.diagnostics.some(d => d.code === code && d.severity === 'error'))
+      } else {
+        assert.equal(
+          rustDeviationPolicies.get(reference),
+          fixture.transitionPolicy.policy,
+          fixture.id,
+        )
+      }
       assert.ok(fixture.transitionPolicy.evidence, fixture.id)
       assert.ok(fixture.transitionPolicy.reviewReference, fixture.id)
       observedTransitions.set(fixture.id, fixture.transitionPolicy.policy)
@@ -190,5 +202,5 @@ test('the unrepresented legacy callsite replay is complete and policy reviewed',
   }
   assert.equal(missingMetadataInputs, 44)
   assert.deepEqual(observedTransitions, transitionPolicies)
-  assert.deepEqual(replay.transitionCounts, { 'ok-to-error': 3, 'error-to-ok': 2 })
+  assert.deepEqual(replay.transitionCounts, { 'ok-to-error': 5, 'error-to-ok': 2 })
 })

@@ -28,6 +28,10 @@ use std::mem;
 /// Execute the currently connected native pipeline and return a complete result.
 #[must_use]
 pub fn compile(request: CompileRequest) -> CompileResult {
+    fict_compiler_oxc::with_compiler_stack(|| compile_on_stack(request))
+}
+
+fn compile_on_stack(request: CompileRequest) -> CompileResult {
     match request.normalize() {
         Ok(request) => compile_normalized(request),
         Err(error) => request_error_result(error),
@@ -134,6 +138,7 @@ fn compile_normalized_inner(request: NormalizedCompileRequest) -> CompileResult 
         return result;
     }
 
+    let frontend_start = std::time::Instant::now();
     let build = build_hir(
         &request.code,
         oxc_options,
@@ -150,6 +155,7 @@ fn compile_normalized_inner(request: NormalizedCompileRequest) -> CompileResult 
             analysis_budgets: request.limits.hir_analysis_budgets(),
         },
     );
+    let frontend_duration = frontend_start.elapsed().as_nanos();
     if let Some(hir) = &build.hir
         && let Err(error) = request.limits.check_hir(hir)
     {
@@ -283,6 +289,7 @@ fn compile_normalized_inner(request: NormalizedCompileRequest) -> CompileResult 
         attach_explain_if_requested(&mut result, &request, &source_events, &[]);
         return result;
     }
+    let metadata_start = std::time::Instant::now();
     let metadata = generate_module_metadata(&core, &module_plan, &frontend, &request.metadata);
     let local_hook_returns = metadata.local_hook_returns;
     result.module_metadata = metadata.metadata;
@@ -311,6 +318,9 @@ fn compile_normalized_inner(request: NormalizedCompileRequest) -> CompileResult 
         stage_durations_ns: core.stats.stage_durations_ns.clone(),
         counters: core.stats.counters.clone(),
     });
+    record_stage_duration(&mut result, "frontend", frontend_duration);
+    record_stage_duration(&mut result, "metadata", metadata_start.elapsed().as_nanos());
+    let lowering_start = std::time::Instant::now();
     let regions: Vec<_> = core
         .functions
         .iter()
@@ -423,6 +433,8 @@ fn compile_normalized_inner(request: NormalizedCompileRequest) -> CompileResult 
             return result;
         }
     }
+    record_stage_duration(&mut result, "lowering", lowering_start.elapsed().as_nanos());
+    let codegen_start = std::time::Instant::now();
     let output = emit_program_with_trace(
         &request.code,
         &request.filename,
@@ -430,6 +442,7 @@ fn compile_normalized_inner(request: NormalizedCompileRequest) -> CompileResult 
         &emit,
         request.options.explain,
     );
+    record_stage_duration(&mut result, "codegen", codegen_start.elapsed().as_nanos());
     let reactive_graph = output.reactive_graph;
     let helpers = output.runtime_helpers.clone();
     result.diagnostics.extend(output.diagnostics);
@@ -833,6 +846,14 @@ fn structured_source_name(kind: &StructuredSourceKind) -> Option<String> {
         StructuredSourceKind::Catch => Some("catch".to_owned()),
         StructuredSourceKind::Finally => Some("finally".to_owned()),
         StructuredSourceKind::Labeled(label) => Some(format!("label:{label}")),
+    }
+}
+
+fn record_stage_duration(result: &mut CompileResult, stage: &str, duration: u128) {
+    if let Some(stats) = &mut result.stats {
+        stats
+            .stage_durations_ns
+            .insert(stage.to_owned(), duration.try_into().unwrap_or(u64::MAX));
     }
 }
 

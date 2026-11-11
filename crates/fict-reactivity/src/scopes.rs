@@ -233,30 +233,58 @@ pub fn analyze_reactive_scopes(
         }
     }
 
-    let maximum_iterations = ssa.definitions.len().saturating_add(2);
+    // Revisit only candidates whose input became tracked. Keep updates staged
+    // until the end of each wave so Alias/Derived tie-breaking is unchanged.
+    let mut watchers: BTreeMap<SsaName, BTreeSet<usize>> = BTreeMap::new();
+    for (index, candidate) in candidates.iter().enumerate() {
+        for source in alias_sources
+            .get(&candidate.name)
+            .copied()
+            .into_iter()
+            .chain(
+                candidate
+                    .dependencies
+                    .iter()
+                    .filter_map(|path| match path.base {
+                        DependencyBase::Ssa(source) => Some(source),
+                        _ => None,
+                    }),
+            )
+        {
+            watchers.entry(source).or_default().insert(index);
+            if entry_names.contains(&source) {
+                for definition in definition_names_by_local
+                    .get(&source.local)
+                    .into_iter()
+                    .flatten()
+                {
+                    watchers.entry(*definition).or_default().insert(index);
+                }
+            }
+        }
+        for source in &candidate.phi_sources {
+            watchers.entry(*source).or_default().insert(index);
+        }
+    }
+    let mut pending: BTreeSet<_> = (0..candidates.len()).collect();
     let mut iterations = 0_usize;
     loop {
-        iterations = iterations.saturating_add(1);
-        if iterations > maximum_iterations {
-            return Err(DiagnosticBundle::new(vec![scope_error(
-                "FICT-SCOPE-FIXED-POINT",
-                "reactive binding propagation exceeded its deterministic iteration limit",
-            )]));
-        }
-        let previous = kinds.clone();
+        iterations += 1;
+        let mut updates = Vec::new();
         let resolves_to_tracked_definition = |source: SsaName| {
-            previous.contains_key(&source)
+            kinds.contains_key(&source)
                 || (entry_names.contains(&source)
                     && definition_names_by_local
                         .get(&source.local)
                         .is_some_and(|definitions| {
                             definitions
                                 .iter()
-                                .any(|definition| previous.contains_key(definition))
+                                .any(|definition| kinds.contains_key(definition))
                         }))
         };
-        for candidate in &candidates {
-            if previous.contains_key(&candidate.name)
+        for index in std::mem::take(&mut pending) {
+            let candidate = &candidates[index];
+            if kinds.contains_key(&candidate.name)
                 || !candidate.eligible_for_derivation
                 || shape_by_name.get(&candidate.name).is_some_and(|shape| {
                     matches!(
@@ -274,7 +302,7 @@ pub fn analyze_reactive_scopes(
                 .get(&candidate.name)
                 .is_some_and(|source| resolves_to_tracked_definition(*source))
             {
-                kinds.insert(candidate.name, ReactiveBindingKind::Alias);
+                updates.push((candidate.name, ReactiveBindingKind::Alias));
                 continue;
             }
             if candidate.dependencies.iter().any(|path| {
@@ -283,13 +311,17 @@ pub fn analyze_reactive_scopes(
             }) || candidate
                 .phi_sources
                 .iter()
-                .any(|source| previous.contains_key(source))
+                .any(|source| kinds.contains_key(source))
             {
-                kinds.insert(candidate.name, ReactiveBindingKind::Derived);
+                updates.push((candidate.name, ReactiveBindingKind::Derived));
             }
         }
-        if kinds == previous {
+        if updates.is_empty() {
             break;
+        }
+        for (name, kind) in updates {
+            kinds.insert(name, kind);
+            pending.extend(watchers.get(&name).into_iter().flatten().copied());
         }
     }
 

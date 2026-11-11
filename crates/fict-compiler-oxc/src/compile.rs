@@ -302,6 +302,11 @@ pub(crate) fn parse_source<'a>(
     } else {
         parsed
     };
+    if parsed.diagnostics.is_empty()
+        && let Some(diagnostic) = crate::syntax_depth::check(&parsed.program)
+    {
+        parsed.diagnostics.push(diagnostic);
+    }
     if requested_source_type.is_jsx() && parsed.diagnostics.is_empty() {
         let mut collector = InvalidJsxEntityCollector {
             source,
@@ -384,6 +389,11 @@ pub(crate) fn convert_diagnostics(
 }
 
 fn convert_diagnostic(diagnostic: OxcDiagnostic, code: &'static str) -> Diagnostic {
+    let code = if diagnostic.code.scope.as_deref() == Some("FICT-SYNTAX-DEPTH") {
+        "FICT-RESOURCE-LIMIT"
+    } else {
+        code
+    };
     let severity = match diagnostic.severity {
         Severity::Error => DiagnosticSeverity::Error,
         Severity::Warning => DiagnosticSeverity::Warning,

@@ -59,7 +59,7 @@ const expectedCounts = {
   zeroInvocationCallsites: 2,
   matchedCallsiteExecutions: 1444,
   replayFixtures: 1222,
-  okToErrorTransitions: 3,
+  okToErrorTransitions: 5,
   errorToOkTransitions: 2,
 }
 const zeroInvocationReviews = new Map([
@@ -81,6 +81,26 @@ const zeroInvocationReviews = new Map([
   ],
 ])
 const transitionReviews = new Map([
+  [
+    'legacy-unrepresented-2aa7b182a33eb4d0e0d8',
+    {
+      policy: 'hook-placement-fail-closed',
+      releaseDisposition: 'allow',
+      evidence:
+        'A hook after a possible early return violates stable setup ownership and now fails with FICT-PLACEMENT-HOOK-CONTROL.',
+      reviewReference: 'scripts/native-compiler-bug-regressions.test.mjs#bug-17',
+    },
+  ],
+  [
+    'legacy-unrepresented-eca9abd414e1b7eb1a45',
+    {
+      policy: 'structured-hook-return',
+      releaseDisposition: 'allow',
+      evidence:
+        'Nested raw accessor results cannot preserve the supported flat hook return contract and now fail closed with FICT-H002.',
+      reviewReference: 'scripts/native-compiler-bug-regressions.test.mjs#bug-18',
+    },
+  ],
   [
     'legacy-unrepresented-0c0dd70cc25cf882e0de',
     {
@@ -578,11 +598,18 @@ const rustDeviationPolicies = new Map(
     .map(fixture => [fixture.id, fixture.deviationPolicy]),
 )
 for (const review of transitionReviews.values()) {
-  assert.equal(
-    rustDeviationPolicies.get(review.reviewReference),
-    review.policy,
-    `${review.reviewReference}: frozen Rust deviation policy`,
-  )
+  if (review.reviewReference.startsWith('scripts/native-compiler-bug-regressions.test.mjs#')) {
+    const [file, anchor] = review.reviewReference.split('#')
+    assert.ok(
+      readFileSync(path.join(repositoryRoot, file), 'utf8').includes(anchor.replace('-', ' ')),
+    )
+  } else {
+    assert.equal(
+      rustDeviationPolicies.get(review.reviewReference),
+      review.policy,
+      `${review.reviewReference}: frozen Rust deviation policy`,
+    )
+  }
 }
 assert.equal(inventory.schemaVersion, 1)
 assert.equal(inventory.baseline.release, '0.28.0')

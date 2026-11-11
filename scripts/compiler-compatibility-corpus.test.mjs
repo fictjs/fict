@@ -1011,18 +1011,18 @@ test('requires an exact review for every Babel-to-Rust diagnostic deviation', ()
   })
   assert.deepEqual(reviewed, observed)
   assert.equal(reviewed.schemaVersion, 1)
-  assert.equal(reviewed.deviationCount, 315)
-  assert.equal(new Set(reviewed.deviations.map(deviation => deviation.id)).size, 315)
+  assert.equal(reviewed.deviationCount, 362)
+  assert.equal(new Set(reviewed.deviations.map(deviation => deviation.id)).size, 362)
   assert.equal(
     reviewed.deviations.filter(deviation => deviation.babelStatus === deviation.rustStatus).length,
-    278,
+    323,
   )
   assert.deepEqual(reviewed.policyCounts, {
     'rust-structured-rejection-diagnostics': 183,
     'diagnostic-severity-reclassification': 22,
-    'rust-warning-addition': 57,
-    'rust-warning-removal': 46,
-    'rust-warning-set-change': 7,
+    'rust-warning-addition': 102,
+    'rust-warning-removal': 47,
+    'rust-warning-set-change': 8,
   })
   assert.ok(
     reviewed.deviations.every(
@@ -1231,10 +1231,10 @@ test('retains the exact Babel 0.28 frozen codegen corpus and reviewed deviations
   )
   assert.deepEqual(policyCounts, corpus.deviationPolicyCounts)
   assert.deepEqual(corpus.deviationPolicyCounts, {
-    'genuine-capability-expansion': 7,
+    'genuine-capability-expansion': 5,
     'intentional-runtime-error': 1,
     'validation-regression': 0,
-    'fallback-only': 1,
+    'fallback-only': 3,
     'reactive-equivalence-required': 0,
     'intentional-breaking-policy': 1,
     'narrow-component-role': 24,
@@ -1550,10 +1550,10 @@ test('classifies every Babel-rejected Rust acceptance before runtime and release
   assert.equal(review.reviews.length, 10)
   assert.equal(new Set(review.reviews.map(entry => entry.id)).size, 10)
   assert.deepEqual(review.policyCounts, {
-    'genuine-capability-expansion': 7,
+    'genuine-capability-expansion': 5,
     'intentional-runtime-error': 1,
     'validation-regression': 0,
-    'fallback-only': 1,
+    'fallback-only': 3,
     'reactive-equivalence-required': 0,
     'intentional-breaking-policy': 1,
   })
@@ -1568,7 +1568,7 @@ test('classifies every Babel-rejected Rust acceptance before runtime and release
   )
   assert.equal(
     review.reviews.filter(entry => review.policies[entry.policy].capabilityClaim).length,
-    7,
+    5,
   )
   assert.equal(
     review.reviews.filter(entry => review.policies[entry.policy].releaseDisposition === 'block')
@@ -1846,7 +1846,7 @@ test('documents every reviewed Babel status and request-identity deviation', () 
     new RegExp(`${statusDifferenceCount} reviewed success/error status differences`),
   )
   assert.match(migrationGuide, new RegExp(`${rustRejectionCount} inputs accepted by Babel`))
-  assert.match(migrationGuide, /7 are capability claims/)
+  assert.match(migrationGuide, /5 are capability claims/)
   assert.match(migrationGuide, /no release-blocking regression remains/)
   assert.match(migrationGuide, /language: "jsx"/)
 })

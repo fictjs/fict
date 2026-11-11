@@ -20,6 +20,8 @@ pub struct CfgAnalysis {
     pub immediate_dominators: Vec<Option<BlockId>>,
     /// Dominator-tree children in block-ID order.
     pub dominator_children: Vec<Vec<BlockId>>,
+    /// Half-open DFS intervals in the dominator tree; unreachable blocks have no interval.
+    pub dominator_intervals: Vec<Option<(usize, usize)>>,
     /// Cytron dominance frontier for each reachable block.
     pub dominance_frontiers: Vec<Vec<BlockId>>,
     /// Edges whose target dominates their source.
@@ -33,34 +35,15 @@ pub struct CfgAnalysis {
 impl CfgAnalysis {
     /// Return whether `dominator` dominates `block`.
     #[must_use]
-    pub fn dominates(&self, dominator: BlockId, mut block: BlockId) -> bool {
-        if dominator == block {
-            return self
-                .reachable
-                .get(block.as_usize())
-                .copied()
-                .unwrap_or(false);
-        }
-        let mut remaining = self.immediate_dominators.len();
-        while remaining > 0 {
-            let Some(parent) = self
-                .immediate_dominators
-                .get(block.as_usize())
-                .copied()
-                .flatten()
-            else {
-                return false;
-            };
-            if parent == dominator {
-                return true;
-            }
-            if parent == block {
-                return false;
-            }
-            block = parent;
-            remaining -= 1;
-        }
-        false
+    pub fn dominates(&self, dominator: BlockId, block: BlockId) -> bool {
+        let Some(Some((start, end))) = self.dominator_intervals.get(dominator.as_usize()) else {
+            return false;
+        };
+        self.dominator_intervals
+            .get(block.as_usize())
+            .is_some_and(|interval| {
+                interval.is_some_and(|(position, _)| *start <= position && position < *end)
+            })
     }
 
     /// Number of unique CFG edges.
@@ -132,6 +115,26 @@ pub fn analyze_cfg(function: &HirFunction) -> Result<CfgAnalysis, DiagnosticBund
         }
     }
 
+    let mut dominator_intervals = vec![None; block_count];
+    let mut clock = 0;
+    let mut stack = vec![(function.entry, false)];
+    while let Some((block, exiting)) = stack.pop() {
+        if exiting {
+            if let Some((_, end)) = &mut dominator_intervals[block.as_usize()] {
+                *end = clock;
+            }
+        } else {
+            dominator_intervals[block.as_usize()] = Some((clock, clock));
+            clock += 1;
+            stack.push((block, true));
+            stack.extend(
+                dominator_children[block.as_usize()]
+                    .iter()
+                    .rev()
+                    .map(|child| (*child, false)),
+            );
+        }
+    }
     let dominance_frontiers =
         compute_dominance_frontiers(&predecessors, &reachable, &immediate_dominators);
     let partial = CfgAnalysis {
@@ -141,6 +144,7 @@ pub fn analyze_cfg(function: &HirFunction) -> Result<CfgAnalysis, DiagnosticBund
         reverse_postorder,
         immediate_dominators,
         dominator_children,
+        dominator_intervals,
         dominance_frontiers,
         back_edges: Vec::new(),
         loop_headers: Vec::new(),

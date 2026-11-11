@@ -173,6 +173,10 @@ impl AnalyzeResult {
 /// Analyze one source file without filesystem, bundler, or JavaScript callbacks.
 #[must_use]
 pub fn analyze(request: AnalyzeRequest) -> AnalyzeResult {
+    fict_compiler_oxc::with_compiler_stack(|| analyze_on_stack(request))
+}
+
+fn analyze_on_stack(request: AnalyzeRequest) -> AnalyzeResult {
     let fallback_name = request.filename.clone();
     match request.normalize() {
         Ok(request) => analyze_normalized(request),

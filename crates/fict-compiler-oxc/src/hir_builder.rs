@@ -214,6 +214,14 @@ pub fn build_hir(
     compile_options: OxcCompileOptions,
     hir_options: &HirBuildOptions,
 ) -> HirBuildOutput {
+    crate::with_compiler_stack(|| build_hir_on_stack(source, compile_options, hir_options))
+}
+
+fn build_hir_on_stack(
+    source: &str,
+    compile_options: OxcCompileOptions,
+    hir_options: &HirBuildOptions,
+) -> HirBuildOutput {
     with_analyzed_frontend(
         source,
         compile_options,
@@ -1773,6 +1781,13 @@ fn callable_prop_mode(
     }
 }
 
+#[derive(Clone, Copy)]
+struct ResolvedSourceReference {
+    span: SourceSpan,
+    binding: BindingId,
+    is_read: bool,
+}
+
 struct Builder<'source, 'semantic> {
     source: &'source str,
     frontend: FrontendSummary,
@@ -1783,6 +1798,10 @@ struct Builder<'source, 'semantic> {
     globals: Vec<HirGlobal>,
     functions: Vec<HirFunction>,
     function_facts: Vec<FunctionFact>,
+    function_by_scope: Vec<FunctionId>,
+    function_body_order: Vec<FunctionId>,
+    function_children: Vec<Vec<FunctionId>>,
+    source_references: Vec<ResolvedSourceReference>,
     function_by_span: BTreeMap<(u32, u32), FunctionId>,
     templates: Vec<JsxTemplate>,
     syntax_fragments: Vec<SyntaxFragment>,
@@ -2041,6 +2060,10 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             globals: Vec::new(),
             functions: Vec::new(),
             function_facts: Vec::new(),
+            function_by_scope: Vec::new(),
+            function_body_order: Vec::new(),
+            function_children: Vec::new(),
+            source_references: Vec::new(),
             function_by_span: BTreeMap::new(),
             templates: Vec::new(),
             syntax_fragments: Vec::new(),
@@ -2085,6 +2108,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             .map(|function| ((function.span.start(), function.span.end()), function.id))
             .collect();
         self.function_facts = collector.functions;
+        self.index_function_owners();
         self.build_function_shells();
         self.control_flow_plans = structured_control_flow::collect(
             program,
@@ -4015,26 +4039,73 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
         dependencies
     }
 
-    fn function_owner_for_scope(&self, mut scope: ScopeId) -> FunctionId {
-        loop {
-            if let Some(function) = self
-                .function_facts
-                .iter()
-                .rev()
-                .find(|function| function.scope == scope)
-            {
-                return function.id;
+    fn index_function_owners(&mut self) {
+        self.function_children = vec![Vec::new(); self.function_facts.len()];
+        for function in &self.function_facts {
+            if function.parent != function.id {
+                self.function_children[function.parent.as_usize()].push(function.id);
             }
-            let Some(parent) = self
-                .frontend
-                .scopes
-                .get(scope.as_usize())
-                .and_then(|scope| scope.parent)
-            else {
-                return FunctionId::new(0);
-            };
-            scope = parent;
         }
+        for children in &mut self.function_children {
+            children.sort_by_key(|id| self.function_facts[id.as_usize()].span.start());
+        }
+        for (symbol, binding) in &self.symbol_to_binding {
+            for reference in self.semantic.symbol_references(*symbol) {
+                self.source_references.push(ResolvedSourceReference {
+                    span: source_span(self.semantic.reference_span(reference)),
+                    binding: *binding,
+                    is_read: reference.is_read(),
+                });
+            }
+        }
+        self.source_references
+            .sort_by_key(|reference| (reference.span.start(), reference.binding));
+
+        let mut owners = vec![None; self.frontend.scopes.len()];
+        for function in &self.function_facts {
+            owners[function.scope.as_usize()] = Some(function.id);
+        }
+        for index in 0..owners.len() {
+            let mut current = index;
+            let mut path = Vec::new();
+            let owner = loop {
+                if let Some(owner) = owners[current] {
+                    break owner;
+                }
+                path.push(current);
+                match self.frontend.scopes[current].parent {
+                    Some(parent) => current = parent.as_usize(),
+                    None => break FunctionId::new(0),
+                }
+            };
+            for scope in path {
+                owners[scope] = Some(owner);
+            }
+        }
+        self.function_by_scope = owners
+            .into_iter()
+            .map(|owner| owner.unwrap_or(FunctionId::new(0)))
+            .collect();
+        self.function_body_order = self
+            .function_facts
+            .iter()
+            .map(|function| function.id)
+            .collect();
+        self.function_body_order.sort_by_key(|id| {
+            let function = &self.function_facts[id.as_usize()];
+            (
+                function.body_span.start(),
+                std::cmp::Reverse(function.body_span.end()),
+                std::cmp::Reverse(id.index()),
+            )
+        });
+    }
+
+    fn function_owner_for_scope(&self, scope: ScopeId) -> FunctionId {
+        self.function_by_scope
+            .get(scope.as_usize())
+            .copied()
+            .unwrap_or(FunctionId::new(0))
     }
 
     fn validate_missing_hook_metadata(&mut self, calls: &[CallFact], aliases: &StaticHookAliases) {
@@ -4556,29 +4627,105 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                 }
             }
         }
+        let evaluation_facts: Vec<_> = calls
+            .iter()
+            .filter(|call| {
+                !span_is_within_owned_pattern(call.owner, call.span, &opaque_patterns)
+                    || call.reactive_kind.is_some()
+                    || call.configured_reactive_scope
+                    || call.binding.is_some_and(|binding| {
+                        self.macro_bindings.contains_key(&binding)
+                            || self.configured_bindings.contains(&binding)
+                    })
+            })
+            .cloned()
+            .map(EvaluationFact::Call)
+            .chain(jsx_roots.iter().cloned().map(EvaluationFact::Jsx))
+            .chain(
+                typed_expressions
+                    .iter()
+                    .filter(|expression| {
+                        let owner = self.function_owner_for_span(expression.span);
+                        !span_is_within_owned_pattern(owner, expression.span, &opaque_patterns)
+                    })
+                    .cloned()
+                    .map(EvaluationFact::Typed),
+            )
+            .chain(
+                member_reads
+                    .iter()
+                    .filter(|member| {
+                        let owner = self.function_owner_for_span(member.span);
+                        !span_is_within_owned_pattern(owner, member.span, &opaque_patterns)
+                            || matches!(
+                                member.place.base,
+                                PlannedPlaceBase::Binding(symbol)
+                                    if self
+                                        .symbol_to_binding
+                                        .get(&symbol)
+                                        .is_some_and(|binding| reactive_targets.contains(binding))
+                            )
+                    })
+                    .cloned()
+                    .map(EvaluationFact::Member),
+            )
+            .chain(
+                local_mutations
+                    .iter()
+                    .cloned()
+                    .map(EvaluationFact::Mutation),
+            )
+            .chain(
+                pattern_assignments
+                    .iter()
+                    .cloned()
+                    .map(EvaluationFact::PatternAssignment),
+            )
+            .chain(decorators.iter().copied().map(EvaluationFact::Decorator))
+            .chain(classes.iter().cloned().map(EvaluationFact::Class))
+            .collect();
+        let function_count = self.functions.len();
+        let mut evaluations_by_owner: Vec<Vec<EvaluationFact>> = vec![Vec::new(); function_count];
+        for event in evaluation_facts {
+            let owner = match &event {
+                EvaluationFact::Call(call) => call.owner,
+                EvaluationFact::Jsx(jsx) => jsx.owner,
+                EvaluationFact::Mutation(mutation) => mutation.owner,
+                _ => self.function_owner_for_span(event.span()),
+            };
+            evaluations_by_owner[owner.as_usize()].push(event);
+        }
+        let mut reads_by_owner = vec![Vec::new(); function_count];
+        for read in &reads {
+            reads_by_owner[read.owner.as_usize()].push(read);
+        }
+        let mut declarations_by_owner = vec![Vec::new(); function_count];
+        for declaration in variable_declarations {
+            declarations_by_owner[self
+                .function_owner_for_span(declaration.declarator_span)
+                .as_usize()]
+            .push(declaration);
+        }
+        let mut call_argument_functions_by_owner = vec![BTreeSet::new(); function_count];
+        for call in calls {
+            call_argument_functions_by_owner[call.owner.as_usize()].extend(
+                call.arguments
+                    .iter()
+                    .filter_map(|argument| argument.function),
+            );
+        }
+        let mut nested_by_owner = vec![Vec::new(); function_count];
+        for child in &self.function_facts {
+            if child.parent != child.id
+                && !call_argument_functions_by_owner[child.parent.as_usize()].contains(&child.id)
+            {
+                nested_by_owner[child.parent.as_usize()].push(child.clone());
+            }
+        }
         for fact in self.function_facts.clone() {
             let has_structured_control_flow = self.has_structured_control_flow(fact.id);
             let mut inputs = Vec::new();
-            let call_argument_functions: BTreeSet<_> = calls
-                .iter()
-                .filter(|call| call.owner == fact.id)
-                .flat_map(|call| {
-                    call.arguments
-                        .iter()
-                        .filter_map(|argument| argument.function)
-                })
-                .collect();
-            let nested: Vec<_> = self
-                .function_facts
-                .iter()
-                .filter(|candidate| {
-                    candidate.parent == fact.id
-                        && candidate.id != fact.id
-                        && !call_argument_functions.contains(&candidate.id)
-                })
-                .cloned()
-                .collect();
-            for child in nested {
+            for child in &nested_by_owner[fact.id.as_usize()] {
                 let value = self.push_value(
                     fact.id,
                     ValueKind::Function(child.id),
@@ -4589,7 +4736,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                 inputs.push(value);
             }
 
-            for read in reads.iter().filter(|read| read.owner == fact.id) {
+            for read in &reads_by_owner[fact.id.as_usize()] {
                 let block = self.planned_block_for_span(fact.id, read.span);
                 let semantics = match read.place.base {
                     PlannedPlaceBase::Binding(_) if read.reactive => reactive_read_semantics(),
@@ -4615,105 +4762,12 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                 inputs.push(value);
             }
 
-            let mut evaluation_facts: Vec<_> = calls
-                .iter()
-                .filter(|call| {
-                    call.owner == fact.id
-                        && (!span_is_within_owned_pattern(
-                            call.owner,
-                            call.span,
-                            &opaque_patterns,
-                        ) || call.reactive_kind.is_some()
-                            || call.configured_reactive_scope
-                            || call.binding.is_some_and(|binding| {
-                                self.macro_bindings.contains_key(&binding)
-                                    || self.configured_bindings.contains(&binding)
-                            }))
-                })
-                .cloned()
-                .map(EvaluationFact::Call)
-                .chain(
-                    jsx_roots
-                        .iter()
-                        .filter(|jsx| jsx.owner == fact.id)
-                        .cloned()
-                        .map(EvaluationFact::Jsx),
-                )
-                .chain(
-                    typed_expressions
-                        .iter()
-                        .filter(|expression| {
-                            let owner = self.function_owner_for_span(expression.span);
-                            owner == fact.id
-                                && !span_is_within_owned_pattern(
-                                    owner,
-                                    expression.span,
-                                    &opaque_patterns,
-                                )
-                        })
-                        .cloned()
-                        .map(EvaluationFact::Typed),
-                )
-                .chain(
-                    member_reads
-                        .iter()
-                        .filter(|member| {
-                            let owner = self.function_owner_for_span(member.span);
-                            owner == fact.id
-                                && (!span_is_within_owned_pattern(
-                                    owner,
-                                    member.span,
-                                    &opaque_patterns,
-                                ) || matches!(
-                                    member.place.base,
-                                    PlannedPlaceBase::Binding(symbol)
-                                        if self
-                                            .symbol_to_binding
-                                            .get(&symbol)
-                                            .is_some_and(|binding| reactive_targets.contains(binding))
-                                ))
-                        })
-                        .cloned()
-                        .map(EvaluationFact::Member),
-                )
-                .chain(
-                    local_mutations
-                        .iter()
-                        .filter(|mutation| mutation.owner == fact.id)
-                        .cloned()
-                        .map(EvaluationFact::Mutation),
-                )
-                .chain(
-                    pattern_assignments
-                        .iter()
-                        .filter(|assignment| {
-                            self.function_owner_for_span(assignment.span) == fact.id
-                        })
-                        .cloned()
-                        .map(EvaluationFact::PatternAssignment),
-                )
-                .chain(
-                    decorators
-                        .iter()
-                        .filter(|decorator| {
-                            self.function_owner_for_span(decorator.span) == fact.id
-                        })
-                        .copied()
-                        .map(EvaluationFact::Decorator),
-                )
-                .chain(
-                    classes
-                        .iter()
-                        .filter(|class| self.function_owner_for_span(class.span) == fact.id)
-                        .cloned()
-                        .map(EvaluationFact::Class),
-                )
-                .collect();
+            let evaluation_facts = &mut evaluations_by_owner[fact.id.as_usize()];
             evaluation_facts.sort_by_key(|event| {
                 let span = event.span();
                 (span.end(), std::cmp::Reverse(span.start()), event.rank())
             });
-            for event in &evaluation_facts {
+            for event in evaluation_facts {
                 let value = match event {
                     EvaluationFact::Typed(expression) => {
                         self.materialize_typed_expression(fact.id, expression)
@@ -4735,13 +4789,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                 inputs.extend(value);
             }
 
-            let owned_declarations: Vec<_> = variable_declarations
-                .iter()
-                .filter(|declaration| {
-                    self.function_owner_for_span(declaration.declarator_span) == fact.id
-                })
-                .cloned()
-                .collect();
+            let owned_declarations = &declarations_by_owner[fact.id.as_usize()];
             let mut declaration_counts = BTreeMap::new();
             for declaration in owned_declarations
                 .iter()
@@ -4751,7 +4799,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                     *declaration_counts.entry(*symbol).or_insert(0_usize) += 1;
                 }
             }
-            for declaration in &owned_declarations {
+            for declaration in owned_declarations {
                 let link_var = declaration.declaration_kind == DeclarationKind::Var
                     && declaration.simple_binding.is_some_and(|symbol| {
                         declaration_counts.get(&symbol) == Some(&1)
@@ -4961,18 +5009,25 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
     }
 
     fn function_owner_for_span(&self, span: SourceSpan) -> FunctionId {
-        self.function_facts
-            .iter()
-            .filter(|function| {
-                function.body_span.start() <= span.start() && function.body_span.end() >= span.end()
-            })
-            .min_by_key(|function| {
-                function
-                    .body_span
-                    .end()
-                    .saturating_sub(function.body_span.start())
-            })
-            .map_or(FunctionId::new(0), |function| function.id)
+        let index = self.function_body_order.partition_point(|id| {
+            self.function_facts[id.as_usize()].body_span.start() <= span.start()
+        });
+        let Some(mut id) = index
+            .checked_sub(1)
+            .map(|index| self.function_body_order[index])
+        else {
+            return FunctionId::new(0);
+        };
+        loop {
+            let function = &self.function_facts[id.as_usize()];
+            if span_contains(function.body_span, span) {
+                return id;
+            }
+            if function.parent == id {
+                return FunctionId::new(0);
+            }
+            id = function.parent;
+        }
     }
 
     fn syntax_value(
@@ -6982,73 +7037,55 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
         value
     }
 
-    fn referenced_bindings(&self, span: SourceSpan) -> Vec<BindingId> {
-        let mut references: Vec<_> = self
-            .semantic
-            .scoping()
-            .symbol_ids()
-            .filter_map(|symbol| {
-                let binding = self.symbol_to_binding.get(&symbol).copied()?;
-                let first = self
-                    .semantic
-                    .scoping()
-                    .get_resolved_reference_ids(symbol)
-                    .iter()
-                    .filter_map(|reference| {
-                        let reference = self.semantic.scoping().get_reference(*reference);
-                        let reference_span = source_span(self.semantic.reference_span(reference));
-                        if self
-                            .class_self_reference_spans
-                            .contains(&(reference_span.start(), reference_span.end()))
-                        {
-                            return None;
-                        }
-                        (reference_span.start() >= span.start()
-                            && reference_span.end() <= span.end())
-                        .then_some(reference_span.start())
-                    })
-                    .min()?;
-                Some((first, binding))
-            })
+    fn references_in_span(
+        &self,
+        span: SourceSpan,
+    ) -> impl Iterator<Item = &ResolvedSourceReference> {
+        let start = self
+            .source_references
+            .partition_point(|reference| reference.span.start() < span.start());
+        self.source_references[start..]
+            .iter()
+            .take_while(move |reference| reference.span.start() <= span.end())
+            .filter(move |reference| reference.span.end() <= span.end())
+    }
+
+    fn bindings_from_references<'a>(
+        &self,
+        references: impl Iterator<Item = &'a ResolvedSourceReference>,
+    ) -> Vec<BindingId> {
+        let mut first = BTreeMap::new();
+        for reference in references {
+            first
+                .entry(reference.binding)
+                .and_modify(|start: &mut u32| *start = (*start).min(reference.span.start()))
+                .or_insert(reference.span.start());
+        }
+        let mut ordered: Vec<_> = first
+            .into_iter()
+            .map(|(binding, start)| (start, binding))
             .collect();
-        references.sort_unstable();
-        references.into_iter().map(|(_, binding)| binding).collect()
+        ordered.sort_unstable();
+        ordered.into_iter().map(|(_, binding)| binding).collect()
+    }
+
+    fn is_class_self_reference(&self, reference: &ResolvedSourceReference) -> bool {
+        self.class_self_reference_spans
+            .contains(&(reference.span.start(), reference.span.end()))
+    }
+
+    fn referenced_bindings(&self, span: SourceSpan) -> Vec<BindingId> {
+        self.bindings_from_references(
+            self.references_in_span(span)
+                .filter(|reference| !self.is_class_self_reference(reference)),
+        )
     }
 
     fn read_referenced_bindings(&self, span: SourceSpan) -> Vec<BindingId> {
-        let mut references: Vec<_> = self
-            .semantic
-            .scoping()
-            .symbol_ids()
-            .filter_map(|symbol| {
-                let binding = self.symbol_to_binding.get(&symbol).copied()?;
-                let first = self
-                    .semantic
-                    .scoping()
-                    .get_resolved_reference_ids(symbol)
-                    .iter()
-                    .filter_map(|reference| {
-                        let reference = self.semantic.scoping().get_reference(*reference);
-                        if !reference.is_read() {
-                            return None;
-                        }
-                        let reference_span = source_span(self.semantic.reference_span(reference));
-                        if self
-                            .class_self_reference_spans
-                            .contains(&(reference_span.start(), reference_span.end()))
-                        {
-                            return None;
-                        }
-                        (reference_span.start() >= span.start()
-                            && reference_span.end() <= span.end())
-                        .then_some(reference_span.start())
-                    })
-                    .min()?;
-                Some((first, binding))
-            })
-            .collect();
-        references.sort_unstable();
-        references.into_iter().map(|(_, binding)| binding).collect()
+        self.bindings_from_references(
+            self.references_in_span(span)
+                .filter(|reference| reference.is_read && !self.is_class_self_reference(reference)),
+        )
     }
 
     fn read_referenced_bindings_in_spans(
@@ -7056,82 +7093,32 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
         owner: FunctionId,
         spans: &[SourceSpan],
     ) -> Vec<BindingId> {
-        let mut references: Vec<_> = self
-            .semantic
-            .scoping()
-            .symbol_ids()
-            .filter_map(|symbol| {
-                let binding = self.symbol_to_binding.get(&symbol).copied()?;
-                let first = self
-                    .semantic
-                    .scoping()
-                    .get_resolved_reference_ids(symbol)
-                    .iter()
-                    .filter_map(|reference| {
-                        let reference = self.semantic.scoping().get_reference(*reference);
-                        if !reference.is_read() {
-                            return None;
-                        }
-                        let reference_span = source_span(self.semantic.reference_span(reference));
-                        if self
-                            .class_self_reference_spans
-                            .contains(&(reference_span.start(), reference_span.end()))
-                        {
-                            return None;
-                        }
-                        (self.function_owner_for_span(reference_span) == owner
-                            && spans
-                                .iter()
-                                .any(|span| span_contains(*span, reference_span)))
-                        .then_some(reference_span.start())
-                    })
-                    .min()?;
-                Some((first, binding))
-            })
-            .collect();
-        references.sort_unstable();
-        references.into_iter().map(|(_, binding)| binding).collect()
+        self.bindings_from_references(
+            spans
+                .iter()
+                .flat_map(|span| self.references_in_span(*span))
+                .filter(|reference| {
+                    reference.is_read
+                        && !self.is_class_self_reference(reference)
+                        && self.function_owner_for_span(reference.span) == owner
+                }),
+        )
     }
 
     fn directly_referenced_bindings(&self, function: &FunctionFact) -> Vec<BindingId> {
-        let nested_spans: Vec<_> = self
-            .function_facts
-            .iter()
-            .filter(|candidate| {
-                candidate.id != function.id
-                    && candidate.span.start() >= function.body_span.start()
-                    && candidate.span.end() <= function.body_span.end()
-            })
-            .map(|candidate| candidate.span)
-            .collect();
-        let mut references: Vec<_> = self
-            .semantic
-            .scoping()
-            .symbol_ids()
-            .filter_map(|symbol| {
-                let binding = self.symbol_to_binding.get(&symbol).copied()?;
-                let first = self
-                    .semantic
-                    .scoping()
-                    .get_resolved_reference_ids(symbol)
-                    .iter()
-                    .filter_map(|reference| {
-                        let reference = self.semantic.scoping().get_reference(*reference);
-                        let reference_span = source_span(self.semantic.reference_span(reference));
-                        (reference_span.start() >= function.body_span.start()
-                            && reference_span.end() <= function.body_span.end()
-                            && !nested_spans.iter().any(|nested| {
-                                reference_span.start() >= nested.start()
-                                    && reference_span.end() <= nested.end()
-                            }))
-                        .then_some(reference_span.start())
-                    })
-                    .min()?;
-                Some((first, binding))
-            })
-            .collect();
-        references.sort_unstable();
-        references.into_iter().map(|(_, binding)| binding).collect()
+        let children = &self.function_children[function.id.as_usize()];
+        self.bindings_from_references(self.references_in_span(function.body_span).filter(
+            |reference| {
+                let index = children.partition_point(|id| {
+                    self.function_facts[id.as_usize()].span.start() <= reference.span.start()
+                });
+                index.checked_sub(1).is_none_or(|index| {
+                    let nested = self.function_facts[children[index].as_usize()].span;
+                    !span_contains(function.body_span, nested)
+                        || !span_contains(nested, reference.span)
+                })
+            },
+        ))
     }
 
     fn add_fragment(

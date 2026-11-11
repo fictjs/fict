@@ -667,17 +667,19 @@ fn cfg_components(cfg: &CfgAnalysis) -> Vec<Vec<BlockId>> {
 }
 
 fn assign_construct_hierarchy(constructs: &mut [StructuredConstruct]) {
-    let snapshots = constructs.to_vec();
-    for construct in constructs.iter_mut() {
-        let mut candidates: Vec<_> = snapshots
+    // Test the smallest possible owners first. Once one contains the complete
+    // child, larger owners cannot be its immediate parent. The old all-pairs
+    // containment scan revisited every nested block for every ancestor.
+    let mut candidates: Vec<_> = (0..constructs.len()).collect();
+    candidates.sort_by_key(|index| (constructs[*index].blocks.len(), constructs[*index].id));
+    for index in 0..constructs.len() {
+        constructs[index].parent = candidates
             .iter()
-            .filter(|candidate| {
-                candidate.id != construct.id
-                    && strictly_contains(&candidate.blocks, &construct.blocks)
+            .copied()
+            .find(|candidate| {
+                strictly_contains(&constructs[*candidate].blocks, &constructs[index].blocks)
             })
-            .collect();
-        candidates.sort_by_key(|candidate| (candidate.blocks.len(), candidate.id));
-        construct.parent = candidates.first().map(|candidate| candidate.id);
+            .map(|candidate| constructs[candidate].id);
     }
     let links: Vec<_> = constructs
         .iter()
