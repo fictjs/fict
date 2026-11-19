@@ -95,8 +95,20 @@ test.describe('Complex Interaction - Wizard', () => {
 // ============================================================================
 test.describe('Suspense + ErrorBoundary Combined', () => {
   test('success lazy component loads correctly', async ({ page }) => {
-    await page.click('#show-success')
-    await expect(page.locator('#success-loading')).toBeVisible()
+    let release!: () => void
+    const pending = new Promise<void>(resolve => {
+      release = resolve
+    })
+    await page.route('**/success-lazy.tsx*', async route => {
+      await pending
+      await route.continue()
+    })
+    try {
+      await page.click('#show-success')
+      await expect(page.locator('#success-loading')).toBeVisible()
+    } finally {
+      release()
+    }
     await expect(page.locator('#success-lazy')).toBeVisible({ timeout: 5000 })
     await expect(page.locator('#success-loading')).not.toBeVisible()
   })

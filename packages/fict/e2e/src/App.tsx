@@ -735,16 +735,7 @@ const FailableLazyComponent = lazy(
     }),
 )
 
-const AlwaysSuccessLazy = lazy(
-  () =>
-    new Promise<{ default: () => any }>(resolve => {
-      setTimeout(() => {
-        resolve({
-          default: () => <div id="success-lazy">Success component loaded</div>,
-        })
-      }, 50)
-    }),
-)
+const AlwaysSuccessLazy = lazy(() => import('./success-lazy'))
 
 function SuspenseErrorBoundaryTest() {
   let showFailable = $state(false)
