@@ -1,0 +1,502 @@
+# Migration Guide
+
+This guide helps teams move code from React, Vue, Svelte, or Solid to Fict.
+It is not a compatibility promise: Fict keeps JSX/TSX ergonomics, but it
+compiles to a fine-grained graph with fail-closed reactivity guarantees.
+
+## Migration Strategy
+
+1. Start with leaf components and isolated routes.
+2. Keep behavior tests around the component before changing reactivity.
+3. Run the first compile with `strictGuarantee: false` only in a
+   non-production migration branch to collect diagnostics.
+4. Fix diagnostics with the patterns below.
+5. Enable default `strictGuarantee: true` before merging.
+6. Add `FICT_STRICT_GUARANTEE=1` to CI build steps so later config drift fails.
+
+Use `strictGuarantee: false` as an inventory tool, not as a long-term app
+profile. Production builds force strict guarantee back on.
+
+## Compiler Backend Migration
+
+Fict 0.31 has one compiler: the OXC-native Rust implementation. Vite uses it
+without a backend option:
+
+```ts
+import fict from '@fictjs/vite-plugin'
+
+export default {
+  plugins: [fict()],
+}
+```
+
+The completed compatibility line is:
+
+| Release  | Compiler role                                                                                        |
+| -------- | ---------------------------------------------------------------------------------------------------- |
+| `0.29.0` | First published Rust-default release; whole-build legacy rollback remains available.                 |
+| `0.30.0` | Subsequent stable compatibility minor; Rust remains the default and legacy remains release-blocking. |
+| `0.30.1` | Final release of the Babel preset, `@fictjs/compiler/legacy`, and in-tree rollback implementation.   |
+| `0.31.0` | Pre-1.0 Rust-only breaking release; rollback means pinning the whole application to `0.30.1`.        |
+
+Before changing versions, make the migration explicit:
+
+1. Upgrade the complete Fict dependency set to `0.30.1` and establish a green
+   baseline.
+2. Remove `@fictjs/babel-preset`, `@fictjs/compiler/legacy`, Babel Fict config,
+   and any direct `createFictPlugin` import.
+3. Remove Vite `backend` / `shadow` options and `FICT_COMPILER_BACKEND` from
+   source, CI, containers, and deployment configuration.
+4. Replace custom Webpack Babel compilation with
+   `@fictjs/webpack-plugin/loader` plus `FictWebpackPlugin`.
+5. Delete source-adjacent compiler metadata and `.fict-cache/metadata`; Fict 0.31
+   uses graph-host snapshots and versioned package metadata instead.
+6. Upgrade the Core packages together, reinstall from a clean lockfile, and run
+   the native smoke below before the application test suite.
+
+After installing the release, run this package-root smoke from the application
+directory. It proves that the selected platform binding is Rust and executes a
+real native transform instead of merely finding package files:
+
+```bash
+node --input-type=module <<'EOF'
+import assert from 'node:assert/strict'
+import {
+  COMPILER_PROTOCOL_VERSION,
+  nativeCompilerInfo,
+  transformSync,
+} from '@fictjs/compiler'
+
+const info = nativeCompilerInfo()
+assert.equal(info.backend, 'rust')
+const result = transformSync({
+  protocolVersion: COMPILER_PROTOCOL_VERSION,
+  filename: '/migration-smoke.ts',
+  code: 'export const answer: number = 42',
+  options: {},
+})
+assert.equal(result.diagnostics.length, 0)
+assert.match(result.code, /answer\s*=\s*42/)
+console.log(info)
+EOF
+```
+
+There is no `legacy`, `rust`, or `shadow` selector in 0.31 and no per-file
+fallback. A native binding load failure or compiler diagnostic fails the build.
+Operational rollback is therefore a dependency rollback: restore the complete
+`0.30.1` lockfile, generated output, metadata, and caches as one release unit.
+Do not mix a 0.30.1 compiler or preset with a 0.31 runtime or integration.
+
+Webpack users should migrate from `@fictjs/babel-preset` to the native
+`@fictjs/webpack-plugin` loader. Direct compiler integrations import the
+serializable `transformSync`, `transform`, `scan`, or `analyze` API from
+`@fictjs/compiler`; the lower-level loader remains available from
+`@fictjs/compiler/native`. Both facades lazily select and reuse the validated
+platform binding. Custom Babel pipelines that still
+need sibling plugins should run native Fict compilation as a separate first
+stage and compose source maps explicitly.
+
+`inputSourceMap` accepts only a standard non-indexed Source Map v3. If an
+upstream tool returns an indexed map with `sections`, the integration host must
+flatten those sections before invoking the native compiler. The request rejects
+`sections` instead of silently ignoring part of the map.
+
+When a generated map contains more than one source, `inputSourceMap.file` must
+uniquely identify the intermediate authored source. Only that source is traced
+through the input map; virtual or helper sources retain their own mappings.
+Windows separators are normalized for matching, and query/fragment suffixes
+may be ignored only when the physical identity remains unique. Missing or
+ambiguous identity fails closed with `FICT-SOURCEMAP-COMPOSE` instead of
+attaching helper tokens to an unrelated authored file.
+
+`@fictjs/babel-preset@0.30.1` remains available only as the final whole-build
+rollback release. It is not part of the 0.31 workspace, publish plan, or support
+surface. Custom Babel plugins may still run as a separate downstream transform,
+but they must not attempt to compile Fict reactivity.
+
+### Removed Babel TypeScript preset switches
+
+The native request selects its grammar before parsing. It does not reproduce
+the Babel preset's open-ended extension and JSX-factory configuration:
+
+| Babel preset option           | 0.31 migration                                                                                                                                                                          |
+| ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `isTSX` / `allExtensions`     | Use a `.tsx` / `.jsx` physical `filename`, or pass `language: "tsx"` / `language: "jsx"` from a direct host. Native compilation does not parse JSX in every extension implicitly.       |
+| `disallowAmbiguousJSXLike`    | Removed. Select `language: "ts"` for non-JSX TypeScript or `language: "tsx"` for TSX; `.mts` and `.cts` infer non-JSX TypeScript. There is no post-parse ambiguity toggle.              |
+| `allowDeclareFields: false`   | Removed. The native TypeScript transform always accepts `declare` fields (`allowDeclareFields: true`). Enforce a project ban with TypeScript or linting before compilation if required. |
+| `jsxPragma` / `jsxPragmaFrag` | Removed. Fict owns JSX lowering and its runtime ABI; custom JSX factories are not valid Fict compiler inputs. Keep unrelated custom-factory sources outside the Fict transform.         |
+
+The native `typescript` object retains `allowNamespaces`,
+`onlyRemoveTypeImports`, `optimizeConstEnums`, and
+`rewriteImportExtensions`, and adds `optimizeEnums` and
+`removeClassFieldsWithoutInitializer`. These controls affect TypeScript
+lowering only; they do not change the selected source grammar or JSX runtime.
+
+### Legacy compiler API replacements
+
+The 0.31 package root is a request/response API, not a compatibility alias for
+the Babel plugin. Replace direct 0.30-and-earlier compiler imports explicitly:
+
+| Removed or relocated API                                                                            | 0.31 replacement                                                                                                                                                                                                                            |
+| --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Default export or `createFictPlugin`                                                                | Use `@fictjs/vite-plugin`, `@fictjs/webpack-plugin`, or call `transformSync` / `transform` from `@fictjs/compiler` in a custom host.                                                                                                        |
+| `FictCompilerOptions`                                                                               | Use serializable `NativeCompilerOptions` in `CompileRequest.options`. Keep callbacks, filesystem access, and graph state in the Vite, Webpack, or custom host layer.                                                                        |
+| `CompilerWarning` and `DiagnosticCode`                                                              | Read `CompileResult.diagnostics` as `FictDiagnostic[]`. Match the documented string `code`; configure severity with `warningLevels` or `warningsAsErrors`.                                                                                  |
+| `getCompilerCacheFingerprint()`                                                                     | Use `nativeCompilerInfo().compilerBuildId` before a request, or the `compilerBuildId` returned by transform and scan results.                                                                                                               |
+| Root `parseModuleReactiveMetadata` and `resolvePackageModuleMetadata` exports                       | Import them from `@fictjs/compiler/graph-host`. They validate and resolve only the versioned native metadata schema.                                                                                                                        |
+| `resolveModuleMetadata`, `setModuleMetadata`, `clearModuleMetadata`, and `invalidateModuleMetadata` | There is no process-global compiler metadata cache. Official integrations own graph resolution and invalidation. A direct host resolves scanned edges into `ResolvedMetadataInput[]` and passes that snapshot as `CompileRequest.metadata`. |
+| `emitModuleMetadata`, `moduleMetadataCacheDir`, and `moduleMetadataExtension`                       | Use Vite library mode to emit publishable metadata, then declare it through `package.json#fict.metadata` or `package.json#fict.exports`. Source-adjacent and `.fict-cache` sidecars are retired.                                            |
+| `analyzeFictFile` and `inferTraceMarkersForComponent`                                               | Use `analyzeSync` or `analyze` with an `AnalyzeRequest`; component traces, regions, and structured diagnostics are returned in `AnalyzeResult`.                                                                                             |
+| `minimizeSourceByLines`                                                                             | There is no native compiler equivalent. Run an external reducer that repeatedly calls `transformSync` / `transform` or `analyzeSync` / `analyze` with the failure predicate you need to preserve.                                           |
+
+The metadata replacement intentionally has no mutating singleton. A custom
+host should use `scanSync` or `scan` to discover static edges, resolve those
+edges using its own module graph, and fingerprint each `ResolvedMetadataInput`
+so its cache invalidation follows the same inputs passed to compilation. Vite
+virtual-module integrations may instead provide the Vite plugin's
+integration-level `resolveModuleMetadata` hook; that hook is not an export from
+the compiler package root.
+
+Preview `resumable: true` is available with the Rust compiler through compiler-owned
+structured handler artifacts. It remains explicit and Preview; native support
+does not graduate it or make it a Core default.
+
+### Audited Babel 0.28 behavior differences
+
+The Rust compiler is not a byte-for-byte Babel emitter. The reviewed 1,950-case
+compile corpus currently has 47 reviewed success/error status differences:
+37 inputs accepted by Babel are rejected by Rust, and 10 inputs rejected by
+Babel are accepted by Rust. The 10 Rust acceptances are individually reviewed:
+7 are capability claims, and no release-blocking regression remains. A
+successful code emission is never by itself evidence of compatible runtime
+behavior.
+
+| Compatibility policy             | Count | Native behavior and migration action                                                                                                                                                                       |
+| -------------------------------- | ----: | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `narrow-component-role`          |    24 | Component-context macros require an explicit component owner. Move macros out of anonymous, indirect, assigned, wrapped, registry, or object-member functions into a directly declared component.          |
+| `structured-hook-return`         |     6 | Structured same-module hook results enforce readonly and setter rules. Keep mutation inside the hook, or expose an explicit supported setter instead of writing through a returned readonly accessor.      |
+| `standard-decorator-fail-closed` |     3 | Standard decorators must be lowered by a target-compatible transform before native Fict compilation, or removed; raw decorator syntax is never emitted as successful JavaScript.                           |
+| `strict-reactivity-fail-closed`  |     4 | `strictGuarantee` rejects statement control flow that needs an R006 region fallback. Refactor the branch into guaranteed JSX expressions, or explicitly use non-strict compilation and review the warning. |
+| `genuine-capability-expansion`   |     7 | Executable runtime oracles prove the newly supported enum or control-flow behavior, including live re-execution of hook loop outputs.                                                                      |
+| `intentional-runtime-error`      |     1 | Rust preserves ordinary JavaScript TDZ failure. This is runtime-semantics evidence, not a compiler capability claim.                                                                                       |
+| `validation-regression`          |     0 | Rust again rejects writes through reactive aliases and compiler-managed derived values; no reviewed validation regression remains.                                                                         |
+| `fallback-only`                  |     1 | Rust emits a structured `FICT-R006` fallback diagnostic. Do not rely on this as guaranteed fine-grained lowering.                                                                                          |
+| `reactive-equivalence-required`  |     0 | Reactive hook loop outputs now execute inside one live memo region; the audited result updates from `01` to `0123` after its state bound changes from 2 to 4.                                              |
+| `intentional-breaking-policy`    |     1 | Rust intentionally removes the audited Babel warning behavior. Treat this as a diagnostic-policy migration, not a capability.                                                                              |
+
+All 37 Babel-success/Rust-error inputs have final decisions; they are not an
+unclassified parity backlog:
+
+- The 24 `narrow-component-role` and 6 `structured-hook-return` inputs are a
+  `permanent-breaking-contract` for the current native compiler line. Use the
+  documented owner and setter migrations rather than waiting for a Babel
+  compatibility mode.
+- The 3 `standard-decorator-fail-closed` inputs
+  `requires-upstream-transform`. Feed the native compiler decorator-free output;
+  raw standard-decorator support is not part of the stable input contract.
+- The 4 `strict-reactivity-fail-closed` inputs are a
+  `permanent-strict-fail-closed-contract`. Refactor the source for guaranteed
+  lowering, or deliberately opt into the non-strict R006 fallback outside
+  production.
+
+Each policy has release disposition `allow` because its migration and removal
+condition are explicit—not because Rust reproduces Babel acceptance. The
+machine-readable source of truth is
+`scripts/fixtures/compiler_rust_rejection_reviews.json`; generation and CI map
+every Babel-success/Rust-error corpus row to one of these four decisions and
+enforce the 24/6/3/4 counts.
+
+The source of truth for all 10 remaining reviews is
+`scripts/fixtures/compiler_rust_acceptance_reviews.json`. Every row records its
+owner, rationale, final plan, removal condition, and release disposition. The
+compiler release verifier rejects any remaining `validation-regression` or
+`reactive-equivalence-required` row.
+
+The 214 compiler-helper callsites that were outside the original 1,950-request
+corpus are no longer represented by inventory markers alone. Generation runs
+all 29 affected Babel 0.28 test files unchanged (147 suites, 1,917 tests),
+associates 1,444 executions with 212 callsites, and records explicit reasons for
+the two sites that cannot enter the compiler. Their 1,222 deduplicated native
+requests are replayed in CI with status, diagnostic, output-hash, and
+determinism checks. All five remaining status transitions are policy reviewed:
+three are existing fail-closed Rust rejections and two are the reviewed
+`genuine-capability-expansion` and `intentional-runtime-error` acceptances.
+
+This closes the compiler-invocation regression gap without overstating the
+claim: the replay executes the old assertions during generation, but it does
+not compare complete Babel-generated output or prove assertion-by-assertion
+semantic equivalence. Cross-implementation runtime claims continue to come
+from the dedicated semantic, DOM, SSR, tooling, and source-map oracles.
+
+The four Rust-rejection policies have direct source migrations:
+
+```tsx
+// narrow-component-role: give the reactive owner a direct declaration.
+const registry = {
+  // Before: Button() is an indirect object-member owner.
+  // Button: () => {
+  //   let count = $state(0)
+  //   return <button>{count}</button>
+  // },
+}
+function Button() {
+  let count = $state(0)
+  return <button>{count}</button>
+}
+registry.Button = Button
+
+// structured-hook-return: mutate through an accessor or explicit setter.
+function useCounter() {
+  let count = $state(0)
+  return { count, setCount: (next: number) => (count = next) }
+}
+const counter = useCounter()
+counter.count(1) // or counter.setCount(1), not counter.count = 1
+
+// standard-decorator-fail-closed: feed Fict decorator-free JavaScript/TypeScript.
+// Before native compilation, run your target decorator transform or remove @sealed.
+class Service {}
+
+// strict-reactivity-fail-closed: prefer a guaranteed expression branch.
+const heading = count > 0 ? `${count} items` : 'empty'
+// A statement branch assigning `heading` requires the non-strict R006 region fallback.
+```
+
+The emitted diagnostics preserve these actions as structured `help`: declare a
+component or hook directly, call/expose a Hook setter, pre-lower standard
+decorators, or rewrite R006 control flow as an expression. Do not suppress these errors; doing so would
+leave compiler-only syntax or accessor writes with no supported runtime
+meaning.
+
+An earlier migration audit also found 37 option-driven Babel-success/Rust-fail
+cases. Those are no longer deviations: native compilation now implements
+`dev: true`, `lazyConditional: false`, `getterCache: false`,
+`optimizeLevel: "full"`, and `inlineDerivedMemos: false`, with executable
+option-specific regressions. Do not retain an application workaround for
+`FICT-OPTION-UNIMPLEMENTED` for these values. `lazyConditional: false` preserves
+authored returns but intentionally disables their runtime branch capability;
+reactive returns therefore require a non-production `strictGuarantee: false`
+fallback and carry `FICT-R006`.
+
+Direct compiler hosts must also account for request-identity differences that
+do not appear in a source-only `.tsx` corpus:
+
+| Request policy             | Babel 0.28 versus Rust 0.31                                                                                                                                                                                                           |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `jsx-extension-required`   | Babel accepts JSX in a `.js` request. Rust infers plain JavaScript and rejects JSX unless the filename uses `.jsx` or the host passes `language: "jsx"`.                                                                              |
+| `cts-top-level-return`     | Rust infers CommonJS for `.cts` and accepts a top-level `return`; Babel 0.28 rejects the audited request. Treat this as a capability expansion and confirm that the downstream CommonJS host supports the emitted form.               |
+| `source-map-normalization` | Both compilers preserve the audited logical source and `sourcesContent`, but raw mapping segmentation and serialized map text are emitter-specific. Compare normalized source identities, not whole-map hashes.                       |
+| `explain-normalization`    | Source event roles and authored UTF-16 positions match the frozen Babel artifact. Private helper names and prose remain emitter-specific; compare documented helper capabilities and structured fields, not exact text or region IDs. |
+
+Native compiler stats retain the public `number` contract across both sync and
+async N-API calls. Every duration and counter is a non-negative safe integer;
+an internal `u64` value above `Number.MAX_SAFE_INTEGER` is saturated at that
+maximum before it crosses the host boundary. Consumers must not expect
+`bigint`, and should treat a maximum value as an overflow sentinel rather than
+an exact measurement.
+
+### JSX authored-text whitespace
+
+The 0.31 native compiler applies standard JSX multiline text normalization.
+Babel 0.28 preserved the raw line terminators and indentation in authored JSX
+text, including inside `<pre>`. Native compilation trims indentation, omits
+formatting-only lines, and joins remaining lines with one space before DOM or
+VNode lowering. CSS such as `white-space: pre` cannot recover characters that
+were normalized during compilation.
+
+Use an expression string for whitespace that is part of the rendered value:
+
+```tsx
+// Multiline source formatting is normalized to "first second".
+<pre>
+  first
+  second
+</pre>
+
+// Explicit data is preserved exactly.
+<pre>{'first\n  second'}</pre>
+```
+
+Same-line spaces and explicit `{' '}` expressions remain authored data. There
+is no legacy-whitespace compiler switch; test text-sensitive `<pre>`, generated
+prose, and snapshot output before completing the 0.31 upgrade.
+
+The exact policies and counts are release-blocking fixtures in
+`rust_frozen_codegen_corpus.json` and `compiler_request_matrix.json`; changing a
+classification requires updating the migration guide and its compatibility
+guard together.
+
+See the [Rust compiler architecture](architecture/rust-compiler.md) and
+[rollback runbook](operations/runbooks/compiler-backend-rollback.md) for the
+request boundary and 0.31 recovery procedure.
+
+## Concept Map
+
+| Source concept           | Fict equivalent                                    |
+| ------------------------ | -------------------------------------------------- |
+| React `useState`         | `let value = $state(initial)`                      |
+| React `useMemo`          | Plain derived `const value = expression`           |
+| React `useEffect`        | `$effect`, `onMount`, `onCleanup`, or `onDestroy`  |
+| React context            | `createContext` / `useContext`                     |
+| Vue `ref`                | `$state` for local values                          |
+| Vue `reactive`           | `$store` for deep shared objects                   |
+| Vue `computed`           | Plain derived `const value = expression`           |
+| Vue `watchEffect`        | `$effect`                                          |
+| Svelte `$state`          | Fict `$state`                                      |
+| Svelte `$derived`        | Plain derived `const value = expression`           |
+| Svelte `{#if}`           | Native `if` / ternary in TSX                       |
+| Solid `createSignal`     | `$state` in components, `createSignal` in advanced |
+| Solid `createMemo`       | Plain derived `const value = expression`           |
+| Solid `<Show>` / `<For>` | Native `if` / `map` with stable keys               |
+
+## React
+
+React components re-run; Fict components run once and update bindings,
+memos, effects, or tracked branches. Move render-time derivations out of
+manual hooks and let the compiler infer them.
+
+```tsx
+// React
+function Counter() {
+  const [count, setCount] = useState(0)
+  const doubled = useMemo(() => count * 2, [count])
+  return <button onClick={() => setCount(count + 1)}>{doubled}</button>
+}
+
+// Fict
+function Counter() {
+  let count = $state(0)
+  const doubled = count * 2
+  return <button onClick={() => count++}>{doubled}</button>
+}
+```
+
+### Effects
+
+Use `$effect` for reactive effects. Use `onMount` for one-time setup and
+`onCleanup` inside `$effect` when the cleanup must re-run with the effect.
+
+```tsx
+// React
+useEffect(() => {
+  const stop = subscribe(id, value => setValue(value))
+  return stop
+}, [id])
+
+// Fict
+$effect(() => {
+  const stop = subscribe(id, value => {
+    latest = value
+  })
+  onCleanup(stop)
+})
+```
+
+### Props And Rest Spreads
+
+Simple prop destructuring is supported. Rest props and native element spreads
+can lose per-prop guarantees, so prefer explicit props or `mergeProps`.
+
+```tsx
+// Risky during migration: rest spread can hide dynamic native props.
+function Button({ variant, ...rest }) {
+  return <button {...rest} class={`btn ${variant}`} />
+}
+
+// Prefer explicit props, or mergeProps when forwarding is intentional.
+function Button(props) {
+  const merged = mergeProps({ type: 'button' }, props)
+  return <button type={merged.type} class={`btn ${merged.variant}`} />
+}
+```
+
+## Vue
+
+Use `$state` for component-local values and `$store` for deep shared objects.
+Fict does not use `.value`.
+
+```tsx
+// Vue
+const count = ref(0)
+const doubled = computed(() => count.value * 2)
+count.value++
+
+// Fict
+let count = $state(0)
+const doubled = count * 2
+count++
+```
+
+For `reactive` objects, use `$store` and mutate properties directly.
+
+```tsx
+const user = $store({ profile: { name: 'Ada' } })
+user.profile.name = 'Grace'
+```
+
+## Svelte
+
+Fict's `$state` is also a compiler macro, but derived values do not require
+`$derived`.
+
+```tsx
+// Svelte
+let count = $state(0)
+let doubled = $derived(count * 2)
+
+// Fict
+let count = $state(0)
+const doubled = count * 2
+```
+
+Svelte blocks become normal TSX control flow. Keep list keys stable.
+
+```tsx
+return (
+  <ul>
+    {todos.map(todo => (
+      <li key={todo.id}>{todo.title}</li>
+    ))}
+  </ul>
+)
+```
+
+## Solid
+
+Most Solid reactive primitives map directly, but Fict removes getter calls in
+component code.
+
+```tsx
+// Solid
+const [count, setCount] = createSignal(0)
+const doubled = createMemo(() => count() * 2)
+return <button onClick={() => setCount(count() + 1)}>{doubled()}</button>
+
+// Fict
+let count = $state(0)
+const doubled = count * 2
+return <button onClick={() => count++}>{doubled}</button>
+```
+
+Use `createSignal` from `fict/advanced` only for library-level or module-level
+escape hatches. In application components, prefer `$state` and `$store`.
+
+## Patterns That Need Rewrites
+
+| Pattern                              | Rewrite                                                     |
+| ------------------------------------ | ----------------------------------------------------------- |
+| Mutating nested `$state` objects     | Reassign immutably, or use `$store` for direct deep writes  |
+| Dynamic object keys from user input  | Narrow keys, use `$store`, or isolate in an explicit helper |
+| Passing state into black-box helpers | Use `untrack` for snapshots or a Fict-aware callback API    |
+| Native element rest spreads          | Prefer explicit props or `mergeProps`                       |
+| Component definitions inside render  | Move components to module scope or a stable factory         |
+| List rendering without keys          | Add stable keys from data, not array indexes                |
+
+## Migration Exit Criteria
+
+- No production build opts out of `strictGuarantee`.
+- CI sets `FICT_STRICT_GUARANTEE=1` for build/typecheck gates.
+- All `fict-ignore` suppressions are removed from strict guarantee paths.
+- Store usage is either `$state` with immutable updates or `$store` with direct
+  deep mutation; do not mix both models for the same object.
+- Branch fallback behavior is covered by tests where DOM identity matters.

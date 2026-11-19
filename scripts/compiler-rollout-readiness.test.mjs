@@ -557,7 +557,13 @@ async function fixture(
       JSON.stringify(recordedConsumerEvidence(removalEvidence.compatibilityRelease)),
     )
     const removalProofDirectory = path.join(root, '.github', 'compiler-legacy-removal-evidence')
-    await mkdir(removalProofDirectory, { recursive: true })
+    const guidancePath = path.join(
+      removalProofDirectory,
+      `v${removalEvidence.legacyRemovalRelease}`,
+      removalEvidence.migrationGuidance.path,
+    )
+    await mkdir(path.dirname(guidancePath), { recursive: true })
+    await writeFile(guidancePath, migrationGuidanceContent)
     for (const kind of ['rollback-drill', 'source-maps', 'performance-rss']) {
       const proof = legacyRemovalProof(
         kind,
@@ -1048,7 +1054,15 @@ test('pre-1.0 legacy removal allows the next stable minor with bound evidence', 
   )
   await writeFile(removalEvidencePath, JSON.stringify(removalEvidence))
 
-  const migrationGuidancePath = path.join(root, 'docs', 'compiler-rust-only-migration.md')
+  await writeFile(path.join(root, 'docs', 'compiler-rust-only-migration.md'), '# Current guide\n')
+  validateCompilerRolloutReadiness({ root })
+  const migrationGuidancePath = path.join(
+    root,
+    '.github',
+    'compiler-legacy-removal-evidence',
+    `v${removalEvidence.legacyRemovalRelease}`,
+    removalEvidence.migrationGuidance.path,
+  )
   await writeFile(migrationGuidancePath, '# Unreviewed migration rewrite\n')
   assert.throws(
     () => validateCompilerRolloutReadiness({ root }),

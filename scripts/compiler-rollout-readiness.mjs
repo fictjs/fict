@@ -588,8 +588,14 @@ function assertLegacyRemovalEvidenceDocumentShape(evidence, workspaceRoot) {
   )
 
   const guidance = payload.migrationGuidance
+  // Verify the document as reviewed for this release, at its recorded relative path.
   const guidancePath = resolveWorkspaceStatePath(
-    workspaceRoot,
+    path.join(
+      workspaceRoot,
+      '.github',
+      'compiler-legacy-removal-evidence',
+      `v${payload.legacyRemovalRelease}`,
+    ),
     guidance?.path,
     'migrationGuidance.path',
   )
