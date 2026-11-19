@@ -14,15 +14,15 @@ export default [
   {
     name: 'Fict package (ESM)',
     path: 'packages/fict/dist/index.js',
-    // Eager async hydration: 26,294 B; see async-ssr-hydration-size archive.
-    limit: '26.5 KB',
+    // Distributed ESM with VNode reconciliation: 31,432 B at 7a191bd3.
+    limit: '31.6 KB',
     modifyEsbuildConfig: production,
   },
   {
     name: 'Fict package (CJS)',
     path: 'packages/fict/dist/index.cjs',
-    // Distributed CJS includes advanced APIs and hydration: 45,141 B.
-    limit: '45.3 KB',
+    // Distributed CJS with advanced APIs and VNode reconciliation: 48,624 B.
+    limit: '48.8 KB',
     modifyEsbuildConfig: production,
   },
   {
@@ -45,8 +45,8 @@ export default [
     name: 'Fict package resource (ESM)',
     path: 'packages/fict/dist/plus.js',
     import: '{ resource }',
-    // Resource and its shared Suspense hydration support: 22,085 B.
-    limit: '22.2 KB',
+    // Resource includes the shared Suspense renderer and reconciler: 26,859 B.
+    limit: '27 KB',
     modifyEsbuildConfig: production,
   },
 ]
