@@ -62,7 +62,7 @@ describe('@fictjs/webpack-plugin incremental metadata', () => {
       await waitForWatchingReady(watching)
 
       const plainBuild = builds.nextMatching(
-        stats => buildAssetMatches(stats, /return count\s*\*\s*2/),
+        stats => buildAssetMatches(stats, /\bcount\s*\*\s*2/),
         {
           description: 'the plain-hook runtime bundle',
         },

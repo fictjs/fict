@@ -60,7 +60,7 @@ describe('@fictjs/webpack-plugin cold metadata graph', () => {
       expect(runApp(root)).toBe(2)
       const bundle = await readFile(path.join(root, 'dist', 'bundle.cjs'), 'utf8')
       expect(bundle).toMatch(/count\(\) \* 2/)
-      expect(bundle).not.toMatch(/return count \* 2/)
+      expect(bundle).not.toMatch(/\bcount \* 2/)
     } finally {
       await rm(root, { recursive: true, force: true })
     }

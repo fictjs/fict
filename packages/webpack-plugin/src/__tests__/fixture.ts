@@ -41,6 +41,7 @@ const assetCapturePlugin = {
 }
 
 interface RuntimeInternal {
+  unwrap<T>(value: T | (() => T)): T
   __fictPopContext(): void
   __fictPushContext(): unknown
 }
@@ -338,11 +339,11 @@ export function runCompiler(configuration: Configuration): Promise<Stats> {
 export function runApp(root: string): number {
   const bundlePath = path.join(root, 'dist', 'bundle.cjs')
   delete require.cache[bundlePath]
-  const bundle = require(bundlePath) as { App(): number }
+  const bundle = require(bundlePath) as { App(): number | (() => number) }
   const runtime = require(fictInternalEntry) as RuntimeInternal
   runtime.__fictPushContext()
   try {
-    return bundle.App()
+    return runtime.unwrap(bundle.App())
   } finally {
     runtime.__fictPopContext()
   }

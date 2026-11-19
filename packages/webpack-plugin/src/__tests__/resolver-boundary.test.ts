@@ -1781,13 +1781,13 @@ describe('@fictjs/webpack-plugin resolver package boundaries', () => {
       await waitForWatchingReady(watching)
 
       const plainBuild = builds.nextMatching(
-        stats => buildAssetMatches(stats, /return count\s*\*\s*2/),
+        stats => buildAssetMatches(stats, /\bcount\s*\*\s*2/),
         { description: 'the plain external-package bundle' },
       )
       await writeFile(sidecarPath, plainMetadata)
       const plainStats = await plainBuild
       const plainBundle = await readBundle(root)
-      expect(plainBundle).toMatch(/return count\s*\*\s*2/)
+      expect(plainBundle).toMatch(/\bcount\s*\*\s*2/)
       expect(plainBundle).not.toMatch(/count\(\)\s*\*\s*2/)
       expect(builtFixtureFiles(plainStats, root)).toContain(entryPath)
     } finally {
@@ -1972,13 +1972,13 @@ describe('@fictjs/webpack-plugin resolver package boundaries', () => {
       await waitForWatchingReady(watching)
 
       const plainBuild = builds.nextMatching(
-        stats => buildAssetMatches(stats, /return count\s*\*\s*2/),
+        stats => buildAssetMatches(stats, /\bcount\s*\*\s*2/),
         { description: 'the plain aliased-package bundle' },
       )
       await writeFile(sidecarPath, plainMetadata)
       const plainStats = await plainBuild
       const plainBundle = await readBundle(root)
-      expect(plainBundle).toMatch(/return count\s*\*\s*2/)
+      expect(plainBundle).toMatch(/\bcount\s*\*\s*2/)
       expect(plainBundle).not.toMatch(/count\(\)\s*\*\s*2/)
       expect(builtFixtureFiles(plainStats, root)).toContain(entryPath)
       await waitForWatchingReady(watching)
@@ -2044,7 +2044,7 @@ describe('@fictjs/webpack-plugin resolver package boundaries', () => {
 
       const changedStats = await runCompiler(configuration())
       const changedBundle = await readBundle(root)
-      expect(changedBundle).toMatch(/return count\s*\*\s*2/)
+      expect(changedBundle).toMatch(/\bcount\s*\*\s*2/)
       expect(changedBundle).not.toMatch(/count\(\)\s*\*\s*2/)
       expect(builtFixtureFiles(changedStats, root)).toContain(entryPath)
 
@@ -2172,7 +2172,8 @@ describe('@fictjs/webpack-plugin resolver package boundaries', () => {
         const required = require('#hook')
         export function App() {
           const count = useCounter()
-          return count * 2 + required.useCounter()
+          const plain = required.useCounter()
+          return count * 2 + plain
         }
       `,
       'local.ts': `

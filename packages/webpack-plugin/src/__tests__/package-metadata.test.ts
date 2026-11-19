@@ -228,13 +228,13 @@ describe('@fictjs/webpack-plugin package metadata', () => {
       await waitForWatchingReady(watching, { files: [packagePath, sidecarPath] })
 
       const sidecarBuild = builds.nextMatching(
-        stats => buildAssetMatches(stats, /return count\s*\*\s*2/),
+        stats => buildAssetMatches(stats, /\bcount\s*\*\s*2/),
         { description: 'the plain sidecar bundle' },
       )
       await writeFile(sidecarPath, hookMetadata(false))
       const sidecarStats = await sidecarBuild
       const plainBundle = await readBundle(root)
-      expect(plainBundle).toMatch(/return count\s*\*\s*2/)
+      expect(plainBundle).toMatch(/\bcount\s*\*\s*2/)
       expect(plainBundle).not.toMatch(/count\(\)\s*\*\s*2/)
       expect(builtFixtureFiles(sidecarStats, root)).toContain(entryPath)
       const sidecarStored = storedMetadata(sidecarStats, entryPath)
@@ -310,7 +310,7 @@ describe('@fictjs/webpack-plugin package metadata', () => {
 
       const changedStats = await runCompiler(configuration())
       const changedBundle = await readBundle(root)
-      expect(changedBundle).toMatch(/return count\s*\*\s*2/)
+      expect(changedBundle).toMatch(/\bcount\s*\*\s*2/)
       expect(changedBundle).not.toMatch(/count\(\)\s*\*\s*2/)
       expect(rebuildObserver.builtBeforeFict).not.toContain(entryPath)
       expect(rebuildObserver.builtBeforeFict).not.toContain(wrapperPath)
@@ -323,7 +323,7 @@ describe('@fictjs/webpack-plugin package metadata', () => {
       )
 
       const recachedStats = await runCompiler(configuration())
-      expect(await readBundle(root)).toMatch(/return count\s*\*\s*2/)
+      expect(await readBundle(root)).toMatch(/\bcount\s*\*\s*2/)
       expect(builtFixtureFiles(recachedStats, root)).toEqual([])
       expect(rebuildObserver.rebuiltByFict).toEqual([])
     } finally {
@@ -373,14 +373,13 @@ describe('@fictjs/webpack-plugin package metadata', () => {
         files: [lexicalPackagePath, lexicalSidecarPath, realPackagePath, realSidecarPath],
       })
 
-      const rebuilt = builds.nextMatching(
-        stats => buildAssetMatches(stats, /return count\s*\*\s*2/),
-        { description: 'the plain managed-package bundle' },
-      )
+      const rebuilt = builds.nextMatching(stats => buildAssetMatches(stats, /\bcount\s*\*\s*2/), {
+        description: 'the plain managed-package bundle',
+      })
       await writeFile(realSidecarPath, hookMetadata(false))
       const changedStats = await rebuilt
       const changedBundle = await readBundle(root)
-      expect(changedBundle).toMatch(/return count\s*\*\s*2/)
+      expect(changedBundle).toMatch(/\bcount\s*\*\s*2/)
       expect(changedBundle).not.toMatch(/count\(\)\s*\*\s*2/)
       expect(builtFixtureFiles(changedStats, root)).toContain(entryPath)
     } finally {
