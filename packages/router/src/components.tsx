@@ -238,6 +238,7 @@ export function Routes(props: RoutesProps) {
 // ============================================================================
 
 interface RenderMatchesProps {
+  key?: number | undefined
   matches: RouteMatch[]
   index: number
 }
@@ -251,9 +252,16 @@ function CurrentMatchesView(props: CurrentMatchesProps): FictNode {
     const matchesInput = props.matches
     return typeof matchesInput === 'function' ? matchesInput() : matchesInput
   }
+  let previousMatches: RouteMatch[] | undefined
+  let revision = 0
   const renderCurrentMatches = (): FictNode => {
     const currentMatches = matches()
-    return currentMatches.length > 0 ? renderMatches(currentMatches, 0) : null
+    // Each committed match tree owns its preload state and cleanup handlers.
+    if (currentMatches !== previousMatches) {
+      previousMatches = currentMatches
+      revision++
+    }
+    return currentMatches.length > 0 ? renderMatches(currentMatches, 0, revision) : null
   }
 
   return <>{[reactive(renderCurrentMatches) as unknown as FictNode]}</>
@@ -394,8 +402,8 @@ function RenderMatchesView(props: RenderMatchesProps): FictNode {
   )
 }
 
-export function renderMatches(matches: RouteMatch[], index: number): FictNode {
-  return <RenderMatchesView matches={matches} index={index} />
+export function renderMatches(matches: RouteMatch[], index: number, key?: number): FictNode {
+  return <RenderMatchesView key={key} matches={matches} index={index} />
 }
 
 interface RouteJSXProps {
