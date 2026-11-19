@@ -17,10 +17,18 @@ use serde_json::Value;
 
 const MAX_INPUT_BYTES: usize = 32 * 1024;
 
+thread_local! {
+    static WORKER: fict_fuzz::CompilerWorker = fict_fuzz::CompilerWorker::new(check);
+}
+
 fuzz_target!(|data: &[u8]| {
     if data.is_empty() || data.len() > MAX_INPUT_BYTES {
         return;
     }
+    WORKER.with(|worker| worker.run(data));
+});
+
+fn check(data: &[u8]) {
     let Ok(source) = std::str::from_utf8(data) else {
         return;
     };
@@ -50,7 +58,7 @@ fuzz_target!(|data: &[u8]| {
         (&first, &opposite)
     };
     validate_strict_fallback_policy(fallback, strict);
-});
+}
 
 fn control_bits(data: &[u8]) -> u64 {
     data.iter()

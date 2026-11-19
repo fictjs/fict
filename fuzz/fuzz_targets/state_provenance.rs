@@ -26,10 +26,18 @@ struct GeneratedCase {
     expectation: Expectation,
 }
 
+thread_local! {
+    static WORKER: fict_fuzz::CompilerWorker = fict_fuzz::CompilerWorker::new(check);
+}
+
 fuzz_target!(|data: &[u8]| {
     if data.len() < 6 || data.len() > MAX_INPUT_BYTES {
         return;
     }
+    WORKER.with(|worker| worker.run(data));
+});
+
+fn check(data: &[u8]) {
     let generated = generate_case(data);
     let strict_request = request(&generated, true);
     let fallback_request = request(&generated, false);
@@ -95,7 +103,7 @@ fuzz_target!(|data: &[u8]| {
 
     validate_output(&strict, generated.label);
     validate_output(&fallback, generated.label);
-});
+}
 
 fn generate_case(data: &[u8]) -> GeneratedCase {
     let scenario = data[0] % SCENARIO_COUNT;
